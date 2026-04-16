@@ -2,6 +2,8 @@ package sidebar
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -78,6 +80,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			return m, m.switchToSelected()
+		case "ctrl+r":
+			self, err := os.Executable()
+			if err == nil {
+				return m, tea.ExecProcess(exec.Command(self, "sidebar"), nil)
+			}
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		}

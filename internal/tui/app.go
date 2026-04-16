@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -207,6 +208,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case key.Matches(msg, keys.Restart):
+			self, err := os.Executable()
+			if err == nil {
+				return m, tea.ExecProcess(exec.Command(self), nil)
+			}
+
 		case key.Matches(msg, keys.Quit):
 			if m.screen != ScreenDashboard {
 				m.screen = ScreenDashboard
@@ -307,9 +314,8 @@ func (m Model) dashboardView() string {
 		{"n", "new session"},
 		{"a", "attach"},
 		{"/", "filter"},
-		{"s", "sessions"},
-		{"w", "worktrees"},
 		{"?", "help"},
+		{"ctrl+r", "restart"},
 		{"q", "quit"},
 	})
 
@@ -342,6 +348,7 @@ func (m Model) helpView() string {
 		{"Other", []footerBinding{
 			{"w", "View git worktrees"},
 			{"?", "Toggle this help"},
+			{"ctrl+r", "Restart (reload new binary)"},
 			{"q", "Quit"},
 		}},
 	}
@@ -380,21 +387,25 @@ func (m Model) renderFooter(bindings []footerBinding) string {
 	return footerStyle.Width(m.width).Render(line)
 }
 
-// sessionRefreshMsg carries the set of project paths that have active Claude sessions.
-type sessionRefreshMsg map[string]bool
+// sessionRefreshMsg carries the detected status for each project path with a live session.
+type sessionRefreshMsg map[string]SessionStatus
 
 func (m Model) refreshSessions() tea.Cmd {
 	return func() tea.Msg {
 		sessions, _ := claude.LiveSessions()
-		active := make(map[string]bool)
+		statuses := make(map[string]SessionStatus)
 		for _, s := range sessions {
-			active[s.CWD] = true
+			if claude.IsSessionIdle(s.CWD, s.SessionID) {
+				statuses[s.CWD] = StatusIdle
+			} else {
+				statuses[s.CWD] = StatusActive
+			}
 		}
-		return sessionRefreshMsg(active)
+		return sessionRefreshMsg(statuses)
 	}
 }
 
-func (m *Model) updateProjectStatuses(active sessionRefreshMsg) {
+func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	items := m.list.Items()
 	activeCount := 0
 	attentionCount := 0
@@ -405,17 +416,17 @@ func (m *Model) updateProjectStatuses(active sessionRefreshMsg) {
 			continue
 		}
 
-		// Check notification-based status first (idle, permission)
-		if notifStatus, ok := m.notifState[pi.project.Path]; ok {
-			pi.status = notifStatus
-			if notifStatus == StatusIdle || notifStatus == StatusPermission {
+		// Notification-based status takes priority for permission prompts
+		if notifStatus, ok := m.notifState[pi.project.Path]; ok && notifStatus == StatusPermission {
+			pi.status = StatusPermission
+			attentionCount++
+			activeCount++
+		} else if polledStatus, ok := polled[pi.project.Path]; ok {
+			// Use poll-based status (detects idle from JSONL)
+			pi.status = polledStatus
+			if polledStatus == StatusIdle {
 				attentionCount++
 			}
-			if notifStatus != StatusNone {
-				activeCount++
-			}
-		} else if active[pi.project.Path] {
-			pi.status = StatusActive
 			activeCount++
 		} else {
 			pi.status = StatusNone

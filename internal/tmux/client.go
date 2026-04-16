@@ -22,9 +22,14 @@ func (c *Client) SessionExists() bool {
 	return cmd.Run() == nil
 }
 
-// CreateSession creates a new tmux session (detached).
+// CreateSession creates a new tmux session (detached) with mouse support enabled.
 func (c *Client) CreateSession() error {
-	return runTmux("new-session", "-d", "-s", c.SessionName)
+	if err := runTmux("new-session", "-d", "-s", c.SessionName); err != nil {
+		return err
+	}
+	// Enable mouse support: scroll, click windows/panes, drag borders
+	runTmux("set-option", "-t", c.SessionName, "mouse", "on")
+	return nil
 }
 
 // CreateWindow creates a new window in the session.
@@ -122,6 +127,13 @@ func (c *Client) SplitWindow(target string, cols int, command string) (string, e
 // SelectPane focuses a specific pane.
 func (c *Client) SelectPane(target string) error {
 	return runTmux("select-pane", "-t", target)
+}
+
+// PaneCommand returns the current command running in a pane.
+func (c *Client) PaneCommand(target string) string {
+	cmd := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_current_command}")
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
 }
 
 // IsInsideTmux checks if we're running inside a tmux session.

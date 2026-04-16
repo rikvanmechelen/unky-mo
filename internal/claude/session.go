@@ -115,6 +115,77 @@ func SessionForPath(path string) *Session {
 	return nil
 }
 
+// IsSessionIdle checks whether a live session is waiting for user input or
+// is stuck on a permission prompt. Uses two signals:
+//  1. If the JSONL's last meaningful message is type=assistant, Claude finished its turn.
+//  2. If the JSONL hasn't been modified in >60s, the session is likely waiting for
+//     something (user input, permission approval, etc.)
+func IsSessionIdle(projectPath, sessionID string) bool {
+	dir := projectsDirForPath(projectPath)
+	path := filepath.Join(dir, sessionID+".jsonl")
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+
+	// Signal 2: If the file hasn't been written to in >60s, the session is stalled.
+	// A working Claude writes to the JSONL frequently (tool calls, messages, etc).
+	if time.Since(info.ModTime()) > 60*time.Second {
+		return true
+	}
+
+	// Signal 1: Check last meaningful message type
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	readSize := int64(128 * 1024)
+	if info.Size() < readSize {
+		readSize = info.Size()
+	}
+	if readSize == 0 {
+		return false
+	}
+
+	buf := make([]byte, readSize)
+	_, err = f.ReadAt(buf, info.Size()-readSize)
+	if err != nil {
+		return false
+	}
+
+	lines := strings.Split(string(buf), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+
+		var msg struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(line), &msg) != nil {
+			continue
+		}
+
+		switch msg.Type {
+		case "file-history-snapshot", "attachment", "permission-mode",
+			"custom-title", "deferred_tools_delta", "":
+			continue
+		case "assistant":
+			return true // Claude finished, waiting for input
+		case "user":
+			return false // User sent something, Claude is working
+		default:
+			continue
+		}
+	}
+
+	return false
+}
+
 // RecentSession represents a historical Claude Code session from the JSONL files.
 type RecentSession struct {
 	SessionID string
@@ -137,10 +208,14 @@ func (rs RecentSession) DisplayName() string {
 }
 
 // projectsDirForPath returns the Claude projects subdirectory for a given project path.
-// e.g. /Users/rvanmech/workspace/my-app -> ~/.claude/projects/-Users-rvanmech-workspace-my-app
+// Claude encodes paths by replacing both "/" and "_" with "-".
+// e.g. /Users/rvanmech/workspace/mla_wrapper_app -> ~/.claude/projects/-Users-rvanmech-workspace-mla-wrapper-app
 func projectsDirForPath(projectPath string) string {
 	home, _ := os.UserHomeDir()
-	encoded := "-" + strings.ReplaceAll(strings.TrimPrefix(projectPath, "/"), "/", "-")
+	encoded := strings.TrimPrefix(projectPath, "/")
+	encoded = strings.ReplaceAll(encoded, "/", "-")
+	encoded = strings.ReplaceAll(encoded, "_", "-")
+	encoded = "-" + encoded
 	return filepath.Join(home, ".claude", "projects", encoded)
 }
 
