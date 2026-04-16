@@ -57,7 +57,23 @@
       "Bash(./mo sessions:*)",
       "Bash(chmod +x:*)",
       "Bash(./mo hooks:*)",
-      "Bash(./mo --help)"
+      "Bash(./mo --help)",
+      "Bash(python3 -c \"import sys,json; [print\\(json.dumps\\(json.loads\\(l\\), indent=2\\)[:200]\\) for l in sys.stdin]\")",
+      "Bash(python3 -c \"import sys,json; [print\\(json.dumps\\(json.loads\\(l\\), indent=2\\)[:300]\\) for l in sys.stdin]\")",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); c=d.get\\('message',{}\\).get\\('content',''\\); print\\(c[:120] if isinstance\\(c,str\\) else str\\(c[0].get\\('text',''\\)\\)[:120]\\)\")",
+      "Bash(go run:*)",
+      "Bash(tmux display-message:*)",
+      "Bash(tmux new-session:*)",
+      "Bash(tmux new-window:*)",
+      "Bash(tmux list-windows:*)",
+      "Bash(tmux send-keys:*)",
+      "Bash(tmux capture-pane:*)",
+      "Bash(tmux select-window:*)",
+      "Bash(tmux kill-session:*)",
+      "Bash(./mo start:*)",
+      "Bash(./mo attach:*)",
+      "Bash(./mo resume:*)",
+      "Bash(tmux kill-window:*)"
     ],
     "enabledMcpjsonServers": [
       "playwright"

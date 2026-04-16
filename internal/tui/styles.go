@@ -3,15 +3,15 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Colors
-	colorPrimary   = lipgloss.Color("#7C3AED") // purple
-	colorSecondary = lipgloss.Color("#6B7280") // gray
-	colorSuccess   = lipgloss.Color("#10B981") // green
-	colorWarning   = lipgloss.Color("#F59E0B") // yellow
-	colorDanger    = lipgloss.Color("#EF4444") // red
-	colorMuted     = lipgloss.Color("#4B5563") // dim gray
-	colorWhite     = lipgloss.Color("#F9FAFB")
-	colorBg        = lipgloss.Color("#111827") // dark bg
+	// Colors — tuned for dark backgrounds (~#14191E)
+	colorPrimary   = lipgloss.Color("#A78BFA") // lighter purple for dark bg
+	colorSecondary = lipgloss.Color("#9CA3AF") // readable gray (Tailwind gray-400)
+	colorSuccess   = lipgloss.Color("#34D399") // brighter green
+	colorWarning   = lipgloss.Color("#FBBF24") // brighter yellow
+	colorDanger    = lipgloss.Color("#F87171") // brighter red
+	colorMuted     = lipgloss.Color("#6B7280") // subtle but legible gray
+	colorWhite     = lipgloss.Color("#F3F4F6")
+	colorBg        = lipgloss.Color("#14191E")
 
 	// Title bar
 	titleStyle = lipgloss.NewStyle().
@@ -21,7 +21,7 @@ var (
 			Padding(0, 1)
 
 	headerStyle = lipgloss.NewStyle().
-			Foreground(colorSecondary).
+			Foreground(colorWhite).
 			Bold(true)
 
 	// Footer / help bar

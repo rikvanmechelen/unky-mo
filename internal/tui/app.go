@@ -74,9 +74,11 @@ type Model struct {
 	activeSessions int
 	attentionCount int
 	// Detail views
-	detailProject  *project.Project
-	detailSession  *claude.Session
-	detailWorktrees []project.Worktree
+	detailProject       *project.Project
+	detailSession       *claude.Session
+	detailWorktrees     []project.Worktree
+	detailRecentSessions []claude.RecentSession
+	detailSessionCursor int
 	width          int
 	height         int
 	ready          bool
@@ -148,12 +150,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Enter):
 			if m.screen == ScreenDashboard {
-				p := m.selectedProject()
+				p := m.currentProject()
 				if p != nil {
 					m.detailProject = p
 					m.detailSession = claude.SessionForPath(p.Path)
 					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
+					m.detailRecentSessions = claude.RecentSessions(p.Path, 10)
+					m.detailSessionCursor = 0
 					m.screen = ScreenProject
+				}
+				return m, nil
+			}
+			if m.screen == ScreenProject {
+				// Resume the selected recent session
+				if len(m.detailRecentSessions) > 0 && m.detailSessionCursor < len(m.detailRecentSessions) {
+					return m, m.resumeSpecificSession(m.detailRecentSessions[m.detailSessionCursor].SessionID)
 				}
 				return m, nil
 			}
@@ -181,10 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Worktree):
 			if m.screen == ScreenDashboard || m.screen == ScreenProject {
-				p := m.selectedProject()
-				if m.screen == ScreenProject && m.detailProject != nil {
-					p = m.detailProject
-				}
+				p := m.currentProject()
 				if p != nil {
 					m.detailProject = p
 					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
@@ -219,13 +227,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsgEvent:
 		m.statusMsg = string(msg)
 		m.list.NewStatusMessage(m.statusMsg)
+		// Clear status after 4 seconds
+		return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
+			return clearStatusMsg{}
+		})
+
+	case clearStatusMsg:
+		m.statusMsg = ""
 		return m, nil
 	}
 
-	if m.screen == ScreenDashboard {
+	switch m.screen {
+	case ScreenDashboard:
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
+	case ScreenProject:
+		// Handle up/down for session list cursor
+		if msg, ok := msg.(tea.KeyMsg); ok {
+			switch msg.String() {
+			case "up", "k":
+				if m.detailSessionCursor > 0 {
+					m.detailSessionCursor--
+				}
+			case "down", "j":
+				if m.detailSessionCursor < len(m.detailRecentSessions)-1 {
+					m.detailSessionCursor++
+				}
+			}
+		}
 	}
 
 	return m, nil
@@ -420,19 +450,48 @@ func (m Model) projectDetailView() string {
 		b.WriteString("  " + footerDescStyle.Render(p.Description) + "\n\n")
 	}
 
-	// Active session
-	b.WriteString(headerStyle.Render("Session") + "\n")
-	if m.detailSession != nil {
-		s := m.detailSession
-		name := s.Name
-		if name == "" {
-			name = "(unnamed)"
-		}
-		age := time.Since(time.UnixMilli(s.StartedAt)).Truncate(time.Minute)
-		b.WriteString(fmt.Sprintf("  %s  %s  PID:%d  %s ago\n", statusActive.Render("● active"), name, s.PID, age))
-		b.WriteString(fmt.Sprintf("  ID: %s\n", footerDescStyle.Render(s.SessionID)))
+	// Recent sessions
+	b.WriteString(headerStyle.Render("Sessions") + "\n")
+	if len(m.detailRecentSessions) == 0 {
+		b.WriteString("  " + footerDescStyle.Render("No sessions found") + "\n")
 	} else {
-		b.WriteString("  " + statusNone.Render("○ no active session") + "\n")
+		for i, rs := range m.detailRecentSessions {
+			cursor := "  "
+			if i == m.detailSessionCursor {
+				cursor = "▸ "
+			}
+
+			// Status
+			var statusStr string
+			if rs.IsLive {
+				statusStr = statusActive.Render("● active")
+			} else {
+				statusStr = statusNone.Render("○")
+			}
+
+			// Age
+			age := formatAge(time.Since(rs.LastActive))
+
+			// Summary
+			summary := rs.Summary
+			if summary == "" {
+				summary = "(no prompt)"
+			}
+
+			// Branch
+			branchStr := ""
+			if rs.GitBranch != "" {
+				branchStr = langStyle.Render(" [" + rs.GitBranch + "]")
+			}
+
+			line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, summary, branchStr)
+
+			if i == m.detailSessionCursor {
+				b.WriteString(selectedItemStyle.Render(line) + "\n")
+			} else {
+				b.WriteString(normalItemStyle.Render(line) + "\n")
+			}
+		}
 	}
 	b.WriteString("\n")
 
@@ -450,11 +509,17 @@ func (m Model) projectDetailView() string {
 		}
 	}
 
+	// Status message
+	if m.statusMsg != "" {
+		b.WriteString("\n" + notifBadgeStyle.Render(m.statusMsg) + "\n")
+	}
+
 	// Footer
 	footer := m.renderFooter([]footerBinding{
+		{"↑↓", "select session"},
+		{"enter", "resume selected"},
 		{"n", "new session"},
 		{"a", "attach"},
-		{"r", "resume"},
 		{"w", "worktrees"},
 		{"esc", "back"},
 		{"?", "help"},
@@ -463,8 +528,9 @@ func (m Model) projectDetailView() string {
 	// Pad content to fill screen, then add footer
 	content := b.String()
 	contentLines := strings.Count(content, "\n")
-	if contentLines < m.height-3 {
-		content += strings.Repeat("\n", m.height-3-contentLines)
+	footerLines := 3
+	if contentLines < m.height-footerLines {
+		content += strings.Repeat("\n", m.height-footerLines-contentLines)
 	}
 
 	return content + footer
@@ -518,6 +584,19 @@ func (m Model) worktreeView() string {
 	return content + footer
 }
 
+func formatAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
 func (m *Model) handleNotification(n notify.Notification) {
 	switch n.Type {
 	case notify.NotifyIdlePrompt:
@@ -533,8 +612,14 @@ func (m *Model) handleNotification(n notify.Notification) {
 }
 
 type statusMsgEvent string
+type clearStatusMsg struct{}
 
-func (m Model) selectedProject() *project.Project {
+// currentProject returns the project for the current context —
+// detailProject on the project/worktree screens, list selection on the dashboard.
+func (m Model) currentProject() *project.Project {
+	if m.detailProject != nil && (m.screen == ScreenProject || m.screen == ScreenWorktrees) {
+		return m.detailProject
+	}
 	item, ok := m.list.SelectedItem().(ProjectItem)
 	if !ok {
 		return nil
@@ -544,7 +629,7 @@ func (m Model) selectedProject() *project.Project {
 
 func (m Model) launchSession() tea.Cmd {
 	return func() tea.Msg {
-		p := m.selectedProject()
+		p := m.currentProject()
 		if p == nil {
 			return statusMsgEvent("No project selected")
 		}
@@ -581,10 +666,7 @@ func (m Model) launchSession() tea.Cmd {
 
 func (m Model) resumeSession() tea.Cmd {
 	return func() tea.Msg {
-		p := m.selectedProject()
-		if m.screen == ScreenProject && m.detailProject != nil {
-			p = m.detailProject
-		}
+		p := m.currentProject()
 		if p == nil {
 			return statusMsgEvent("No project selected")
 		}
@@ -624,9 +706,46 @@ func (m Model) resumeSession() tea.Cmd {
 	}
 }
 
+func (m Model) resumeSpecificSession(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+
+		windowName := p.Name
+		if m.tmux.WindowExists(windowName) {
+			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + windowName)
+		}
+
+		target, err := m.tmux.CreateWindow(windowName, p.Path)
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
+		}
+
+		cmd := fmt.Sprintf("claude --resume %s", sessionID)
+		if err := m.tmux.SendKeys(target, cmd); err != nil {
+			return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
+		}
+
+		if err := m.tmux.SwitchToWindow(target); err != nil {
+			return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
+		}
+
+		return statusMsgEvent("Resumed session in " + windowName)
+	}
+}
+
 func (m Model) attachSession() tea.Cmd {
 	return func() tea.Msg {
-		p := m.selectedProject()
+		p := m.currentProject()
 		if p == nil {
 			return statusMsgEvent("No project selected")
 		}
@@ -651,7 +770,13 @@ func (m Model) attachSession() tea.Cmd {
 func Run(projects []project.Project, tmuxSession, socketPath string) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
-		tc = ttmux.NewClient(tmuxSession)
+		// Use the actual current session — the user may be in a session
+		// with a different name than the configured one.
+		session := ttmux.CurrentSessionName()
+		if session == "" {
+			session = tmuxSession
+		}
+		tc = ttmux.NewClient(session)
 	}
 
 	// Start notification server

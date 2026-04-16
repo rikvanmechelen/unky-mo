@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -23,15 +24,14 @@ func (c *Client) SessionExists() bool {
 
 // CreateSession creates a new tmux session (detached).
 func (c *Client) CreateSession() error {
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", c.SessionName)
-	return cmd.Run()
+	return runTmux("new-session", "-d", "-s", c.SessionName)
 }
 
 // CreateWindow creates a new window in the session.
 func (c *Client) CreateWindow(name, cwd string) (string, error) {
 	target := c.SessionName + ":" + name
-	cmd := exec.Command("tmux", "new-window", "-t", c.SessionName, "-n", name, "-c", cwd)
-	if err := cmd.Run(); err != nil {
+	// Use -a to append after the current window, avoiding index conflicts
+	if err := runTmux("new-window", "-a", "-t", c.SessionName, "-n", name, "-c", cwd); err != nil {
 		return "", fmt.Errorf("creating window %q: %w", name, err)
 	}
 	return target, nil
@@ -39,23 +39,20 @@ func (c *Client) CreateWindow(name, cwd string) (string, error) {
 
 // SendKeys sends keystrokes to a tmux target (window or pane).
 func (c *Client) SendKeys(target, keys string) error {
-	cmd := exec.Command("tmux", "send-keys", "-t", target, keys, "Enter")
-	return cmd.Run()
+	return runTmux("send-keys", "-t", target, keys, "Enter")
 }
 
 // SwitchToWindow switches the client to the specified window.
-// Only works if we're inside the same tmux session.
 func (c *Client) SwitchToWindow(target string) error {
-	cmd := exec.Command("tmux", "select-window", "-t", target)
-	return cmd.Run()
+	return runTmux("select-window", "-t", target)
 }
 
 // ListWindows returns the names of windows in the session.
 func (c *Client) ListWindows() ([]Window, error) {
 	cmd := exec.Command("tmux", "list-windows", "-t", c.SessionName, "-F", "#{window_index}:#{window_name}:#{pane_current_path}")
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	var windows []Window
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -77,8 +74,7 @@ func (c *Client) ListWindows() ([]Window, error) {
 
 // KillWindow kills a specific window.
 func (c *Client) KillWindow(target string) error {
-	cmd := exec.Command("tmux", "kill-window", "-t", target)
-	return cmd.Run()
+	return runTmux("kill-window", "-t", target)
 }
 
 // WindowExists checks if a window with the given name exists.
@@ -95,10 +91,17 @@ func (c *Client) WindowExists(name string) bool {
 	return false
 }
 
+// EnsureSession creates the session if it doesn't exist.
+func (c *Client) EnsureSession() error {
+	if c.SessionExists() {
+		return nil
+	}
+	return c.CreateSession()
+}
+
 // IsInsideTmux checks if we're running inside a tmux session.
 func IsInsideTmux() bool {
-	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
-	return cmd.Run() == nil
+	return os.Getenv("TMUX") != ""
 }
 
 // CurrentSessionName returns the name of the current tmux session, if any.
@@ -109,6 +112,20 @@ func CurrentSessionName() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// runTmux executes a tmux command and returns a descriptive error on failure.
+func runTmux(args ...string) error {
+	cmd := exec.Command("tmux", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // Window represents a tmux window.

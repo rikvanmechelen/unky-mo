@@ -39,14 +39,13 @@ This adds hooks to `~/.claude/settings.json` so Claude Code can notify Unky Mo w
 ./mo hooks install
 ```
 
-### 3. Launch inside tmux
-
-For the best experience, start a tmux session and run `mo` inside it:
+### 3. Launch
 
 ```bash
-tmux new-session -s mo
 ./mo
 ```
+
+If you're not already inside tmux, Unky Mo automatically creates a tmux session called `mo` and launches itself inside it. If the `mo` session already exists, it attaches to it.
 
 When you launch Claude sessions from the TUI, they open as sibling tmux windows. Switch between them with `Ctrl-b` + window number, and `Ctrl-b 0` to get back to the TUI.
 
