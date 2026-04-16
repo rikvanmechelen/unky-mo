@@ -15,11 +15,13 @@ import (
 
 type SidebarItem struct {
 	Name       string
+	Path       string // project directory path
 	WindowName string // tmux window target; empty for Home (window 0)
 	Status     string // "none", "active", "idle", "permission"
 	IsHome     bool
 }
 
+type sidebarStatusMsg string
 type stateTickMsg time.Time
 
 func stateTick() tea.Cmd {
@@ -34,14 +36,39 @@ type Model struct {
 	viewportStart int // for scrolling
 	tmux          *ttmux.Client
 	stateFile     string
-	width         int
-	height        int
+	statusMsg     string
+	// The project this sidebar belongs to (detected from tmux window name)
+	windowName string
+	windowPath string
+	width      int
+	height     int
 }
 
 func NewModel(sessionName, stateFile string) Model {
+	// Detect which project window we're in
+	windowName := ttmux.CurrentWindowName()
+	windowPath := ""
+
+	// Look up the project path from the state file
+	if sf, err := state.Read(stateFile); err == nil {
+		for _, p := range sf.Projects {
+			if p.WindowName == windowName || p.Name == windowName {
+				windowPath = p.Path
+				break
+			}
+		}
+	}
+
+	// Fallback: use pwd if we couldn't find it in state
+	if windowPath == "" {
+		windowPath, _ = os.Getwd()
+	}
+
 	m := Model{
-		tmux:      ttmux.NewClient(sessionName),
-		stateFile: stateFile,
+		tmux:       ttmux.NewClient(sessionName),
+		stateFile:  stateFile,
+		windowName: windowName,
+		windowPath: windowPath,
 	}
 	m.items = append(m.items, SidebarItem{
 		Name:   "Unky Mo Home",
@@ -62,6 +89,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case sidebarStatusMsg:
+		m.statusMsg = string(msg)
+		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+			return sidebarStatusMsg("")
+		})
+
 	case stateTickMsg:
 		m.refreshState()
 		return m, stateTick()
@@ -80,6 +113,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			return m, m.switchToSelected()
+		case "t":
+			return m, m.openTerminal()
+		case "`":
+			return m, m.openPopup()
 		case "ctrl+r":
 			self, err := os.Executable()
 			if err == nil {
@@ -180,10 +217,15 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 
+	// Status message
+	if m.statusMsg != "" {
+		b.WriteString(dotIdle.Render(m.statusMsg) + "\n")
+	}
+
 	// Footer
-	b.WriteString(footerStyle.Render(" ↑↓ navigate") + "\n")
-	b.WriteString(footerStyle.Render(" ⏎  switch") + "\n")
-	b.WriteString(footerStyle.Render(" q  quit"))
+	b.WriteString(footerStyle.Render(" ↑↓ nav  ⏎ switch") + "\n")
+	b.WriteString(footerStyle.Render(" t term  ` popup") + "\n")
+	b.WriteString(footerStyle.Render(" ctrl+r restart"))
 
 	return b.String()
 }
@@ -241,11 +283,15 @@ func (m *Model) refreshState() {
 		return
 	}
 
-	// Rebuild items: Home + projects from state file
+	// Rebuild items: Home + only projects with active sessions
 	items := []SidebarItem{{Name: "Unky Mo Home", IsHome: true}}
 	for _, p := range sf.Projects {
+		if p.Status == "none" {
+			continue
+		}
 		items = append(items, SidebarItem{
 			Name:       p.Name,
+			Path:       p.Path,
 			WindowName: p.WindowName,
 			Status:     p.Status,
 		})
@@ -276,6 +322,47 @@ func (m *Model) refreshFromSessions() {
 			m.items[i].Status = "none"
 		}
 	}
+}
+
+func (m Model) selectedItem() *SidebarItem {
+	if m.cursor < 0 || m.cursor >= len(m.items) {
+		return nil
+	}
+	item := m.items[m.cursor]
+	if item.IsHome || item.Path == "" {
+		return nil
+	}
+	return &item
+}
+
+func (m Model) openTerminal() tea.Cmd {
+	return func() tea.Msg {
+		if m.windowPath == "" {
+			return sidebarStatusMsg("no project path")
+		}
+		// Split a terminal below the Claude pane in this window
+		target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+		paneID, err := m.tmux.SplitWindowHorizontal(target, m.windowPath)
+		if err != nil {
+			return sidebarStatusMsg(fmt.Sprintf("err: %v", err))
+		}
+		m.tmux.SelectPane(paneID)
+		return sidebarStatusMsg("terminal opened")
+	}
+}
+
+func (m Model) openPopup() tea.Cmd {
+	if m.windowPath == "" {
+		return func() tea.Msg { return sidebarStatusMsg("no project path") }
+	}
+	title := fmt.Sprintf(" %s ", m.windowName)
+	c := exec.Command("tmux", "display-popup", "-E", "-d", m.windowPath, "-w", "80%", "-h", "80%", "-T", title)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return sidebarStatusMsg(fmt.Sprintf("err: %v", err))
+		}
+		return nil
+	})
 }
 
 func (m Model) switchToSelected() tea.Cmd {

@@ -211,6 +211,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Restart):
 			self, err := os.Executable()
 			if err == nil {
+				// Restart all sidebar panes first
+				m.restartSidebars()
 				return m, tea.ExecProcess(exec.Command(self), nil)
 			}
 
@@ -315,7 +317,6 @@ func (m Model) dashboardView() string {
 		{"a", "attach"},
 		{"/", "filter"},
 		{"?", "help"},
-		{"ctrl+r", "restart"},
 		{"q", "quit"},
 	})
 
@@ -681,6 +682,26 @@ func (m *Model) handleNotification(n notify.Notification) {
 	}
 }
 
+// restartSidebars sends ctrl+r to all sidebar panes (pane .1 in each window)
+// so they reload the new binary.
+func (m Model) restartSidebars() {
+	if m.tmux == nil {
+		return
+	}
+	windows, err := m.tmux.ListWindows()
+	if err != nil {
+		return
+	}
+	for _, w := range windows {
+		if w.Index == "0" {
+			continue // skip the TUI window itself
+		}
+		target := fmt.Sprintf("%s:%s.1", m.tmux.SessionName, w.Index)
+		// Send ctrl+r to the sidebar pane — its own handler will exec the new binary
+		m.tmux.SendRawKeys(target, "C-r")
+	}
+}
+
 // addSidebarPane splits off a sidebar pane in the given window target
 // and refocuses back to the main (left) pane.
 func (m Model) addSidebarPane(target string) {
@@ -832,6 +853,52 @@ func (m Model) resumeSpecificSession(sessionID string) tea.Cmd {
 		}
 
 		return statusMsgEvent("Resumed session in " + windowName)
+	}
+}
+
+func (m Model) openTerminal() tea.Cmd {
+	return func() tea.Msg {
+		p := m.currentProject()
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+
+		windowName := p.Name
+		if !m.tmux.WindowExists(windowName) {
+			return statusMsgEvent("No session window for " + windowName + ". Start a session first.")
+		}
+
+		target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, windowName)
+		paneID, err := m.tmux.SplitWindowHorizontal(target, p.Path)
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Failed to open terminal: %v", err))
+		}
+
+		m.tmux.SelectPane(paneID)
+		m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName)
+
+		return statusMsgEvent("Opened terminal in " + windowName)
+	}
+}
+
+func (m Model) openPopup() tea.Cmd {
+	return func() tea.Msg {
+		p := m.currentProject()
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+
+		title := fmt.Sprintf(" %s ", p.Name)
+		if err := m.tmux.Popup(p.Path, title); err != nil {
+			return statusMsgEvent(fmt.Sprintf("Failed to open popup: %v", err))
+		}
+		return nil
 	}
 }
 

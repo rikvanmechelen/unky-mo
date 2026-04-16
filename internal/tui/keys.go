@@ -14,6 +14,8 @@ type keyMap struct {
 	Worktree key.Binding
 	Filter   key.Binding
 	Help     key.Binding
+	Terminal key.Binding
+	Popup    key.Binding
 	Restart  key.Binding
 	Quit     key.Binding
 }
@@ -62,6 +64,14 @@ var keys = keyMap{
 	Help: key.NewBinding(
 		key.WithKeys("?"),
 		key.WithHelp("?", "help"),
+	),
+	Terminal: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "terminal"),
+	),
+	Popup: key.NewBinding(
+		key.WithKeys("`"),
+		key.WithHelp("`", "popup term"),
 	),
 	Restart: key.NewBinding(
 		key.WithKeys("ctrl+r"),

@@ -42,9 +42,14 @@ func (c *Client) CreateWindow(name, cwd string) (string, error) {
 	return target, nil
 }
 
-// SendKeys sends keystrokes to a tmux target (window or pane).
+// SendKeys sends keystrokes to a tmux target (window or pane), followed by Enter.
 func (c *Client) SendKeys(target, keys string) error {
 	return runTmux("send-keys", "-t", target, keys, "Enter")
+}
+
+// SendRawKeys sends keystrokes to a tmux target without appending Enter.
+func (c *Client) SendRawKeys(target, keys string) error {
+	return runTmux("send-keys", "-t", target, keys)
 }
 
 // SwitchToWindow switches the client to the specified window.
@@ -124,6 +129,27 @@ func (c *Client) SplitWindow(target string, cols int, command string) (string, e
 	return strings.TrimSpace(string(out)), nil
 }
 
+// SplitWindowHorizontal creates a horizontal split (panes stacked vertically)
+// below the target pane, with the given working directory.
+func (c *Client) SplitWindowHorizontal(target, cwd string) (string, error) {
+	args := []string{"split-window", "-v", "-t", target, "-c", cwd, "-P", "-F", "#{pane_id}"}
+	cmd := exec.Command("tmux", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("split-window: %s", msg)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Popup opens a floating popup terminal in the given directory.
+func (c *Client) Popup(cwd, title string) error {
+	return runTmux("display-popup", "-E", "-d", cwd, "-w", "80%", "-h", "80%", "-T", title)
+}
+
 // SelectPane focuses a specific pane.
 func (c *Client) SelectPane(target string) error {
 	return runTmux("select-pane", "-t", target)
@@ -133,6 +159,16 @@ func (c *Client) SelectPane(target string) error {
 func (c *Client) PaneCommand(target string) string {
 	cmd := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_current_command}")
 	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}
+
+// CurrentWindowName returns the name of the current tmux window, if any.
+func CurrentWindowName() string {
+	cmd := exec.Command("tmux", "display-message", "-p", "#{window_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
 	return strings.TrimSpace(string(out))
 }
 
