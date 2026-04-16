@@ -117,11 +117,23 @@ func SessionForPath(path string) *Session {
 
 // RecentSession represents a historical Claude Code session from the JSONL files.
 type RecentSession struct {
-	SessionID  string
-	Summary    string // first user message, truncated
-	GitBranch  string
+	SessionID string
+	Title     string // descriptive name from Claude (e.g. "unky-mo-session-orchestrator")
+	Summary   string // first user message, truncated
+	GitBranch string
 	LastActive time.Time
 	IsLive     bool // PID is still running
+}
+
+// DisplayName returns the best available name for the session.
+func (rs RecentSession) DisplayName() string {
+	if rs.Title != "" {
+		return rs.Title
+	}
+	if len(rs.SessionID) >= 8 {
+		return rs.SessionID[:8] + "..."
+	}
+	return rs.SessionID
 }
 
 // projectsDirForPath returns the Claude projects subdirectory for a given project path.
@@ -162,10 +174,11 @@ func RecentSessions(projectPath string, maxResults int) []RecentSession {
 			continue
 		}
 
-		summary, branch := parseSessionJSONL(fullPath)
+		title, summary, branch := parseSessionJSONL(fullPath)
 
 		results = append(results, RecentSession{
 			SessionID:  sessionID,
+			Title:      title,
 			Summary:    summary,
 			GitBranch:  branch,
 			LastActive: info.ModTime(),
@@ -186,24 +199,37 @@ func RecentSessions(projectPath string, maxResults int) []RecentSession {
 
 // parseSessionJSONL reads the first user message and git branch from a session file.
 // It only reads the first few lines to stay fast on large files.
-func parseSessionJSONL(path string) (summary, branch string) {
+func parseSessionJSONL(path string) (title, summary, branch string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 256*1024), 256*1024) // handle long lines
 
-	linesRead := 0
 	for scanner.Scan() {
-		linesRead++
-		if linesRead > 30 { // only scan first 30 lines
-			break
+		line := scanner.Bytes()
+
+		// Quick check for custom-title lines (can appear anywhere in the file)
+		// These are small JSON objects, so parsing is cheap.
+		if len(line) < 200 && strings.Contains(string(line), `"custom-title"`) {
+			var ct struct {
+				Type        string `json:"type"`
+				CustomTitle string `json:"customTitle"`
+			}
+			if json.Unmarshal(line, &ct) == nil && ct.Type == "custom-title" && ct.CustomTitle != "" {
+				title = ct.CustomTitle // keep updating — last one wins
+			}
+			continue
 		}
 
-		line := scanner.Bytes()
+		// Only parse the first 30 lines for summary/branch (these are large JSON objects)
+		if summary != "" && branch != "" {
+			continue
+		}
+
 		var msg struct {
 			Type    string `json:"type"`
 			Message struct {
@@ -216,22 +242,16 @@ func parseSessionJSONL(path string) (summary, branch string) {
 			continue
 		}
 
-		// Extract first user message as summary
 		if summary == "" && msg.Type == "user" {
 			summary = extractTextContent(msg.Message.Content)
 		}
 
-		// Extract git branch from assistant messages
 		if branch == "" && msg.GitBranch != "" {
 			branch = msg.GitBranch
 		}
-
-		if summary != "" && branch != "" {
-			break
-		}
 	}
 
-	return summary, branch
+	return title, summary, branch
 }
 
 func extractTextContent(raw json.RawMessage) string {

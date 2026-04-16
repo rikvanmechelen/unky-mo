@@ -99,6 +99,31 @@ func (c *Client) EnsureSession() error {
 	return c.CreateSession()
 }
 
+// SplitWindow creates a vertical split pane in the target window.
+// The new pane is created on the right with the specified width in columns.
+// If command is non-empty, it is run in the new pane.
+func (c *Client) SplitWindow(target string, cols int, command string) (string, error) {
+	args := []string{"split-window", "-h", "-t", target, "-l", fmt.Sprintf("%d", cols), "-P", "-F", "#{pane_id}"}
+	if command != "" {
+		args = append(args, command)
+	}
+	cmd := exec.Command("tmux", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("split-window: %s", msg)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// SelectPane focuses a specific pane.
+func (c *Client) SelectPane(target string) error {
+	return runTmux("select-pane", "-t", target)
+}
+
 // IsInsideTmux checks if we're running inside a tmux session.
 func IsInsideTmux() bool {
 	return os.Getenv("TMUX") != ""

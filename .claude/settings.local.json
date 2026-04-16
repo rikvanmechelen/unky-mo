@@ -73,7 +73,19 @@
       "Bash(./mo start:*)",
       "Bash(./mo attach:*)",
       "Bash(./mo resume:*)",
-      "Bash(tmux kill-window:*)"
+      "Bash(tmux kill-window:*)",
+      "Bash(tmux split-window:*)",
+      "Bash(tmux list-panes:*)",
+      "Bash(python3 -c \"import sys,json; [print\\(json.dumps\\(json.loads\\(l\\), indent=2\\)\\) for l in sys.stdin]\")",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); print\\('slug:', d.get\\('slug','N/A'\\)\\); print\\('sessionId:', d.get\\('sessionId','N/A'\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); print\\('slug:', d.get\\('slug','N/A'\\)\\)\")",
+      "Bash(claude --resume --help)",
+      "Bash(grep -m1 '\"slug\"\\\\|\"name\"' ~/.claude/projects/-Users-rvanmech-workspace-unky-mo/59f94698*.jsonl)",
+      "Bash(grep -n '\"slug\"' ~/.claude/projects/-Users-rvanmech-workspace-unky-mo/59f94698*.jsonl)",
+      "Bash(grep -m1 '\"slug\"' ~/.claude/projects/-Users-rvanmech-workspace-moma-apps-rails/0d8be6e9*.jsonl)",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); print\\(d.get\\('slug','N/A'\\)\\)\")",
+      "Bash(grep:*)",
+      "Bash(sed -n '79p' ~/.claude/projects/-Users-rvanmech-workspace-unky-mo/59f94698*.jsonl)"
     ],
     "enabledMcpjsonServers": [
       "playwright"

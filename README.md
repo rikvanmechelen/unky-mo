@@ -47,7 +47,40 @@ This adds hooks to `~/.claude/settings.json` so Claude Code can notify Unky Mo w
 
 If you're not already inside tmux, Unky Mo automatically creates a tmux session called `mo` and launches itself inside it. If the `mo` session already exists, it attaches to it.
 
-When you launch Claude sessions from the TUI, they open as sibling tmux windows. Switch between them with `Ctrl-b` + window number, and `Ctrl-b 0` to get back to the TUI.
+When you launch Claude sessions from the TUI, they open as sibling tmux windows with an interactive sidebar. Switch between them with `Ctrl-b` + window number, and `Ctrl-b 0` to get back to the TUI.
+
+## Sidebar
+
+Every Claude session window includes a narrow sidebar pane on the right that shows all sessions with live status indicators. You can navigate the sidebar and switch between projects without going back to the main TUI.
+
+```
+┌──────────────────────────────────────┬──────────────────────┐
+│                                      │ ── Sessions ──────── │
+│  Claude Code session                 │  ▸ ☗ Unky Mo Home    │
+│  (your main work area)               │    ● rails-app       │
+│                                      │    ● go-svc    idle  │
+│  > working on feature...             │    ○ frontend        │
+│                                      │    ○ my-python       │
+│                                      │                      │
+│                                      │  ↑↓ navigate         │
+│                                      │  ⏎  switch           │
+└──────────────────────────────────────┴──────────────────────┘
+```
+
+### Sidebar shortcuts
+
+| Key        | Action                              |
+|------------|-------------------------------------|
+| `↑` / `k`   | Move up                             |
+| `↓` / `j`   | Move down                           |
+| `enter`      | Switch to the selected project      |
+| `q`          | Close the sidebar pane              |
+
+The first item, **Unky Mo Home**, switches back to the main TUI (window 0).
+
+To focus the sidebar pane, use `Ctrl-b` + right arrow. To go back to the Claude pane, use `Ctrl-b` + left arrow.
+
+The sidebar updates every second by reading a shared state file written by the main TUI. Status indicators are the same as in the main TUI: `●` green = active, `●` yellow = needs input, `●` red = permission needed, `○` gray = no session.
 
 ## TUI Overview
 

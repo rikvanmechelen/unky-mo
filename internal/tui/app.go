@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/project"
+	"github.com/rvanmech/unky-mo/internal/state"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 )
 
@@ -74,17 +76,19 @@ type Model struct {
 	activeSessions int
 	attentionCount int
 	// Detail views
-	detailProject       *project.Project
-	detailSession       *claude.Session
-	detailWorktrees     []project.Worktree
+	detailProject        *project.Project
+	detailSession        *claude.Session
+	detailWorktrees      []project.Worktree
 	detailRecentSessions []claude.RecentSession
-	detailSessionCursor int
-	width          int
-	height         int
-	ready          bool
+	detailSessionCursor  int
+	// State file for sidebar instances
+	stateFilePath string
+	width         int
+	height        int
+	ready         bool
 }
 
-func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server) Model {
+func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string) Model {
 	items := make([]list.Item, len(projects))
 	for i, p := range projects {
 		items[i] = ProjectItem{project: p, status: StatusNone}
@@ -98,12 +102,13 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 	l.Styles.Title = titleStyle
 
 	return Model{
-		screen:      ScreenDashboard,
-		list:        l,
-		projects:    projects,
-		tmux:        tmuxClient,
-		notifServer: notifServer,
-		notifState:  make(sessionStateMap),
+		screen:        ScreenDashboard,
+		list:          l,
+		projects:      projects,
+		tmux:          tmuxClient,
+		notifServer:   notifServer,
+		notifState:    make(sessionStateMap),
+		stateFilePath: stateFilePath,
 	}
 }
 
@@ -422,6 +427,49 @@ func (m *Model) updateProjectStatuses(active sessionRefreshMsg) {
 	m.activeSessions = activeCount
 	m.attentionCount = attentionCount
 	m.list.SetItems(items)
+	m.writeStateFile()
+}
+
+func (m *Model) writeStateFile() {
+	if m.stateFilePath == "" {
+		return
+	}
+
+	var projects []state.ProjectState
+	for _, item := range m.list.Items() {
+		pi, ok := item.(ProjectItem)
+		if !ok {
+			continue
+		}
+		var statusStr string
+		switch pi.status {
+		case StatusActive:
+			statusStr = "active"
+		case StatusIdle:
+			statusStr = "idle"
+		case StatusPermission:
+			statusStr = "permission"
+		default:
+			statusStr = "none"
+		}
+		projects = append(projects, state.ProjectState{
+			Name:       pi.project.Name,
+			Path:       pi.project.Path,
+			WindowName: pi.project.Name,
+			Status:     statusStr,
+		})
+	}
+
+	sessionName := ""
+	if m.tmux != nil {
+		sessionName = m.tmux.SessionName
+	}
+
+	sf := &state.StateFile{
+		TmuxSession: sessionName,
+		Projects:    projects,
+	}
+	state.Write(m.stateFilePath, sf)
 }
 
 func (m Model) projectDetailView() string {
@@ -472,7 +520,10 @@ func (m Model) projectDetailView() string {
 			// Age
 			age := formatAge(time.Since(rs.LastActive))
 
-			// Summary
+			// Session name (customTitle from Claude, e.g. "unky-mo-session-orchestrator")
+			name := rs.DisplayName()
+
+			// Summary line underneath for context
 			summary := rs.Summary
 			if summary == "" {
 				summary = "(no prompt)"
@@ -484,7 +535,15 @@ func (m Model) projectDetailView() string {
 				branchStr = langStyle.Render(" [" + rs.GitBranch + "]")
 			}
 
-			line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, summary, branchStr)
+			line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, name, branchStr)
+			if summary != "" && summary != "(no prompt)" {
+				// Truncate summary for the second line
+				maxSummary := 60
+				if len(summary) > maxSummary {
+					summary = summary[:maxSummary-3] + "..."
+				}
+				line += "\n" + footerDescStyle.Render("      "+summary)
+			}
 
 			if i == m.detailSessionCursor {
 				b.WriteString(selectedItemStyle.Render(line) + "\n")
@@ -611,6 +670,22 @@ func (m *Model) handleNotification(n notify.Notification) {
 	}
 }
 
+// addSidebarPane splits off a sidebar pane in the given window target
+// and refocuses back to the main (left) pane.
+func (m Model) addSidebarPane(target string) {
+	if m.tmux == nil {
+		return
+	}
+	moPath, err := os.Executable()
+	if err != nil {
+		return
+	}
+	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
+	m.tmux.SplitWindow(target, 22, sidebarCmd)
+	// Refocus to the main pane (left/first pane)
+	m.tmux.SelectPane(target + ".0")
+}
+
 type statusMsgEvent string
 type clearStatusMsg struct{}
 
@@ -656,6 +731,8 @@ func (m Model) launchSession() tea.Cmd {
 			return statusMsgEvent(fmt.Sprintf("Failed to launch claude: %v", err))
 		}
 
+		m.addSidebarPane(target)
+
 		if err := m.tmux.SwitchToWindow(target); err != nil {
 			return statusMsgEvent(fmt.Sprintf("Launched but failed to switch: %v", err))
 		}
@@ -698,6 +775,8 @@ func (m Model) resumeSession() tea.Cmd {
 			return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
 		}
 
+		m.addSidebarPane(target)
+
 		if err := m.tmux.SwitchToWindow(target); err != nil {
 			return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
 		}
@@ -735,6 +814,8 @@ func (m Model) resumeSpecificSession(sessionID string) tea.Cmd {
 			return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
 		}
 
+		m.addSidebarPane(target)
+
 		if err := m.tmux.SwitchToWindow(target); err != nil {
 			return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
 		}
@@ -767,7 +848,7 @@ func (m Model) attachSession() tea.Cmd {
 	}
 }
 
-func Run(projects []project.Project, tmuxSession, socketPath string) error {
+func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
 		// Use the actual current session — the user may be in a session
@@ -789,8 +870,12 @@ func Run(projects []project.Project, tmuxSession, socketPath string) error {
 		defer ns.Stop()
 	}
 
-	m := NewModel(projects, tc, ns)
+	m := NewModel(projects, tc, ns, stateFilePath)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
+
+	// Clean up state file on exit
+	state.Remove(stateFilePath)
+
 	return err
 }

@@ -10,11 +10,13 @@ import (
 
 const defaultTmuxSession = "mo"
 const defaultSocketPath = "/tmp/unky-mo.sock"
+const defaultStateFilePath = "/tmp/unky-mo-state.json"
 
 type Config struct {
 	WorkspaceDirs []string          `toml:"workspace_dirs"`
 	TmuxSession   string            `toml:"tmux_session"`
 	SocketPath    string            `toml:"socket_path"`
+	StateFilePath string            `toml:"state_file_path"`
 	ScanOnStartup bool              `toml:"scan_on_startup"`
 	NotifySound   bool              `toml:"notify_sound"`
 	Projects      []project.Project `toml:"project"`
@@ -54,6 +56,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.SocketPath == "" {
 		cfg.SocketPath = defaultSocketPath
+	}
+	if cfg.StateFilePath == "" {
+		cfg.StateFilePath = defaultStateFilePath
 	}
 
 	return cfg, nil
