@@ -157,7 +157,10 @@ mo scan                         # Re-scan workspace directories
 mo hooks install                # Install notification hooks
 mo hooks uninstall              # Remove notification hooks
 mo hooks status                 # Check if hooks are installed
-mo config                       # Print config file path
+mo sync init <repo-url>         # Connect to a private GitHub repo for syncing
+mo sync push <project>          # Push a session to the sync repo
+mo sync pull <project>          # Pull a session and resume it
+mo sync list                    # List available synced sessions
 mo version                      # Print version
 ```
 
@@ -239,6 +242,64 @@ To remove the hooks:
 ```bash
 mo hooks uninstall
 ```
+
+## Session Sync
+
+Sync individual Claude sessions between machines using a private GitHub repo. Useful when you want to pick up a session on another computer.
+
+### Setup (once per machine)
+
+1. Create a private repo on GitHub (e.g. `coding-sessions`)
+2. Initialize on each machine:
+
+```bash
+mo sync init git@github.com:youruser/coding-sessions.git
+```
+
+### Pushing a session
+
+When you're done on one machine and want to continue on another:
+
+```bash
+mo sync push moma-apps-rails
+```
+
+This exports the Claude conversation history and metadata to the repo.
+
+### Pulling a session
+
+On the other machine:
+
+```bash
+mo sync pull moma-apps-rails
+```
+
+This downloads the session, opens a tmux window with a sidebar, and resumes the Claude session with `claude --resume`.
+
+### Listing available sessions
+
+```bash
+mo sync list
+```
+
+Shows all sessions in the repo with their title, source machine, and age:
+
+```
+  moma-apps-rails           generate-test-qr-tickets  from mac-office  2h ago
+  unky-mo                   unky-mo-session-orchestrator  from mac-office  5m ago
+```
+
+### What gets synced
+
+Each push stores:
+- The Claude session JSONL file (full conversation history)
+- Metadata: session ID, title, project path, hostname, timestamp
+
+Only one session per project is kept — each push overwrites the previous.
+
+### Privacy note
+
+Session files contain your full Claude conversation, which may include file contents and command outputs from your projects. Only sync to a **private** repo you control.
 
 ## tmux Tips
 
