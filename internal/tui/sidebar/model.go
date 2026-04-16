@@ -37,6 +37,7 @@ type Model struct {
 	tmux          *ttmux.Client
 	stateFile     string
 	statusMsg     string
+	cursorSetOnce bool // true after initial cursor placement
 	// The project this sidebar belongs to (detected from tmux window name)
 	windowName string
 	windowPath string
@@ -98,6 +99,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stateTickMsg:
 		m.refreshState()
 		return m, stateTick()
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			// Calculate which item was clicked (Y=0 is the header line)
+			clicked := m.viewportStart + msg.Y - 1 // -1 for header
+			if clicked >= 0 && clicked < len(m.items) {
+				m.cursor = clicked
+				m.ensureCursorVisible()
+				return m, m.switchToSelected()
+			}
+		}
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -174,27 +186,29 @@ func (m Model) View() string {
 		var line string
 		if item.IsHome {
 			name := truncateName("☗ "+item.Name, maxNameLen)
-			if isSelected {
-				line = cursor + selectedStyle.Render(name)
-			} else {
-				line = cursor + homeStyle.Render(name)
-			}
+			line = cursor + homeStyle.Render(name)
 		} else {
 			dot := renderDot(item.Status)
 			name := truncateName(item.Name, maxNameLen-2)
+			isCurrent := item.WindowName == m.windowName
 
-			// Add short status label for idle/permission
-			if item.Status == "idle" && maxNameLen > len(name)+5 {
-				name += " " + dotIdle.Render("idle")
-			} else if item.Status == "permission" && maxNameLen > len(name)+5 {
-				name += " " + dotPermission.Render("perm")
-			}
-
-			if isSelected {
-				line = cursor + dot + " " + selectedStyle.Render(name)
+			// Style the name — current window always gets bold purple + underline
+			var styledName string
+			if isCurrent {
+				styledName = currentStyle.Render(name)
 			} else {
-				line = cursor + dot + " " + normalStyle.Render(name)
+				styledName = normalStyle.Render(name)
 			}
+
+			// Append status label after styling (so underline doesn't extend)
+			suffix := ""
+			if item.Status == "idle" {
+				suffix = " " + dotIdle.Render("idle")
+			} else if item.Status == "permission" {
+				suffix = " " + dotPermission.Render("perm")
+			}
+
+			line = cursor + dot + " " + styledName + suffix
 		}
 
 		b.WriteString(line + "\n")
@@ -298,6 +312,18 @@ func (m *Model) refreshState() {
 	}
 
 	m.items = items
+
+	// Set cursor to own project on first load only
+	if !m.cursorSetOnce {
+		for i, item := range m.items {
+			if item.WindowName == m.windowName {
+				m.cursor = i
+				break
+			}
+		}
+		m.cursorSetOnce = true
+	}
+
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1
 	}
@@ -372,14 +398,16 @@ func (m Model) switchToSelected() tea.Cmd {
 		}
 
 		item := m.items[m.cursor]
+		var target string
 		if item.IsHome {
-			// Switch to window 0 (the main TUI)
-			target := fmt.Sprintf("%s:0", m.tmux.SessionName)
-			m.tmux.SwitchToWindow(target)
+			target = fmt.Sprintf("%s:0", m.tmux.SessionName)
 		} else if item.WindowName != "" {
-			target := fmt.Sprintf("%s:%s", m.tmux.SessionName, item.WindowName)
-			m.tmux.SwitchToWindow(target)
+			target = fmt.Sprintf("%s:%s", m.tmux.SessionName, item.WindowName)
+		} else {
+			return nil
 		}
+
+		m.tmux.SwitchToWindow(target)
 
 		return nil
 	}

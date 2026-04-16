@@ -21,20 +21,15 @@
       "Bash(git tag --list*)",
       "Bash(git config --get*)",
 
-      "Bash(./bin/rails test*)",
-      "Bash(./bin/rake)",
-      "Bash(./bin/rake erblint*)",
-      "Bash(./bin/rake test*)",
-      "Bash(./bin/rails routes*)",
-      "Bash(./bin/rails runner*)",
-      "Bash(./bin/rails db:migrate:status*)",
+      "Bash(go build*)",
+      "Bash(go run*)",
+      "Bash(go test*)",
+      "Bash(go vet*)",
+      "Bash(go mod*)",
+      "Bash(go get*)",
+      "Bash(go fmt*)",
 
-      "Bash(rubocop*)",
-      "Bash(./bin/rubocop*)",
-
-      "Bash(bundle show*)",
-      "Bash(bundle list*)",
-      "Bash(bundle info*)",
+      "Bash(make*)",
 
       "Bash(ls*)",
       "Bash(wc*)",
@@ -48,94 +43,25 @@
       "Bash(which*)",
       "Bash(diff*)",
       "Bash(du*)",
+      "Bash(mkdir*)",
+      "Bash(rmdir*)",
+      "Bash(chmod*)",
+      "Bash(stat*)",
+      "Bash(sleep*)",
 
-      "Bash(yarn lint*)",
-      "Bash(yarn build*)",
-      "Bash(npx eslint*)",
-      "Bash(npx*)",
+      "Bash(tmux*)",
 
-      "Bash(ruby -e*)",
-      "Bash(ruby -c*)",
-
-      "Bash(bundle install*)",
-      "Bash(bundle exec erblint*)",
-      "Bash(bundle exec foreman*)",
-
-      "Bash(claude plugin*)",
-      "Bash(claude plugins*)",
-      "Bash(claude config*)",
-      "Bash(claude mcp*)",
-
-      "mcp__plugin_atlassian_atlassian__getAccessibleAtlassianResources",
-      "mcp__plugin_atlassian_atlassian__getJiraIssue",
-      "mcp__plugin_atlassian_atlassian__getJiraIssueRemoteIssueLinks",
-      "mcp__plugin_atlassian_atlassian__searchJiraIssuesUsingJql",
-      "mcp__plugin_atlassian_atlassian__addCommentToJiraIssue",
-      "mcp__plugin_atlassian_atlassian__getConfluencePage",
-      "mcp__plugin_atlassian_atlassian__getTransitionsForJiraIssue",
-      "mcp__plugin_atlassian_atlassian__searchConfluenceUsingCql",
-      "mcp__plugin_atlassian_atlassian__searchAtlassian",
-
-      "mcp__playwright__browser_navigate",
-      "mcp__playwright__browser_navigate_back",
-      "mcp__playwright__browser_snapshot",
-      "mcp__playwright__browser_click",
-      "mcp__playwright__browser_evaluate",
-      "mcp__playwright__browser_wait_for",
-      "mcp__playwright__browser_console_messages",
-      "mcp__playwright__browser_network_requests",
-      "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_type",
-      "mcp__playwright__browser_fill_form",
-      "mcp__playwright__browser_select_option",
-      "mcp__playwright__browser_hover",
-      "mcp__playwright__browser_press_key",
-      "mcp__playwright__browser_resize",
-      "mcp__playwright__browser_tabs",
-      "mcp__playwright__browser_close"
+      "Bash(claude --help*)",
+      "Bash(claude --version*)"
     ],
-    "defaultMode": "plan",
     "deny": [
       "Bash(git push*)",
       "Bash(git reset --hard*)",
       "Bash(git clean*)",
-      "Bash(rm -rf*)",
-      "Bash(./bin/rails db:drop*)",
-      "Bash(./bin/rails db:reset*)",
-      "Bash(./bin/rails db:schema:load*)",
-      "Bash(rails credentials:*)"
-    ]
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "filepath=$(jq -r '.tool_input.file_path // empty'); if [ -n \"$filepath\" ] && echo \"$filepath\" | grep -qE '\\.rb$'; then rubocop -a --fail-level=error \"$filepath\" 2>&1 | tail -5; fi",
-            "timeout": 30,
-            "statusMessage": "Running Rubocop..."
-          },
-          {
-            "type": "command",
-            "command": "filepath=$(jq -r '.tool_input.file_path // empty'); if [ -n \"$filepath\" ] && echo \"$filepath\" | grep -qE 'app/javascript/.*\\.js$'; then npx eslint --fix \"$filepath\" 2>&1 | tail -5; fi",
-            "timeout": 30,
-            "statusMessage": "Running ESLint..."
-          },
-          {
-            "type": "command",
-            "command": "filepath=$(jq -r '.tool_input.file_path // empty'); if [ -n \"$filepath\" ] && echo \"$filepath\" | grep -qE '\\.html\\.erb$'; then bundle exec erblint \"$filepath\" 2>&1 | tail -5; fi",
-            "timeout": 30,
-            "statusMessage": "Running ERB Lint..."
-          }
-        ]
-      }
+      "Bash(rm -rf*)"
     ]
   },
   "enabledPlugins": {
-    "atlassian@claude-plugins-official": true,
-    "ruby-lsp@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true
   }

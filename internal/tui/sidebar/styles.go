@@ -23,6 +23,11 @@ var (
 	normalStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
 
+	currentStyle = lipgloss.NewStyle().
+			Foreground(colorWhite).
+			Bold(true).
+			Underline(true)
+
 	homeStyle = lipgloss.NewStyle().
 			Foreground(colorPrimary).
 			Bold(true)
