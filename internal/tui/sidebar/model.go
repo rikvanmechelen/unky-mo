@@ -67,13 +67,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
+			if len(m.items) > 0 {
+				m.cursor = (m.cursor - 1 + len(m.items)) % len(m.items)
 				m.ensureCursorVisible()
 			}
 		case "down", "j":
-			if m.cursor < len(m.items)-1 {
-				m.cursor++
+			if len(m.items) > 0 {
+				m.cursor = (m.cursor + 1) % len(m.items)
 				m.ensureCursorVisible()
 			}
 		case "enter":

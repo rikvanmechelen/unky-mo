@@ -98,7 +98,8 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 	l.Title = "Unky Mo"
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
-	l.SetShowHelp(false) // We use our own footer
+	l.SetShowHelp(false)        // We use our own footer
+	l.InfiniteScrolling = true  // Circular navigation
 	l.Styles.Title = titleStyle
 
 	return Model{
@@ -248,16 +249,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
 	case ScreenProject:
-		// Handle up/down for session list cursor
+		// Handle up/down for session list cursor (circular)
 		if msg, ok := msg.(tea.KeyMsg); ok {
-			switch msg.String() {
-			case "up", "k":
-				if m.detailSessionCursor > 0 {
-					m.detailSessionCursor--
-				}
-			case "down", "j":
-				if m.detailSessionCursor < len(m.detailRecentSessions)-1 {
-					m.detailSessionCursor++
+			n := len(m.detailRecentSessions)
+			if n > 0 {
+				switch msg.String() {
+				case "up", "k":
+					m.detailSessionCursor = (m.detailSessionCursor - 1 + n) % n
+				case "down", "j":
+					m.detailSessionCursor = (m.detailSessionCursor + 1) % n
 				}
 			}
 		}
