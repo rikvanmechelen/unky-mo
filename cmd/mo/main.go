@@ -1,0 +1,563 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/config"
+	moSync "github.com/rvanmech/unky-mo/internal/sync"
+	"github.com/rvanmech/unky-mo/internal/tmux"
+	"github.com/rvanmech/unky-mo/internal/tui"
+	"github.com/rvanmech/unky-mo/internal/tui/sidebar"
+	"github.com/spf13/cobra"
+)
+
+var version = "dev"
+
+func main() {
+	rootCmd := &cobra.Command{
+		Use:   "mo",
+		Short: "Unky Mo — Claude Code session orchestrator",
+		Long:  "Manage multiple Claude Code sessions across your projects from a single TUI.",
+		RunE:  runTUI,
+	}
+
+	rootCmd.AddCommand(listCmd())
+	rootCmd.AddCommand(scanCmd())
+	rootCmd.AddCommand(startCmd())
+	rootCmd.AddCommand(attachCmd())
+	rootCmd.AddCommand(sessionsCmd())
+	rootCmd.AddCommand(resumeCmd())
+	rootCmd.AddCommand(hooksCmd())
+	rootCmd.AddCommand(syncCmd())
+	rootCmd.AddCommand(sidebarCmd())
+	rootCmd.AddCommand(versionCmd())
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runTUI(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	// If not inside tmux, auto-launch into a tmux session
+	if !tmux.IsInsideTmux() {
+		return launchInTmux(cfg.TmuxSession)
+	}
+
+	projects, err := cfg.LoadProjects()
+	if err != nil {
+		return fmt.Errorf("loading projects: %w", err)
+	}
+	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath)
+}
+
+func listCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all known projects",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+			projects, err := cfg.LoadProjects()
+			if err != nil {
+				return fmt.Errorf("loading projects: %w", err)
+			}
+			if len(projects) == 0 {
+				fmt.Println("No projects found. Configure workspace_dirs in", config.DefaultConfigPath())
+				return nil
+			}
+			for _, p := range projects {
+				lang := p.Language
+				if lang == "" {
+					lang = "?"
+				}
+				desc := ""
+				if p.Description != "" {
+					desc = " — " + p.Description
+				}
+				fmt.Printf("  %-30s [%-6s] %s%s\n", p.Name, lang, p.Path, desc)
+			}
+			fmt.Printf("\n%d projects found\n", len(projects))
+			return nil
+		},
+	}
+}
+
+func scanCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "scan",
+		Short: "Re-scan workspace directories for projects",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+			if len(cfg.WorkspaceDirs) == 0 {
+				fmt.Println("No workspace_dirs configured in", config.DefaultConfigPath())
+				return nil
+			}
+			projects, err := cfg.LoadProjects()
+			if err != nil {
+				return fmt.Errorf("scanning: %w", err)
+			}
+			for _, p := range projects {
+				lang := p.Language
+				if lang == "" {
+					lang = "?"
+				}
+				fmt.Printf("  %-30s [%-6s] %s\n", p.Name, lang, p.Path)
+			}
+			fmt.Printf("\n%d projects found in %v\n", len(projects), cfg.WorkspaceDirs)
+			return nil
+		},
+	}
+}
+
+// launchInTmux creates (or attaches to) the mo tmux session and runs the mo binary inside it.
+func launchInTmux(sessionName string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolving executable path: %w", err)
+	}
+
+	tmuxBin, err := exec.LookPath("tmux")
+	if err != nil {
+		return fmt.Errorf("tmux not found in PATH: %w", err)
+	}
+
+	tc := tmux.NewClient(sessionName)
+	if tc.SessionExists() {
+		// Check if TUI is alive in window 0
+		paneCmd := tc.PaneCommand(sessionName + ":0")
+		if paneCmd != "mo" && paneCmd != "" {
+			// TUI died, shell is showing — restart it
+			fmt.Printf("Restarting TUI in existing session %q...\n", sessionName)
+			tc.SendKeys(sessionName+":0", self)
+		} else {
+			fmt.Printf("Attaching to existing session %q...\n", sessionName)
+		}
+		argv := []string{"tmux", "attach-session", "-t", sessionName}
+		return syscall.Exec(tmuxBin, argv, os.Environ())
+	}
+
+	// Create a new session running mo as the initial command
+	fmt.Printf("Starting tmux session %q...\n", sessionName)
+	argv := []string{"tmux", "new-session", "-s", sessionName, self}
+	return syscall.Exec(tmuxBin, argv, os.Environ())
+}
+
+// addCLISidebarPane adds a sidebar pane to a tmux window target.
+func addCLISidebarPane(tc *tmux.Client, target string) {
+	moPath, err := os.Executable()
+	if err != nil {
+		return
+	}
+	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
+	tc.SplitWindow(target, 22, sidebarCmd)
+	tc.SelectPane(target + ".0")
+}
+
+func findProject(cfg *config.Config, name string) (string, error) {
+	projects, err := cfg.LoadProjects()
+	if err != nil {
+		return "", err
+	}
+	for _, p := range projects {
+		if p.Name == name {
+			return p.Path, nil
+		}
+	}
+	return "", fmt.Errorf("project %q not found. Run 'mo list' to see available projects", name)
+}
+
+func startCmd() *cobra.Command {
+	var prompt string
+	cmd := &cobra.Command{
+		Use:   "start <project>",
+		Short: "Start a new Claude session in a project",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			projectPath, err := findProject(cfg, args[0])
+			if err != nil {
+				return err
+			}
+
+			tc := tmux.NewClient(cfg.TmuxSession)
+			if err := tc.EnsureSession(); err != nil {
+				return fmt.Errorf("creating tmux session: %w", err)
+			}
+
+			windowName := args[0]
+			if tc.WindowExists(windowName) {
+				fmt.Printf("Session already exists for %s. Use 'mo attach %s' to switch to it.\n", windowName, windowName)
+				return nil
+			}
+
+			target, err := tc.CreateWindow(windowName, projectPath)
+			if err != nil {
+				return fmt.Errorf("creating window: %w", err)
+			}
+
+			claudeCmd := "claude"
+			if prompt != "" {
+				claudeCmd = fmt.Sprintf("claude -p %q", prompt)
+			}
+
+			if err := tc.SendKeys(target, claudeCmd); err != nil {
+				return fmt.Errorf("launching claude: %w", err)
+			}
+
+			addCLISidebarPane(tc, target)
+
+			fmt.Printf("Started Claude session in %s (tmux: %s)\n", windowName, target)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "Initial prompt for Claude")
+	return cmd
+}
+
+func attachCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "attach <project>",
+		Short: "Switch to a project's tmux window",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			tc := tmux.NewClient(cfg.TmuxSession)
+			windowName := args[0]
+
+			if !tc.WindowExists(windowName) {
+				return fmt.Errorf("no session for %q. Use 'mo start %s' to create one", windowName, windowName)
+			}
+
+			target := cfg.TmuxSession + ":" + windowName
+			if err := tc.SwitchToWindow(target); err != nil {
+				return fmt.Errorf("switching to window: %w", err)
+			}
+
+			fmt.Printf("Attached to %s\n", windowName)
+			return nil
+		},
+	}
+}
+
+func sessionsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessions",
+		Short: "List active Claude Code sessions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessions, err := claude.LiveSessions()
+			if err != nil {
+				return fmt.Errorf("reading sessions: %w", err)
+			}
+			if len(sessions) == 0 {
+				fmt.Println("No active Claude sessions")
+				return nil
+			}
+			for _, s := range sessions {
+				name := s.Name
+				if name == "" {
+					name = "(unnamed)"
+				}
+				age := time.Since(time.UnixMilli(s.StartedAt)).Truncate(time.Minute)
+				fmt.Printf("  %-20s %-36s PID:%-6d %s ago  %s\n", name, s.SessionID, s.PID, age, s.CWD)
+			}
+			fmt.Printf("\n%d active sessions\n", len(sessions))
+			return nil
+		},
+	}
+}
+
+func resumeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume <project>",
+		Short: "Resume the most recent Claude session in a project",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			projectPath, err := findProject(cfg, args[0])
+			if err != nil {
+				return err
+			}
+
+			// Find session to resume: prefer live session, fall back to most recent historical
+			var sessionID string
+			if live := claude.SessionForPath(projectPath); live != nil {
+				sessionID = live.SessionID
+			} else {
+				recent := claude.RecentSessions(projectPath, 1)
+				if len(recent) > 0 {
+					sessionID = recent[0].SessionID
+				}
+			}
+			if sessionID == "" {
+				return fmt.Errorf("no sessions found for %q", args[0])
+			}
+
+			tc := tmux.NewClient(cfg.TmuxSession)
+			if err := tc.EnsureSession(); err != nil {
+				return fmt.Errorf("creating tmux session: %w", err)
+			}
+
+			windowName := args[0]
+			if tc.WindowExists(windowName) {
+				fmt.Printf("Window already exists. Use 'mo attach %s' to switch to it.\n", windowName)
+				return nil
+			}
+
+			target, err := tc.CreateWindow(windowName, projectPath)
+			if err != nil {
+				return fmt.Errorf("creating window: %w", err)
+			}
+
+			resumeCmd := fmt.Sprintf("claude --resume %s", sessionID)
+			if err := tc.SendKeys(target, resumeCmd); err != nil {
+				return fmt.Errorf("resuming session: %w", err)
+			}
+
+			addCLISidebarPane(tc, target)
+
+			fmt.Printf("Resuming session %s in %s\n", sessionID, windowName)
+			return nil
+		},
+	}
+}
+
+func syncCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Sync sessions between machines via a private git repo",
+	}
+
+	syncDir := moSync.DefaultSyncDir()
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "init <repo-url>",
+		Short: "Connect to a private GitHub repo for syncing sessions",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := moSync.Init(args[0], syncDir); err != nil {
+				return err
+			}
+			fmt.Printf("Sync repo initialized at %s\n", syncDir)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "push <project>",
+		Short: "Push a project's session to the sync repo",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+			projectPath, err := findProject(cfg, args[0])
+			if err != nil {
+				return err
+			}
+
+			fmt.Println("Note: Session files may contain file contents and command outputs from your projects.")
+			fmt.Println("Only sync to a private repo you control.")
+			fmt.Println()
+
+			if err := moSync.Push(args[0], projectPath, syncDir); err != nil {
+				return err
+			}
+			fmt.Printf("Pushed session for %s\n", args[0])
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "pull <project>",
+		Short: "Pull a session from the sync repo and resume it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			meta, err := moSync.Pull(args[0], syncDir)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Pulled session %q (%s) from %s\n", meta.Title, meta.SessionID[:8], meta.Hostname)
+
+			// Open tmux window and resume
+			tc := tmux.NewClient(cfg.TmuxSession)
+			if err := tc.EnsureSession(); err != nil {
+				return fmt.Errorf("creating tmux session: %w", err)
+			}
+
+			windowName := args[0]
+			if tc.WindowExists(windowName) {
+				fmt.Printf("Window already exists. Use 'mo attach %s' to switch to it.\n", windowName)
+				return nil
+			}
+
+			target, err := tc.CreateWindow(windowName, meta.ProjectPath)
+			if err != nil {
+				return fmt.Errorf("creating window: %w", err)
+			}
+
+			resumeCmd := fmt.Sprintf("claude --resume %s", meta.SessionID)
+			if err := tc.SendKeys(target, resumeCmd); err != nil {
+				return fmt.Errorf("resuming session: %w", err)
+			}
+
+			addCLISidebarPane(tc, target)
+
+			fmt.Printf("Resumed session in %s\n", windowName)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List available sessions in the sync repo",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessions, err := moSync.List(syncDir)
+			if err != nil {
+				return err
+			}
+			if len(sessions) == 0 {
+				fmt.Println("No synced sessions found")
+				return nil
+			}
+			for _, s := range sessions {
+				title := s.Title
+				if title == "" {
+					title = s.SessionID[:8] + "..."
+				}
+				age := time.Since(s.PushedAt).Truncate(time.Minute)
+				fmt.Printf("  %-25s %s  from %s  %s ago\n", s.ProjectName, title, s.Hostname, age)
+			}
+			fmt.Printf("\n%d synced sessions\n", len(sessions))
+			return nil
+		},
+	})
+
+	return cmd
+}
+
+func sidebarCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "sidebar",
+		Short:  "Run the session status sidebar (used in tmux panes)",
+		Hidden: true, // Internal command, launched automatically
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !tmux.IsInsideTmux() {
+				return fmt.Errorf("sidebar must run inside tmux")
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			session := tmux.CurrentSessionName()
+			if session == "" {
+				session = cfg.TmuxSession
+			}
+
+			return sidebar.Run(session, cfg.StateFilePath)
+		},
+	}
+}
+
+func hooksCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "hooks",
+		Short: "Manage Claude Code notification hooks",
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "install",
+		Short: "Install Unky Mo notification hooks into Claude settings",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			notifyScript, _ := filepath.Abs("scripts/notify-hook.sh")
+			stopScript, _ := filepath.Abs("scripts/stop-hook.sh")
+
+			// Check scripts exist
+			for _, s := range []string{notifyScript, stopScript} {
+				if _, err := os.Stat(s); err != nil {
+					return fmt.Errorf("script not found: %s\nRun this from the unky-mo project directory", s)
+				}
+			}
+
+			if err := claude.InstallHooks(notifyScript, stopScript); err != nil {
+				return fmt.Errorf("installing hooks: %w", err)
+			}
+			fmt.Println("Hooks installed into", claude.ClaudeSettingsPath())
+			fmt.Println("  Notification hook:", notifyScript)
+			fmt.Println("  Stop hook:", stopScript)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove Unky Mo hooks from Claude settings",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := claude.UninstallHooks(); err != nil {
+				return fmt.Errorf("uninstalling hooks: %w", err)
+			}
+			fmt.Println("Hooks removed from", claude.ClaudeSettingsPath())
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Check if Unky Mo hooks are installed",
+		Run: func(cmd *cobra.Command, args []string) {
+			if claude.HooksInstalled() {
+				fmt.Println("Hooks are installed in", claude.ClaudeSettingsPath())
+			} else {
+				fmt.Println("Hooks are NOT installed. Run 'mo hooks install' to set up.")
+			}
+		},
+	})
+
+	return cmd
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("mo", version)
+		},
+	}
+}

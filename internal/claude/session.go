@@ -121,7 +121,7 @@ func SessionForPath(path string) *Session {
 //  2. If the JSONL hasn't been modified in >60s, the session is likely waiting for
 //     something (user input, permission approval, etc.)
 func IsSessionIdle(projectPath, sessionID string) bool {
-	dir := projectsDirForPath(projectPath)
+	dir := ProjectsDirForPath(projectPath)
 	path := filepath.Join(dir, sessionID+".jsonl")
 
 	info, err := os.Stat(path)
@@ -207,10 +207,10 @@ func (rs RecentSession) DisplayName() string {
 	return rs.SessionID
 }
 
-// projectsDirForPath returns the Claude projects subdirectory for a given project path.
+// ProjectsDirForPath returns the Claude projects subdirectory for a given project path.
 // Claude encodes paths by replacing both "/" and "_" with "-".
 // e.g. /Users/rvanmech/workspace/mla_wrapper_app -> ~/.claude/projects/-Users-rvanmech-workspace-mla-wrapper-app
-func projectsDirForPath(projectPath string) string {
+func ProjectsDirForPath(projectPath string) string {
 	home, _ := os.UserHomeDir()
 	encoded := strings.TrimPrefix(projectPath, "/")
 	encoded = strings.ReplaceAll(encoded, "/", "-")
@@ -222,7 +222,7 @@ func projectsDirForPath(projectPath string) string {
 // RecentSessions returns historical sessions for a project, sorted by most recent first.
 // maxResults limits how many to return (0 = all).
 func RecentSessions(projectPath string, maxResults int) []RecentSession {
-	dir := projectsDirForPath(projectPath)
+	dir := ProjectsDirForPath(projectPath)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
