@@ -85,7 +85,19 @@
       "Bash(grep -m1 '\"slug\"' ~/.claude/projects/-Users-rvanmech-workspace-moma-apps-rails/0d8be6e9*.jsonl)",
       "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); print\\(d.get\\('slug','N/A'\\)\\)\")",
       "Bash(grep:*)",
-      "Bash(sed -n '79p' ~/.claude/projects/-Users-rvanmech-workspace-unky-mo/59f94698*.jsonl)"
+      "Bash(sed -n '79p' ~/.claude/projects/-Users-rvanmech-workspace-unky-mo/59f94698*.jsonl)",
+      "Bash(tmux set-option:*)",
+      "Bash(/Users/rvanmech/workspace/unky-mo/scripts/notify-hook.sh)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python3 -c 'import json; print\\(json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\)['\\\\''pid'\\\\'']\\)')",
+      "Bash(python3 -c 'import json; print\\(json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\)['\\\\''cwd'\\\\'']\\)')",
+      "Bash(python3 -c 'import json; print\\(json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\).get\\('\\\\''name'\\\\'','\\\\'''\\\\''\\)\\)')",
+      "Bash(cat)",
+      "Bash(rm -f /tmp/unky-mo-hook-debug.log)",
+      "Bash(nc --help)",
+      "Bash(python3 -c \" import sys, json d = json.loads\\(sys.stdin.readline\\(\\)\\) print\\('type:', d.get\\('type', 'N/A'\\)\\) print\\('timestamp:', d.get\\('timestamp', 'N/A'\\)\\) \")",
+      "Skill(commit-commands:commit)",
+      "Bash(tmux list-commands:*)"
     ],
     "enabledMcpjsonServers": [
       "playwright"
