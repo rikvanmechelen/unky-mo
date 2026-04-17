@@ -46,24 +46,27 @@ type Model struct {
 }
 
 func NewModel(sessionName, stateFile string) Model {
-	// Detect which project window we're in
-	windowName := ttmux.CurrentWindowName()
-	windowPath := ""
-
-	// Look up the project path from the state file
-	if sf, err := state.Read(stateFile); err == nil {
-		for _, p := range sf.Projects {
-			if p.WindowName == windowName || p.Name == windowName {
-				windowPath = p.Path
-				break
-			}
+	// Resolve this pane's own window via TMUX_PANE, not the client's current
+	// focus. Using `display-message -p` without a target returns the attached
+	// client's focused window, which is racy right after a new pane is created
+	// (e.g. when launching a worktree session: the pane is split before the
+	// client switches focus). For worktree windows this is especially broken
+	// because the window name (<project>@<branch>) isn't in the state file.
+	windowName := ""
+	if paneID := os.Getenv("TMUX_PANE"); paneID != "" {
+		out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{window_name}").Output()
+		if err == nil {
+			windowName = strings.TrimSpace(string(out))
 		}
 	}
-
-	// Fallback: use pwd if we couldn't find it in state
-	if windowPath == "" {
-		windowPath, _ = os.Getwd()
+	if windowName == "" {
+		windowName = ttmux.CurrentWindowName()
 	}
+
+	// The sidebar process's cwd is its pane's cwd at startup; it's a Go
+	// program with no shell that could cd elsewhere, so this is always the
+	// right path for the window we're in — including worktrees.
+	windowPath, _ := os.Getwd()
 
 	m := Model{
 		tmux:       ttmux.NewClient(sessionName),
