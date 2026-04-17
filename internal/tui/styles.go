@@ -51,11 +51,11 @@ var (
 
 	// Status indicators
 	statusActive = lipgloss.NewStyle().
-			Foreground(colorSuccess).
+			Foreground(colorWarning).
 			Bold(true)
 
 	statusIdle = lipgloss.NewStyle().
-			Foreground(colorWarning).
+			Foreground(colorSuccess).
 			Bold(true)
 
 	statusPermission = lipgloss.NewStyle().

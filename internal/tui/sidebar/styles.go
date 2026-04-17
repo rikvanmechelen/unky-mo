@@ -33,10 +33,10 @@ var (
 			Bold(true)
 
 	dotActive = lipgloss.NewStyle().
-			Foreground(colorSuccess)
+			Foreground(colorWarning)
 
 	dotIdle = lipgloss.NewStyle().
-		Foreground(colorWarning)
+		Foreground(colorSuccess)
 
 	dotPermission = lipgloss.NewStyle().
 			Foreground(colorDanger)
