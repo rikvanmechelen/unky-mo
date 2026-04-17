@@ -18,7 +18,7 @@ go build -o mo ./cmd/mo
 - **Cobra** CLI with subcommands
 - **tmux** session management — TUI runs as window 0, Claude sessions as sibling windows with sidebar panes
 - **Unix domain socket** at `/tmp/unky-mo.sock` for real-time notifications from Claude Code hooks
-- **Shared state file** at `/tmp/unky-mo-state.json` — main TUI writes, sidebar instances read (1s poll)
+- **Shared state file** at `/tmp/unky-mo-state.json` — main TUI writes, sidebar instances read (1s poll). Includes worktree entries with `parent` field.
 - **Session detection** — dual approach: PID liveness checks from `~/.claude/sessions/{PID}.json` + JSONL staleness/message-type analysis for idle detection
 - **Config** at `~/.config/unky-mo/config.toml`
 
@@ -55,6 +55,9 @@ tmux session "mo"
 ├── window 2: "moma-go"
 │   ├── pane 0: Claude Code session
 │   └── pane 1: sidebar
+├── window 3: "unky-mo@feature-auth" (worktree session)
+│   ├── pane 0: Claude Code session
+│   └── pane 1: sidebar
 └── ...
 ```
 
@@ -76,6 +79,16 @@ Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When d
 - **`split-window` without `-c` does not inherit the target pane's cwd.** Modern tmux (3.2+) uses the session's launch directory instead. Always pass `-c <path>` explicitly when creating panes that need a specific cwd. See `internal/tmux/client.go:SplitWindow`.
 - **Format strings in `-c` don't expand against the `-t` target.** `tmux split-window -t foo:bar -c "#{pane_current_path}"` expands the format against whatever pane tmux considers "current" server-wide (typically the most recently active pane of the attached client), **not** against the target pane. Always pass a literal path string to `-c`.
 - **`tmux display-message -p ...` without `-t` uses the attached client's focused pane**, not the calling pane. From a subprocess (like `mo sidebar`), use `TMUX_PANE` for pane-specific queries: `tmux display-message -t "$TMUX_PANE" -p '#{window_name}'`. See `internal/tui/sidebar/model.go:NewModel`.
+
+## Worktree Session Detection
+
+Worktrees use the `<project>.worktrees/<branch>` directory convention. Session detection matches CWDs containing `.worktrees/` back to parent projects by stripping the suffix to recover the main project path.
+
+**Data flow**: `updateProjectStatuses()` detects worktree CWDs → stores in `m.activeWorktrees` → `writeStateFile()` emits state entries with `Parent` field → sidebar reads and renders them indented under the parent.
+
+- **Window naming**: worktree windows are named `<project>@<branch>` (e.g. `unky-mo@feature-auth`)
+- **State file entries**: worktree entries have `name: "@branch"`, `parent: "project"`, and their own status
+- **Session matching is path-based throughout.** The sidebar's `refreshFromSessions()` fallback must compare `item.Path` (filesystem path) against `session.CWD`, never `item.WindowName` (display name). Mixing these up silently breaks detection.
 
 ## Notification Flow
 
