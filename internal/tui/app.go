@@ -100,6 +100,10 @@ type Model struct {
 	activeSessions int
 	attentionCount int
 	gitStatuses    map[string]project.GitStatus // project path → git status
+	// Dashboard active sessions panel (right side)
+	dashFocusLeft      bool // true = project list, false = sessions panel
+	dashSessionItems   []dashSessionItem
+	dashSessionCursor  int
 	// Detail views
 	detailProject   *project.Project
 	detailSession   *claude.Session
@@ -154,6 +158,7 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 		tmux:          tmuxClient,
 		notifServer:   notifServer,
 		notifState:    make(sessionStateMap),
+		dashFocusLeft: true,
 		stateFilePath: stateFilePath,
 	}
 }
@@ -247,6 +252,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, keys.Enter):
+			if m.screen == ScreenDashboard && !m.dashFocusLeft {
+				// Sessions panel: switch to the selected session's tmux window
+				if m.dashSessionCursor >= 0 && m.dashSessionCursor < len(m.dashSessionItems) {
+					item := m.dashSessionItems[m.dashSessionCursor]
+					if m.tmux != nil {
+						target := m.tmux.SessionName + ":" + item.WindowName
+						m.tmux.SwitchToWindow(target)
+					}
+				}
+				return m, nil
+			}
 			if m.screen == ScreenDashboard {
 				p := m.currentProject()
 				if p != nil {
@@ -341,8 +357,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.Tab):
+			if m.screen == ScreenDashboard {
+				m.dashFocusLeft = !m.dashFocusLeft
+				return m, nil
+			}
 			if m.screen == ScreenProject {
 				m.detailFocusLeft = !m.detailFocusLeft
+				return m, nil
+			}
+
+		case msg.String() == "right" || msg.String() == "l":
+			if m.screen == ScreenDashboard {
+				m.dashFocusLeft = false
+				return m, nil
+			}
+			if m.screen == ScreenProject {
+				m.detailFocusLeft = false
+				return m, nil
+			}
+
+		case msg.String() == "left" || msg.String() == "h":
+			if m.screen == ScreenDashboard {
+				if !m.dashFocusLeft {
+					m.dashFocusLeft = true
+					return m, nil
+				}
+			}
+			if m.screen == ScreenProject {
+				if !m.detailFocusLeft {
+					m.detailFocusLeft = true
+					return m, nil
+				}
+				// If already on left panel, go back to dashboard
+				m.screen = ScreenDashboard
 				return m, nil
 			}
 
@@ -473,6 +520,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch m.screen {
 	case ScreenDashboard:
+		// Right panel (active sessions): handle up/down ourselves
+		if !m.dashFocusLeft {
+			if msg, ok := msg.(tea.KeyMsg); ok {
+				n := len(m.dashSessionItems)
+				if n > 0 {
+					switch msg.String() {
+					case "up", "k":
+						m.dashSessionCursor = (m.dashSessionCursor - 1 + n) % n
+					case "down", "j":
+						m.dashSessionCursor = (m.dashSessionCursor + 1) % n
+					}
+				}
+			}
+			return m, nil
+		}
+		// Left panel: delegate to bubbles list
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
@@ -527,6 +590,50 @@ func (m Model) View() string {
 	}
 }
 
+// dashSessionItem represents an active session in the dashboard's right panel.
+type dashSessionItem struct {
+	Name       string
+	WindowName string
+	Status     SessionStatus
+}
+
+// refreshDashSessions rebuilds the active sessions list for the dashboard panel.
+func (m *Model) refreshDashSessions() {
+	var items []dashSessionItem
+	for _, item := range m.list.Items() {
+		pi, ok := item.(ProjectItem)
+		if !ok || pi.status == StatusNone {
+			continue
+		}
+		items = append(items, dashSessionItem{
+			Name:       pi.project.Name,
+			WindowName: pi.project.Name,
+			Status:     pi.status,
+		})
+	}
+	// Also add active worktree sessions
+	for _, wtList := range m.activeWorktrees {
+		for _, wt := range wtList {
+			items = append(items, dashSessionItem{
+				Name:       wt.WindowName,
+				WindowName: wt.WindowName,
+				Status:     wt.Status,
+			})
+		}
+	}
+	m.dashSessionItems = items
+	if m.dashSessionCursor >= len(items) {
+		m.dashSessionCursor = max(0, len(items)-1)
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (m Model) dashboardView() string {
 	// Build status summary for the title bar
 	var statusParts []string
@@ -538,15 +645,109 @@ func (m Model) dashboardView() string {
 	}
 	if len(statusParts) > 0 {
 		summary := strings.Join(statusParts, "  ")
-		padding := m.width - lipgloss.Width(m.list.View()) // approximate
-		if padding < 0 {
-			padding = 0
-		}
-		m.list.Title = "Unky Mo  " + summary
+		_ = summary
+		m.list.Title = "Unky Mo  " + strings.Join(statusParts, "  ")
 	}
+
+	// Calculate panel widths
+	totalWidth := m.width
+	if totalWidth == 0 {
+		totalWidth = 120
+	}
+	rightWidth := 35
+	dividerWidth := 3
+	leftWidth := totalWidth - rightWidth - dividerWidth
+	if leftWidth < 40 {
+		leftWidth = 40
+	}
+
+	// Resize list to fit the left panel
+	footerHeight := 3
+	m.list.SetSize(leftWidth, m.height-footerHeight)
+
+	// === Left panel: project list ===
+	leftStr := m.list.View()
+
+	// === Right panel: active sessions ===
+	var right strings.Builder
+
+	focusIndicator := ""
+	if !m.dashFocusLeft {
+		focusIndicator = " ◀"
+	}
+	// Pad top to align with the first project row in the list
+	// (list has: title, blank, status line, blank = 4 lines before items)
+	right.WriteString("\n\n\n")
+	right.WriteString(headerStyle.Render("Active Sessions"+focusIndicator) + "\n")
+
+	if len(m.dashSessionItems) == 0 {
+		right.WriteString("  " + footerDescStyle.Render("No active sessions") + "\n")
+	} else {
+		for i, item := range m.dashSessionItems {
+			selected := !m.dashFocusLeft && m.dashSessionCursor == i
+			cursor := "  "
+			if selected {
+				cursor = "▸ "
+			}
+
+			var dot string
+			switch item.Status {
+			case StatusActive:
+				dot = statusActive.Render(symbolActive)
+			case StatusIdle:
+				dot = statusIdle.Render(symbolIdle)
+			case StatusPermission:
+				dot = statusPermission.Render(symbolPermission)
+			default:
+				dot = statusNone.Render(symbolNone)
+			}
+
+			name := item.Name
+			maxName := rightWidth - 6
+			if maxName > 0 && len(name) > maxName {
+				name = name[:maxName-3] + "..."
+			}
+
+			var styledName string
+			if selected {
+				styledName = selectedItemStyle.Render(name)
+			} else {
+				styledName = normalItemStyle.Render(name)
+			}
+
+			suffix := ""
+			if item.Status == StatusIdle {
+				suffix = " " + statusIdle.Render("idle")
+			} else if item.Status == StatusPermission {
+				suffix = " " + statusPermission.Render("perm")
+			}
+
+			right.WriteString(cursor + dot + " " + styledName + suffix + "\n")
+		}
+	}
+
+	rightStr := right.String()
+
+	// Pad panels to same height
+	leftLines := strings.Count(leftStr, "\n")
+	rightLines := strings.Count(rightStr, "\n")
+	maxLines := leftLines
+	if rightLines > maxLines {
+		maxLines = rightLines
+	}
+	for i := rightLines; i < maxLines; i++ {
+		rightStr += "\n"
+	}
+
+	leftPanel := lipgloss.NewStyle().Width(leftWidth).Render(leftStr)
+	divider := lipgloss.NewStyle().Foreground(colorMuted).Render(" │ ")
+	rightPanel := lipgloss.NewStyle().Width(rightWidth).Render(rightStr)
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, divider, rightPanel)
 
 	footer := m.renderFooter([]footerBinding{
 		{"↑↓", "navigate"},
+		{"←→", "switch panel"},
 		{"enter", "open"},
 		{"n", "new session"},
 		{"a", "attach"},
@@ -556,7 +757,7 @@ func (m Model) dashboardView() string {
 	})
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.list.View(),
+		body,
 		footer,
 	)
 }
@@ -710,6 +911,7 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.activeSessions = activeCount
 	m.attentionCount = attentionCount
 	m.list.SetItems(items)
+	m.refreshDashSessions()
 	m.writeStateFile()
 }
 
@@ -973,13 +1175,13 @@ func (m Model) projectDetailView() string {
 				{"w", "worktree"},
 				{"c", "checkout"},
 				{"enter", "close"},
-				{"tab", "switch panel"},
+				{"←→", "switch panel"},
 				{"esc", "back"},
 			}
 		} else {
 			bindings = []footerBinding{
 				{"↑↓", "select"},
-				{"tab", "switch panel"},
+				{"←→", "switch panel"},
 				{"enter", "open"},
 				{"o", "open PR in browser"},
 				{"n", "new session"},

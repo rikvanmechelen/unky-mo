@@ -19,11 +19,11 @@ type keyMap struct {
 
 var keys = keyMap{
 	Enter: key.NewBinding(
-		key.WithKeys("enter", "right", "l"),
+		key.WithKeys("enter"),
 		key.WithHelp("enter", "open"),
 	),
 	Back: key.NewBinding(
-		key.WithKeys("esc", "backspace", "left", "h"),
+		key.WithKeys("esc", "backspace"),
 		key.WithHelp("esc", "back"),
 	),
 	New: key.NewBinding(

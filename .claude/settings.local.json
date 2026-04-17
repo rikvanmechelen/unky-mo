@@ -103,7 +103,19 @@
       "Bash(ps -ax -o pid,ppid,command)",
       "Bash(awk '$2 == 97502')",
       "Bash(ps:*)",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)",
+      "Bash(git push:*)",
+      "Bash(python3:*)",
+      "Bash(git:*)",
+      "Bash(~/go/bin/mo version:*)",
+      "Bash(./mo debug:*)",
+      "Bash(/Users/rvanmech/go/bin/mo debug:*)",
+      "Read(//tmp/**)",
+      "Bash(/Users/rvanmech/go/bin/mo version:*)",
+      "Bash(codesign -v ./mo)",
+      "Bash(codesign -v ~/go/bin/mo)",
+      "Bash(cp ./mo /tmp/mo-test)",
+      "Bash(/tmp/mo-test version:*)"
     ],
     "enabledMcpjsonServers": [
       "playwright"
