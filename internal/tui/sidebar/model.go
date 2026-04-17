@@ -18,6 +18,7 @@ type SidebarItem struct {
 	Path       string // project directory path
 	WindowName string // tmux window target; empty for Home (window 0)
 	Status     string // "none", "active", "idle", "permission"
+	Parent     string // non-empty for worktree entries (parent project name)
 	IsHome     bool
 	IsHeader   bool // non-interactive section header (e.g., "── Terminals ──")
 	// Terminal items
@@ -242,8 +243,16 @@ func (m Model) View() string {
 			line = cursor + homeStyle.Render(name)
 		} else {
 			dot := renderDot(item.Status)
-			name := truncateName(item.Name, maxNameLen-2)
 			isCurrent := item.WindowName == m.windowName
+
+			// Worktree entries are indented under their parent project
+			indent := ""
+			nameMaxLen := maxNameLen - 2
+			if item.Parent != "" {
+				indent = "  "
+				nameMaxLen -= 2
+			}
+			name := truncateName(item.Name, nameMaxLen)
 
 			// Style the name — current window always gets bold purple + underline
 			var styledName string
@@ -261,7 +270,7 @@ func (m Model) View() string {
 				suffix = " " + dotPermission.Render("perm")
 			}
 
-			line = cursor + dot + " " + styledName + suffix
+			line = cursor + dot + " " + indent + styledName + suffix
 		}
 
 		b.WriteString(line + "\n")
@@ -364,6 +373,7 @@ func (m *Model) refreshState() {
 			Path:       p.Path,
 			WindowName: p.WindowName,
 			Status:     p.Status,
+			Parent:     p.Parent,
 		})
 	}
 
@@ -399,7 +409,7 @@ func (m *Model) refreshFromSessions() {
 		if m.items[i].IsHome {
 			continue
 		}
-		if liveByPath[m.items[i].WindowName] {
+		if liveByPath[m.items[i].Path] {
 			m.items[i].Status = "active"
 		} else {
 			m.items[i].Status = "none"

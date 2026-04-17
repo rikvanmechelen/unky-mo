@@ -11,7 +11,8 @@ type ProjectState struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	WindowName string `json:"window_name"`
-	Status     string `json:"status"` // "none", "active", "idle", "permission"
+	Status     string `json:"status"`           // "none", "active", "idle", "permission"
+	Parent     string `json:"parent,omitempty"` // non-empty for worktree entries
 }
 
 // StateFile is the shared state written by the main TUI and read by sidebar instances.

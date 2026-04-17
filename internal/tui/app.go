@@ -59,6 +59,14 @@ func sessionTick() tea.Cmd {
 	})
 }
 
+// WorktreeStatus tracks an active session in a git worktree.
+type WorktreeStatus struct {
+	Branch     string
+	Path       string
+	WindowName string // "project@branch"
+	Status     SessionStatus
+}
+
 // sessionStateMap holds the notification-based status overrides for projects.
 // Key is project path, value is the status from notifications.
 type sessionStateMap map[string]SessionStatus
@@ -98,6 +106,8 @@ type Model struct {
 	detailPRCursor  int
 	detailPRErr     string // error message if gh failed
 	detailFocusLeft bool   // true = left panel (sessions/worktrees), false = right (PRs)
+	// activeWorktrees tracks worktree sessions grouped by parent project path.
+	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
 	stateFilePath string
 	width         int
@@ -544,6 +554,35 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	activeCount := 0
 	attentionCount := 0
 
+	// Build set of known project paths for worktree matching
+	projectPaths := make(map[string]string) // projectPath → projectName
+	for _, item := range items {
+		pi, ok := item.(ProjectItem)
+		if !ok {
+			continue
+		}
+		projectPaths[pi.project.Path] = pi.project.Name
+	}
+
+	// Detect worktree sessions: CWDs containing ".worktrees/" that map to a known project
+	worktrees := make(map[string][]WorktreeStatus)
+	for cwd, status := range polled {
+		if idx := strings.Index(cwd, ".worktrees/"); idx >= 0 {
+			parentPath := cwd[:idx+len(".worktrees/")-1] // strip trailing "/"
+			parentPath = strings.TrimSuffix(parentPath, ".worktrees")
+			if projectName, ok := projectPaths[parentPath]; ok {
+				branch := filepath.Base(cwd)
+				worktrees[parentPath] = append(worktrees[parentPath], WorktreeStatus{
+					Branch:     branch,
+					Path:       cwd,
+					WindowName: projectName + "@" + branch,
+					Status:     status,
+				})
+			}
+		}
+	}
+	m.activeWorktrees = worktrees
+
 	for i, item := range items {
 		pi, ok := item.(ProjectItem)
 		if !ok {
@@ -564,6 +603,14 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 			activeCount++
 		} else {
 			pi.status = StatusNone
+		}
+
+		// Count active worktree sessions for this project
+		for _, wt := range worktrees[pi.project.Path] {
+			activeCount++
+			if wt.Status == StatusIdle {
+				attentionCount++
+			}
 		}
 
 		items[i] = pi
@@ -603,6 +650,24 @@ func (m *Model) writeStateFile() {
 			WindowName: pi.project.Name,
 			Status:     statusStr,
 		})
+
+		// Append worktree entries for this project
+		for _, wt := range m.activeWorktrees[pi.project.Path] {
+			wtStatus := "active"
+			switch wt.Status {
+			case StatusIdle:
+				wtStatus = "idle"
+			case StatusPermission:
+				wtStatus = "permission"
+			}
+			projects = append(projects, state.ProjectState{
+				Name:       "@" + wt.Branch,
+				Path:       wt.Path,
+				WindowName: wt.WindowName,
+				Status:     wtStatus,
+				Parent:     pi.project.Name,
+			})
+		}
 	}
 
 	sessionName := ""
