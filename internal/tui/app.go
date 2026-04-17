@@ -799,8 +799,8 @@ func (m Model) restartSidebars() {
 }
 
 // addSidebarPane splits off a sidebar pane in the given window target
-// and refocuses back to the main (left) pane.
-func (m Model) addSidebarPane(target string) {
+// with the given cwd, then refocuses back to the main (left) pane.
+func (m Model) addSidebarPane(target, cwd string) {
 	if m.tmux == nil {
 		return
 	}
@@ -809,9 +809,7 @@ func (m Model) addSidebarPane(target string) {
 		return
 	}
 	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	// Split pane .0 specifically so tmux expands #{pane_current_path} against
-	// that pane (a session:window target expands against the client instead).
-	m.tmux.SplitWindow(target+".0", 22, sidebarCmd)
+	m.tmux.SplitWindow(target, 22, cwd, sidebarCmd)
 	// Refocus to the main pane (left/first pane)
 	m.tmux.SelectPane(target + ".0")
 }
@@ -867,7 +865,7 @@ func (m Model) launchClaudeInWindow(windowName, cwd, shellCmd string) tea.Msg {
 	if err := m.tmux.SendKeys(target, shellCmd); err != nil {
 		return statusMsgEvent(fmt.Sprintf("Failed to launch claude: %v", err))
 	}
-	m.addSidebarPane(target)
+	m.addSidebarPane(target, cwd)
 	if err := m.tmux.SwitchToWindow(target); err != nil {
 		return statusMsgEvent(fmt.Sprintf("Launched but failed to switch: %v", err))
 	}
@@ -1019,7 +1017,7 @@ func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) t
 		return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
 	}
 
-	m.addSidebarPane(target)
+	m.addSidebarPane(target, projectPath)
 
 	if err := m.tmux.SwitchToWindow(target); err != nil {
 		return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))

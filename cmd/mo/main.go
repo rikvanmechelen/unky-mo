@@ -166,16 +166,15 @@ func launchInTmux(sessionName string) error {
 	return syscall.Exec(tmuxBin, argv, os.Environ())
 }
 
-// addCLISidebarPane adds a sidebar pane to a tmux window target.
-func addCLISidebarPane(tc *tmux.Client, target string) {
+// addCLISidebarPane adds a sidebar pane to a tmux window target with the
+// given cwd.
+func addCLISidebarPane(tc *tmux.Client, target, cwd string) {
 	moPath, err := os.Executable()
 	if err != nil {
 		return
 	}
 	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	// Split pane .0 specifically so tmux expands #{pane_current_path} against
-	// that pane (a session:window target expands against the client instead).
-	tc.SplitWindow(target+".0", 22, sidebarCmd)
+	tc.SplitWindow(target, 22, cwd, sidebarCmd)
 	tc.SelectPane(target + ".0")
 }
 
@@ -234,7 +233,7 @@ func startCmd() *cobra.Command {
 				return fmt.Errorf("launching claude: %w", err)
 			}
 
-			addCLISidebarPane(tc, target)
+			addCLISidebarPane(tc, target, projectPath)
 
 			fmt.Printf("Started Claude session in %s (tmux: %s)\n", windowName, target)
 			return nil
@@ -351,7 +350,7 @@ func resumeCmd() *cobra.Command {
 				return fmt.Errorf("resuming session: %w", err)
 			}
 
-			addCLISidebarPane(tc, target)
+			addCLISidebarPane(tc, target, projectPath)
 
 			fmt.Printf("Resuming session %s in %s\n", sessionID, windowName)
 			return nil
@@ -481,7 +480,7 @@ func syncCmd() *cobra.Command {
 				return fmt.Errorf("resuming session: %w", err)
 			}
 
-			addCLISidebarPane(tc, target)
+			addCLISidebarPane(tc, target, projectPath)
 
 			fmt.Printf("Resumed session in %s\n", windowName)
 			return nil
