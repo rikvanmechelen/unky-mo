@@ -58,6 +58,21 @@ tmux session "mo"
 └── ...
 ```
 
+## TUI Key Handling
+
+Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
+
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Handles `enter`, `esc`, `n`, `a`, `r`, `w`, `?`, `ctrl+r`, `q`.
+- **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Handles `up`/`down`, `enter` (switch window), `t` (terminal split), `` ` `` (popup), `ctrl+r` (restart).
+
+`t` and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
+
+## tmux Gotchas
+
+- **`split-window` without `-c` does not inherit the target pane's cwd.** Modern tmux (3.2+) uses the session's launch directory instead. Always pass `-c <path>` explicitly when creating panes that need a specific cwd. See `internal/tmux/client.go:SplitWindow`.
+- **Format strings in `-c` don't expand against the `-t` target.** `tmux split-window -t foo:bar -c "#{pane_current_path}"` expands the format against whatever pane tmux considers "current" server-wide (typically the most recently active pane of the attached client), **not** against the target pane. Always pass a literal path string to `-c`.
+- **`tmux display-message -p ...` without `-t` uses the attached client's focused pane**, not the calling pane. From a subprocess (like `mo sidebar`), use `TMUX_PANE` for pane-specific queries: `tmux display-message -t "$TMUX_PANE" -p '#{window_name}'`. See `internal/tui/sidebar/model.go:NewModel`.
+
 ## Notification Flow
 
 ```
