@@ -5,10 +5,10 @@ Claude Code session orchestrator for MoMA workspace projects.
 ## Build & Run
 
 ```
-go build -o mo ./cmd/mo
-./mo          # Launch TUI (auto-creates tmux session if needed)
-./mo list     # List projects
-./mo sessions # List active Claude sessions
+make install   # Build and install to ~/go/bin/mo
+./mo           # Launch TUI (auto-creates tmux session if needed)
+./mo list      # List projects
+./mo sessions  # List active Claude sessions
 ./mo hooks install  # Install notification hooks into ~/.claude/settings.json
 ```
 
@@ -29,8 +29,10 @@ go build -o mo ./cmd/mo
 - `internal/tui/sidebar/` — Compact sidebar TUI for tmux panes (model, styles, run)
 - `internal/tmux/` — tmux command wrapper (sessions, windows, panes, popups, splits)
 - `internal/claude/` — Session detection (live + historical), JSONL parsing, hook management
+- `internal/github/` — GitHub PR fetching via `gh` CLI
 - `internal/notify/` — Unix socket notification server
 - `internal/state/` — Shared JSON state file (atomic write/read between TUI and sidebars)
+- `internal/sync/` — Encrypted session sync between machines via private git repo
 - `internal/config/` — TOML config loading
 - `internal/project/` — Project model, workspace scanner, worktree support
 
@@ -38,8 +40,9 @@ go build -o mo ./cmd/mo
 
 - **Live sessions**: `~/.claude/sessions/{PID}.json` — PID, SessionID, CWD, name
 - **Session history**: `~/.claude/projects/{encoded-path}/{SessionID}.jsonl` — full conversation
-- **Path encoding**: Claude replaces both `/` and `_` with `-` in directory names
+- **Path encoding**: Claude replaces `/`, `_`, and `.` with `-` in directory names
   - e.g. `/Users/rvanmech/workspace/mla_wrapper_app` → `-Users-rvanmech-workspace-mla-wrapper-app`
+  - e.g. `/Users/.../unky-mo.worktrees/testing_worktrees` → `-Users-...-unky-mo-worktrees-testing-worktrees`
 - **Session title**: stored as `{"type":"custom-title","customTitle":"..."}` entries in JSONL (can appear anywhere in file, last one wins)
 - **Idle detection**: if JSONL not modified in >60s, session is stalled; also checks if last message type is `assistant` (Claude finished turn)
 
@@ -51,7 +54,7 @@ tmux session "mo"
 ├── window 1: "moma-apps-rails"
 │   ├── pane 0: Claude Code session
 │   ├── pane 1: sidebar (mo sidebar)
-│   └── pane 2: terminal drawer (optional, toggled via `t`)
+│   └── pane 2+: terminal splits (optional, via `t`)
 ├── window 2: "moma-go"
 │   ├── pane 0: Claude Code session
 │   └── pane 1: sidebar
@@ -97,6 +100,7 @@ Claude hooks → notify-hook.sh → Unix socket → Main TUI → state file → 
 - Circular list navigation (wraps top↔bottom)
 - `ctrl+r` restarts TUI + all sidebars (for dev workflow — picks up new binary)
 - Mouse support enabled automatically on tmux session creation
+- `exec claude` used in panes so windows auto-close when Claude exits (pane-exited hook)
 
 ## Commit Messages
 
@@ -105,6 +109,7 @@ Claude hooks → notify-hook.sh → Unix socket → Main TUI → state file → 
 - Short single line, ~50-70 chars
 - Jira ticket reference at end when applicable (e.g. `OP-175`)
 - Examples: `add sidebar terminal split and popup`, `fix idle detection for stale sessions`
+- Never add Co-Authored-By lines
 
 ## CLI Commands
 
@@ -119,6 +124,11 @@ mo scan               # Re-scan workspace directories
 mo hooks install      # Install notification hooks
 mo hooks uninstall    # Remove hooks
 mo hooks status       # Check hook installation
+mo sync init <url>    # Connect to private GitHub repo for session sync
+mo sync push <proj>   # Push a session (encrypted) to sync repo
+mo sync pull [proj]   # Pull sessions from sync repo
+mo sync list          # List available synced sessions
+mo debug <project>    # Dump session/worktree debug info for a project
 mo sidebar            # Run sidebar TUI (internal, launched in panes)
 mo version            # Print version
 ```
