@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rvanmech/unky-mo/internal/claude"
@@ -45,7 +46,6 @@ type Screen int
 const (
 	ScreenDashboard Screen = iota
 	ScreenProject
-	ScreenWorktrees
 	ScreenHelp
 )
 
@@ -81,10 +81,16 @@ type Model struct {
 	detailSession        *claude.Session
 	detailWorktrees      []project.Worktree
 	detailRecentSessions []claude.RecentSession
-	detailSessionCursor  int
+	// detailCursor is a single index into the combined list:
+	// [recent sessions..., visible worktrees...]. Down-arrow flows naturally
+	// from sessions into worktrees.
+	detailCursor int
 	// Resume-confirmation prompt: non-empty means we're asking the user whether
 	// to disconnect the currently-running session and resume this one instead.
 	pendingResumeSessionID string
+	// worktreeInput is non-nil when the user is entering a branch name for a
+	// new worktree. While set, key events route to the text input.
+	worktreeInput *textinput.Model
 	// State file for sidebar instances
 	stateFilePath string
 	width         int
@@ -149,6 +155,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		// New-worktree input captures all input while active.
+		if m.worktreeInput != nil && m.screen == ScreenProject {
+			switch msg.String() {
+			case "enter":
+				branch := strings.TrimSpace(m.worktreeInput.Value())
+				m.worktreeInput = nil
+				if branch == "" {
+					return m, nil
+				}
+				return m, m.createWorktreeAndLaunch(branch)
+			case "esc", "escape":
+				m.worktreeInput = nil
+				return m, nil
+			}
+			updated, cmd := m.worktreeInput.Update(msg)
+			m.worktreeInput = &updated
+			return m, cmd
+		}
+
 		// Resume-confirmation prompt captures all input while active.
 		if m.pendingResumeSessionID != "" && m.screen == ScreenProject {
 			switch msg.String() {
@@ -180,16 +205,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailSession = claude.SessionForPath(p.Path)
 					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
 					m.detailRecentSessions = claude.RecentSessions(p.Path, 10)
-					m.detailSessionCursor = 0
+					m.detailCursor = 0
 					m.screen = ScreenProject
 				}
 				return m, nil
 			}
 			if m.screen == ScreenProject {
-				// Resume the selected recent session. If a different session is
-				// already running in this project's window, prompt before killing it.
-				if len(m.detailRecentSessions) > 0 && m.detailSessionCursor < len(m.detailRecentSessions) {
-					selectedID := m.detailRecentSessions[m.detailSessionCursor].SessionID
+				sessionN := len(m.detailRecentSessions)
+				worktrees := m.visibleWorktrees()
+				// Session row selected: resume with confirm-if-conflict flow.
+				if m.detailCursor < sessionN {
+					if sessionN == 0 {
+						return m, nil
+					}
+					selectedID := m.detailRecentSessions[m.detailCursor].SessionID
 					if m.tmux != nil && m.detailProject != nil && m.tmux.WindowExists(m.detailProject.Name) {
 						if m.detailSession == nil || m.detailSession.SessionID != selectedID {
 							m.pendingResumeSessionID = selectedID
@@ -197,6 +226,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					return m, m.resumeSpecificSession(selectedID)
+				}
+				// Worktree row selected: launch or switch to its session window.
+				wtIdx := m.detailCursor - sessionN
+				if wtIdx >= 0 && wtIdx < len(worktrees) {
+					return m, m.launchWorktreeSession(worktrees[wtIdx])
 				}
 				return m, nil
 			}
@@ -222,15 +256,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.resumeSession()
 			}
 
-		case key.Matches(msg, keys.Worktree):
-			if m.screen == ScreenDashboard || m.screen == ScreenProject {
-				p := m.currentProject()
-				if p != nil {
-					m.detailProject = p
-					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
-					m.screen = ScreenWorktrees
-				}
-				return m, nil
+		case key.Matches(msg, keys.NewWorktree):
+			if m.screen == ScreenProject && m.detailProject != nil {
+				ti := textinput.New()
+				ti.Placeholder = "new branch name"
+				ti.Focus()
+				ti.CharLimit = 128
+				ti.Width = 40
+				m.worktreeInput = &ti
+				return m, textinput.Blink
 			}
 
 		case key.Matches(msg, keys.Restart):
@@ -275,6 +309,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearStatusMsg:
 		m.statusMsg = ""
 		return m, nil
+
+	case worktreeCreatedMsg:
+		if m.detailProject != nil {
+			m.detailWorktrees, _ = project.ListWorktrees(m.detailProject.Path)
+		}
+		status := msg.status
+		return m, func() tea.Msg { return statusMsgEvent(status) }
 	}
 
 	switch m.screen {
@@ -283,15 +324,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
 	case ScreenProject:
-		// Handle up/down for session list cursor (circular)
+		// Handle up/down across the unified [sessions..., worktrees...] list.
 		if msg, ok := msg.(tea.KeyMsg); ok {
-			n := len(m.detailRecentSessions)
+			n := m.detailCombinedLen()
 			if n > 0 {
 				switch msg.String() {
 				case "up", "k":
-					m.detailSessionCursor = (m.detailSessionCursor - 1 + n) % n
+					m.detailCursor = (m.detailCursor - 1 + n) % n
 				case "down", "j":
-					m.detailSessionCursor = (m.detailSessionCursor + 1) % n
+					m.detailCursor = (m.detailCursor + 1) % n
 				}
 			}
 		}
@@ -308,8 +349,6 @@ func (m Model) View() string {
 	switch m.screen {
 	case ScreenProject:
 		return m.projectDetailView()
-	case ScreenWorktrees:
-		return m.worktreeView()
 	case ScreenHelp:
 		return m.helpView()
 	default:
@@ -372,7 +411,7 @@ func (m Model) helpView() string {
 			{"s", "View all active sessions"},
 		}},
 		{"Other", []footerBinding{
-			{"w", "View git worktrees"},
+			{"w", "Create new git worktree + session"},
 			{"?", "Toggle this help"},
 			{"ctrl+r", "Restart (reload new binary)"},
 			{"q", "Quit"},
@@ -535,14 +574,18 @@ func (m Model) projectDetailView() string {
 		b.WriteString("  " + footerDescStyle.Render(p.Description) + "\n\n")
 	}
 
+	sessionN := len(m.detailRecentSessions)
+	worktrees := m.visibleWorktrees()
+
 	// Recent sessions
 	b.WriteString(headerStyle.Render("Sessions") + "\n")
-	if len(m.detailRecentSessions) == 0 {
+	if sessionN == 0 {
 		b.WriteString("  " + footerDescStyle.Render("No sessions found") + "\n")
 	} else {
 		for i, rs := range m.detailRecentSessions {
+			selected := m.detailCursor == i
 			cursor := "  "
-			if i == m.detailSessionCursor {
+			if selected {
 				cursor = "▸ "
 			}
 
@@ -582,7 +625,7 @@ func (m Model) projectDetailView() string {
 				line += "\n" + footerDescStyle.Render("      "+summary)
 			}
 
-			if i == m.detailSessionCursor {
+			if selected {
 				b.WriteString(selectedItemStyle.Render(line) + "\n")
 			} else {
 				b.WriteString(normalItemStyle.Render(line) + "\n")
@@ -591,17 +634,27 @@ func (m Model) projectDetailView() string {
 	}
 	b.WriteString("\n")
 
-	// Worktrees
-	b.WriteString(headerStyle.Render(fmt.Sprintf("Worktrees (%d)", len(m.detailWorktrees))) + "\n")
-	if len(m.detailWorktrees) == 0 {
+	// Worktrees (main checkout filtered out — it's the project itself)
+	b.WriteString(headerStyle.Render(fmt.Sprintf("Worktrees (%d)", len(worktrees))) + "\n")
+	if len(worktrees) == 0 {
 		b.WriteString("  " + footerDescStyle.Render("none") + "\n")
 	} else {
-		for _, wt := range m.detailWorktrees {
-			branch := wt.Branch
-			if branch == "" {
-				branch = wt.HEAD[:8]
+		for i, wt := range worktrees {
+			selected := m.detailCursor == sessionN+i
+			cursor := "  "
+			if selected {
+				cursor = "▸ "
 			}
-			b.WriteString(fmt.Sprintf("  %s  %s\n", normalItemStyle.Render(branch), footerDescStyle.Render(wt.Path)))
+			branch := wt.Branch
+			if branch == "" && len(wt.HEAD) >= 8 {
+				branch = "(detached " + wt.HEAD[:8] + ")"
+			}
+			line := fmt.Sprintf("%s%s  %s", cursor, branch, footerDescStyle.Render(wt.Path))
+			if selected {
+				b.WriteString(selectedItemStyle.Render(line) + "\n")
+			} else {
+				b.WriteString(normalItemStyle.Render(line) + "\n")
+			}
 		}
 	}
 
@@ -610,21 +663,29 @@ func (m Model) projectDetailView() string {
 		b.WriteString("\n" + notifBadgeStyle.Render(m.statusMsg) + "\n")
 	}
 
-	// Footer — replaced with a confirmation prompt when a resume is pending.
+	// Footer — replaced by a prompt when a pending resume confirm or worktree
+	// input is active.
 	var footer string
-	if m.pendingResumeSessionID != "" {
+	switch {
+	case m.worktreeInput != nil:
+		question := fmt.Sprintf("Create new worktree for %s — branch name:", p.Name)
+		footer = m.renderInputPrompt(question, m.worktreeInput.View(), []footerBinding{
+			{"enter", "create"},
+			{"esc", "cancel"},
+		})
+	case m.pendingResumeSessionID != "":
 		question := fmt.Sprintf("A session is already running for %s. Disconnect it and start the selected session?", p.Name)
 		footer = m.renderPrompt(question, []footerBinding{
 			{"y", "yes"},
 			{"n", "no"},
 		})
-	} else {
+	default:
 		footer = m.renderFooter([]footerBinding{
-			{"↑↓", "select session"},
-			{"enter", "resume selected"},
+			{"↑↓", "select"},
+			{"enter", "open"},
 			{"n", "new session"},
 			{"a", "attach"},
-			{"w", "worktrees"},
+			{"w", "new worktree"},
 			{"esc", "back"},
 			{"?", "help"},
 		})
@@ -641,6 +702,28 @@ func (m Model) projectDetailView() string {
 	return content + footer
 }
 
+// visibleWorktrees returns worktrees shown in the detail view — all known
+// worktrees except the main checkout (whose path matches the project's path).
+func (m Model) visibleWorktrees() []project.Worktree {
+	if m.detailProject == nil {
+		return nil
+	}
+	out := make([]project.Worktree, 0, len(m.detailWorktrees))
+	for _, wt := range m.detailWorktrees {
+		if wt.Path == m.detailProject.Path {
+			continue
+		}
+		out = append(out, wt)
+	}
+	return out
+}
+
+// detailCombinedLen is the number of rows navigable in the project detail view
+// (sessions + visible worktrees), used for cursor bounds.
+func (m Model) detailCombinedLen() int {
+	return len(m.detailRecentSessions) + len(m.visibleWorktrees())
+}
+
 // renderPrompt renders a two-row confirmation bar: the question on top, key
 // hints on the bottom. Uses the same styling as the normal footer.
 func (m Model) renderPrompt(question string, bindings []footerBinding) string {
@@ -655,52 +738,18 @@ func (m Model) renderPrompt(question string, bindings []footerBinding) string {
 	return footerStyle.Width(m.width).Render(body)
 }
 
-func (m Model) worktreeView() string {
-	if m.detailProject == nil {
-		return "No project selected"
+// renderInputPrompt renders a three-row input bar: the question, a text-input
+// line, and key hints. Used by the new-worktree flow.
+func (m Model) renderInputPrompt(question, inputView string, bindings []footerBinding) string {
+	var parts []string
+	for _, b := range bindings {
+		k := footerKeyStyle.Render(b.key)
+		d := footerDescStyle.Render(b.desc)
+		parts = append(parts, k+":"+d)
 	}
-	p := m.detailProject
-
-	var b strings.Builder
-
-	title := titleStyle.Render(" ← Worktrees: " + p.Name + " ")
-	b.WriteString(title + "\n\n")
-
-	if len(m.detailWorktrees) == 0 {
-		b.WriteString(footerDescStyle.Render("  No worktrees found for this project.\n"))
-		b.WriteString(footerDescStyle.Render("  Use 'git worktree add' to create one.\n"))
-	} else {
-		for i, wt := range m.detailWorktrees {
-			branch := wt.Branch
-			if branch == "" && len(wt.HEAD) >= 8 {
-				branch = "(detached " + wt.HEAD[:8] + ")"
-			}
-
-			prefix := "  "
-			if i == 0 {
-				prefix = "  " // main worktree
-			}
-
-			nameStr := selectedItemStyle.Render(branch)
-			pathStr := footerDescStyle.Render(wt.Path)
-
-			b.WriteString(fmt.Sprintf("%s%s\n", prefix, nameStr))
-			b.WriteString(fmt.Sprintf("    %s\n\n", pathStr))
-		}
-	}
-
-	footer := m.renderFooter([]footerBinding{
-		{"esc", "back"},
-		{"?", "help"},
-	})
-
-	content := b.String()
-	contentLines := strings.Count(content, "\n")
-	if contentLines < m.height-3 {
-		content += strings.Repeat("\n", m.height-3-contentLines)
-	}
-
-	return content + footer
+	hints := strings.Join(parts, "  ")
+	body := footerKeyStyle.Render(question) + "\n" + inputView + "\n" + footerDescStyle.Render(hints)
+	return footerStyle.Width(m.width).Render(body)
 }
 
 func formatAge(d time.Duration) string {
@@ -769,10 +818,14 @@ func (m Model) addSidebarPane(target string) {
 type statusMsgEvent string
 type clearStatusMsg struct{}
 
+// worktreeCreatedMsg signals that a new worktree was created; Update refreshes
+// detailWorktrees and surfaces the carried status string.
+type worktreeCreatedMsg struct{ status string }
+
 // currentProject returns the project for the current context —
-// detailProject on the project/worktree screens, list selection on the dashboard.
+// detailProject on the project detail screen, list selection on the dashboard.
 func (m Model) currentProject() *project.Project {
-	if m.detailProject != nil && (m.screen == ScreenProject || m.screen == ScreenWorktrees) {
+	if m.detailProject != nil && m.screen == ScreenProject {
 		return m.detailProject
 	}
 	item, ok := m.list.SelectedItem().(ProjectItem)
@@ -795,29 +848,95 @@ func (m Model) launchSession() tea.Cmd {
 
 		windowName := p.Name
 		if m.tmux.WindowExists(windowName) {
-			// Window already exists, switch to it
 			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
+		return m.launchClaudeInWindow(windowName, p.Path, "claude")
+	}
+}
 
-		target, err := m.tmux.CreateWindow(windowName, p.Path)
+// launchClaudeInWindow creates a new tmux window for the given name + cwd, sends
+// the given shell command (typically "claude" or "claude --resume <id>"),
+// attaches the sidebar pane, and switches focus. Returns a statusMsgEvent.
+func (m Model) launchClaudeInWindow(windowName, cwd, shellCmd string) tea.Msg {
+	target, err := m.tmux.CreateWindow(windowName, cwd)
+	if err != nil {
+		return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
+	}
+	if err := m.tmux.SendKeys(target, shellCmd); err != nil {
+		return statusMsgEvent(fmt.Sprintf("Failed to launch claude: %v", err))
+	}
+	m.addSidebarPane(target)
+	if err := m.tmux.SwitchToWindow(target); err != nil {
+		return statusMsgEvent(fmt.Sprintf("Launched but failed to switch: %v", err))
+	}
+	return statusMsgEvent("Launched Claude in " + windowName)
+}
+
+// launchWorktreeSession opens a Claude session in the given worktree's directory.
+// Uses `<project>@<branch>` as the tmux window name. If the window already
+// exists, switches to it rather than launching a duplicate.
+func (m Model) launchWorktreeSession(wt project.Worktree) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		branch := wt.Branch
+		if branch == "" {
+			if len(wt.HEAD) >= 8 {
+				branch = wt.HEAD[:8]
+			} else {
+				branch = "detached"
+			}
+		}
+		windowName := p.Name + "@" + branch
+		if m.tmux.WindowExists(windowName) {
+			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + windowName)
+		}
+		return m.launchClaudeInWindow(windowName, wt.Path, "claude")
+	}
+}
+
+// createWorktreeAndLaunch creates a new git worktree for the branch (creating
+// the branch if needed) and launches a Claude session in it. Emits a
+// worktreeCreatedMsg so Update can refresh detailWorktrees.
+func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		wtPath, err := project.CreateWorktree(p.Path, branch)
 		if err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
+			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
 		}
-
-		if err := m.tmux.SendKeys(target, "claude"); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to launch claude: %v", err))
+		windowName := p.Name + "@" + branch
+		var status string
+		if m.tmux.WindowExists(windowName) {
+			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+				status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
+			} else {
+				status = "Switched to " + windowName
+			}
+		} else {
+			launch := m.launchClaudeInWindow(windowName, wtPath, "claude")
+			if se, ok := launch.(statusMsgEvent); ok {
+				status = string(se)
+			}
 		}
-
-		m.addSidebarPane(target)
-
-		if err := m.tmux.SwitchToWindow(target); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Launched but failed to switch: %v", err))
-		}
-
-		return statusMsgEvent("Launched Claude in " + windowName)
+		return worktreeCreatedMsg{status: status}
 	}
 }
 

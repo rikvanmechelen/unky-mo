@@ -3,21 +3,21 @@ package tui
 import "github.com/charmbracelet/bubbles/key"
 
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Enter    key.Binding
-	Back     key.Binding
-	New      key.Binding
-	Attach   key.Binding
-	Resume   key.Binding
-	Sessions key.Binding
-	Worktree key.Binding
-	Filter   key.Binding
-	Help     key.Binding
-	Terminal key.Binding
-	Popup    key.Binding
-	Restart  key.Binding
-	Quit     key.Binding
+	Up          key.Binding
+	Down        key.Binding
+	Enter       key.Binding
+	Back        key.Binding
+	New         key.Binding
+	Attach      key.Binding
+	Resume      key.Binding
+	Sessions    key.Binding
+	NewWorktree key.Binding
+	Filter      key.Binding
+	Help        key.Binding
+	Terminal    key.Binding
+	Popup       key.Binding
+	Restart     key.Binding
+	Quit        key.Binding
 }
 
 var keys = keyMap{
@@ -53,9 +53,9 @@ var keys = keyMap{
 		key.WithKeys("s"),
 		key.WithHelp("s", "sessions"),
 	),
-	Worktree: key.NewBinding(
+	NewWorktree: key.NewBinding(
 		key.WithKeys("w"),
-		key.WithHelp("w", "worktrees"),
+		key.WithHelp("w", "new worktree"),
 	),
 	Filter: key.NewBinding(
 		key.WithKeys("/"),

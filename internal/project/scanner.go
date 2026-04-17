@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ScanWorkspace discovers projects in the given directories.
@@ -18,7 +19,7 @@ func ScanWorkspace(dirs []string) ([]Project, error) {
 			continue
 		}
 		for _, entry := range entries {
-			if !entry.IsDir() || entry.Name()[0] == '.' {
+			if !entry.IsDir() || entry.Name()[0] == '.' || strings.HasSuffix(entry.Name(), ".worktrees") {
 				continue
 			}
 			fullPath := filepath.Join(dir, entry.Name())
