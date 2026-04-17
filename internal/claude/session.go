@@ -202,10 +202,10 @@ func LastMessages(projectPath, sessionID string, count int) []SessionMessage {
 }
 
 // IsSessionIdle checks whether a live session is waiting for user input or
-// is stuck on a permission prompt. Uses two signals:
-//  1. If the JSONL's last meaningful message is type=assistant, Claude finished its turn.
-//  2. If the JSONL hasn't been modified in >60s, the session is likely waiting for
-//     something (user input, permission approval, etc.)
+// is stuck on a permission prompt. Checks the last assistant message's
+// stop_reason: "end_turn" = idle (Claude finished), "tool_use" = still working.
+// Falls back to JSONL staleness (>120s with no writes) for edge cases like
+// permission prompts that don't produce assistant messages.
 func IsSessionIdle(projectPath, sessionID string) bool {
 	dir := ProjectsDirForPath(projectPath)
 	path := filepath.Join(dir, sessionID+".jsonl")
@@ -215,13 +215,6 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 		return false
 	}
 
-	// Signal 2: If the file hasn't been written to in >60s, the session is stalled.
-	// A working Claude writes to the JSONL frequently (tool calls, messages, etc).
-	if time.Since(info.ModTime()) > 60*time.Second {
-		return true
-	}
-
-	// Signal 1: Check last meaningful message type
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -250,7 +243,10 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 		}
 
 		var msg struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Message struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"message"`
 		}
 		if json.Unmarshal([]byte(line), &msg) != nil {
 			continue
@@ -261,7 +257,9 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 			"custom-title", "deferred_tools_delta", "":
 			continue
 		case "assistant":
-			return true // Claude finished, waiting for input
+			// end_turn = Claude finished, waiting for input
+			// tool_use = Claude is mid-turn, running a tool
+			return msg.Message.StopReason == "end_turn"
 		case "user":
 			return false // User sent something, Claude is working
 		default:
@@ -269,7 +267,9 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 		}
 	}
 
-	return false
+	// Fallback: if JSONL hasn't been written to in >120s, the session is
+	// likely stuck on a permission prompt or similar (no assistant message).
+	return time.Since(info.ModTime()) > 120*time.Second
 }
 
 // RecentSession represents a historical Claude Code session from the JSONL files.
