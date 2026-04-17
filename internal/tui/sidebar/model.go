@@ -302,7 +302,7 @@ func (m Model) View() string {
 	b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
 	b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
 	b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
-	b.WriteString(footerStyle.Render(" ` popup  ^r redo"))
+	b.WriteString(footerStyle.Render(" ` popup  ^r refresh"))
 
 	return b.String()
 }
