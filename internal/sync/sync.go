@@ -113,8 +113,12 @@ func Push(projectName, projectPath, syncDir string) error {
 	return nil
 }
 
-// Pull fetches a project's session from the sync repo and copies it locally.
-func Pull(projectName, syncDir string) (*SessionMeta, error) {
+// Pull fetches a project's session from the sync repo and copies it into the
+// local Claude projects directory for localProjectPath. localProjectPath is the
+// destination machine's path for the project — it may differ from the source
+// machine's path (e.g. /Users/... on macOS vs /home/... on Linux), so callers
+// must resolve it locally rather than relying on the synced metadata.
+func Pull(projectName, localProjectPath, syncDir string) (*SessionMeta, error) {
 	if err := ensureRepo(syncDir); err != nil {
 		return nil, err
 	}
@@ -135,9 +139,9 @@ func Pull(projectName, syncDir string) (*SessionMeta, error) {
 		return nil, fmt.Errorf("reading session metadata: %w", err)
 	}
 
-	// Copy JSONL to Claude's projects directory
+	// Copy JSONL to Claude's projects directory, encoded from the local path
 	srcJSONL := filepath.Join(syncDir, projectName, meta.SessionID+".jsonl")
-	dstDir := claude.ProjectsDirForPath(meta.ProjectPath)
+	dstDir := claude.ProjectsDirForPath(localProjectPath)
 	if err := os.MkdirAll(dstDir, 0755); err != nil {
 		return nil, err
 	}

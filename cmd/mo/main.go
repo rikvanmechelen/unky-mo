@@ -414,7 +414,12 @@ func syncCmd() *cobra.Command {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			meta, err := moSync.Pull(args[0], syncDir)
+			projectPath, err := findProject(cfg, args[0])
+			if err != nil {
+				return err
+			}
+
+			meta, err := moSync.Pull(args[0], projectPath, syncDir)
 			if err != nil {
 				return err
 			}
@@ -433,7 +438,7 @@ func syncCmd() *cobra.Command {
 				return nil
 			}
 
-			target, err := tc.CreateWindow(windowName, meta.ProjectPath)
+			target, err := tc.CreateWindow(windowName, projectPath)
 			if err != nil {
 				return fmt.Errorf("creating window: %w", err)
 			}
