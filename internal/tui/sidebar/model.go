@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -63,10 +64,13 @@ type Model struct {
 	termCounter   int // incrementing counter for naming
 	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
 	syncStatus string
-	// Changed files tree (from git status)
-	changedFiles  []string // raw file paths from git status --porcelain
-	changedAdded  int      // total lines added
-	changedRemoved int     // total lines removed
+	// Changed files (from git status)
+	changedFiles   []string // raw file paths from git status --porcelain
+	changedAdded   int      // total lines added
+	changedRemoved int      // total lines removed
+	// Focus section: "sessions" or "files"
+	focusSection string
+	fileCursor   int
 }
 
 func NewModel(sessionName, stateFile string) Model {
@@ -101,6 +105,7 @@ func NewModel(sessionName, stateFile string) Model {
 		windowName:    windowName,
 		windowPath:    windowPath,
 		activeTermIdx: -1,
+		focusSection:  "sessions",
 	}
 	m.items = append(m.items, SidebarItem{
 		Name:   "Unky Mo Home",
@@ -150,25 +155,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
-			if len(m.items) > 0 {
+			if m.focusSection == "files" {
+				if m.fileCursor > 0 {
+					m.fileCursor--
+				} else {
+					// Move back to sessions section
+					m.focusSection = "sessions"
+					if len(m.items) > 0 {
+						m.cursor = len(m.items) - 1
+						m.ensureCursorVisible()
+					}
+				}
+			} else if len(m.items) > 0 {
 				m.cursor = (m.cursor - 1 + len(m.items)) % len(m.items)
-				// Skip header items
 				if m.items[m.cursor].IsHeader {
 					m.cursor = (m.cursor - 1 + len(m.items)) % len(m.items)
 				}
 				m.ensureCursorVisible()
 			}
 		case "down", "j":
-			if len(m.items) > 0 {
-				m.cursor = (m.cursor + 1) % len(m.items)
-				// Skip header items
-				if m.items[m.cursor].IsHeader {
-					m.cursor = (m.cursor + 1) % len(m.items)
+			if m.focusSection == "files" {
+				if m.fileCursor < len(m.changedFiles)-1 {
+					m.fileCursor++
+				} else {
+					// Wrap to sessions
+					m.focusSection = "sessions"
+					m.cursor = 0
+					m.ensureCursorVisible()
 				}
-				m.ensureCursorVisible()
+			} else if len(m.items) > 0 {
+				next := (m.cursor + 1) % len(m.items)
+				if m.items[next].IsHeader {
+					next = (next + 1) % len(m.items)
+				}
+				// If we wrapped around and there are changed files, enter files section
+				if next <= m.cursor && len(m.changedFiles) > 0 {
+					m.focusSection = "files"
+					m.fileCursor = 0
+				} else {
+					m.cursor = next
+					m.ensureCursorVisible()
+				}
 			}
 		case "enter":
+			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
+				return m, m.showDiffPopup(m.changedFiles[m.fileCursor])
+			}
 			return m, m.handleEnter()
+		case "d":
+			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
+				return m, m.showDiffPopup(m.changedFiles[m.fileCursor])
+			}
+		case "v":
+			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
+				return m, m.openFileInEditor(m.changedFiles[m.fileCursor])
+			}
+		case "o":
+			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
+				return m, m.openFileExternal(m.changedFiles[m.fileCursor])
+			}
 		case "t":
 			return m, m.toggleDrawer()
 		case "T":
@@ -308,13 +353,10 @@ func (m Model) View() string {
 	}
 
 	if len(m.changedFiles) > 0 && remaining > 3 {
-		// Header takes 2 lines (blank + title)
-		maxTreeLines := remaining - 2
-		if maxTreeLines > 0 {
-			tree := renderFileTree(m.changedFiles, m.width, maxTreeLines)
-			if tree != "" {
-				b.WriteString("\n")
-				noun := "files"
+		maxFileLines := remaining - 2
+		if maxFileLines > 0 {
+			b.WriteString("\n")
+			noun := "files"
 			if len(m.changedFiles) == 1 {
 				noun = "file"
 			}
@@ -323,10 +365,31 @@ func (m Model) View() string {
 				stats += " " + dotIdle.Render(fmt.Sprintf("+%d", m.changedAdded)) + " " + dotPermission.Render(fmt.Sprintf("-%d", m.changedRemoved))
 			}
 			b.WriteString(headerStyle.Render("Changed") + " " + stats + "\n")
-				treeLines := strings.Count(tree, "\n") + 1
-				b.WriteString(normalStyle.Render(tree) + "\n")
-				remaining -= treeLines + 2
+
+			// Build tree lines with file index mapping
+			treeLines := buildFileTreeLines(m.changedFiles)
+			rendered := 0
+			for _, tl := range treeLines {
+				if rendered >= maxFileLines {
+					more := len(m.changedFiles) - rendered
+					if more > 0 {
+						b.WriteString(footerStyle.Render(fmt.Sprintf("  +%d more", more)) + "\n")
+						rendered++
+					}
+					break
+				}
+				isFocused := m.focusSection == "files" && tl.fileIndex >= 0 && m.fileCursor == tl.fileIndex
+				if isFocused {
+					b.WriteString(selectedStyle.Render("▸"+tl.indent+tl.display) + "\n")
+				} else if tl.fileIndex >= 0 {
+					b.WriteString(normalStyle.Render(" "+tl.indent+tl.display) + "\n")
+				} else {
+					// Directory line (not selectable)
+					b.WriteString(footerStyle.Render(" "+tl.indent+tl.display+"/") + "\n")
+				}
+				rendered++
 			}
+			remaining -= rendered + 2
 		}
 	}
 
@@ -340,19 +403,26 @@ func (m Model) View() string {
 		b.WriteString(dotIdle.Render(m.statusMsg) + "\n")
 	}
 
-	// Footer
-	b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
-	b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
-	b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
-	syncLabel := " s sync"
-	switch m.syncStatus {
-	case "synced":
-		syncLabel = " s " + dotIdle.Render("synced")
-	case "stale":
-		syncLabel = " s " + dotActive.Render("sync ↑")
+	// Footer — context-sensitive
+	if m.focusSection == "files" && len(m.changedFiles) > 0 {
+		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/d diff") + "\n")
+		b.WriteString(footerStyle.Render(" v edit   o open") + "\n")
+		b.WriteString(footerStyle.Render(" ` popup  s sync") + "\n")
+		b.WriteString(footerStyle.Render(" ^r refresh"))
+	} else {
+		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
+		b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
+		syncLabel := " s sync"
+		switch m.syncStatus {
+		case "synced":
+			syncLabel = " s " + dotIdle.Render("synced")
+		case "stale":
+			syncLabel = " s " + dotActive.Render("sync ↑")
+		}
+		b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
+		b.WriteString(footerStyle.Render(" ` popup") + syncLabel + "\n")
+		b.WriteString(footerStyle.Render(" ^r refresh"))
 	}
-	b.WriteString(footerStyle.Render(" ` popup") + syncLabel + "\n")
-	b.WriteString(footerStyle.Render(" ^r refresh"))
 
 	return b.String()
 }
@@ -512,6 +582,97 @@ func (m *Model) refreshChangedFiles() {
 			}
 		}
 	}
+}
+
+// fileTreeLine is a single rendered line of the file tree.
+type fileTreeLine struct {
+	display   string // the text to show (filename or directory name)
+	indent    string // leading spaces
+	fileIndex int    // index into changedFiles (-1 for directory nodes)
+}
+
+// buildFileTreeLines creates an indented tree from file paths.
+// Directory nodes that have a single child directory are collapsed.
+func buildFileTreeLines(files []string) []fileTreeLine {
+	type treeNode struct {
+		name     string
+		children map[string]*treeNode
+		order    []string
+		fileIdx  int // index into files, -1 for dirs
+	}
+
+	root := &treeNode{children: make(map[string]*treeNode), fileIdx: -1}
+
+	for i, file := range files {
+		parts := strings.Split(file, "/")
+		cur := root
+		for j, part := range parts {
+			if _, ok := cur.children[part]; !ok {
+				child := &treeNode{
+					name:     part,
+					children: make(map[string]*treeNode),
+					fileIdx:  -1,
+				}
+				if j == len(parts)-1 {
+					child.fileIdx = i
+				}
+				cur.children[part] = child
+				cur.order = append(cur.order, part)
+			}
+			cur = cur.children[part]
+		}
+	}
+
+	// Collapse single-child directories
+	var collapse func(n *treeNode) *treeNode
+	collapse = func(n *treeNode) *treeNode {
+		for _, name := range n.order {
+			n.children[name] = collapse(n.children[name])
+		}
+		if n.fileIdx < 0 && len(n.children) == 1 {
+			childName := n.order[0]
+			child := n.children[childName]
+			if child.fileIdx < 0 {
+				merged := &treeNode{
+					name:     n.name + "/" + child.name,
+					children: child.children,
+					order:    child.order,
+					fileIdx:  -1,
+				}
+				return merged
+			}
+		}
+		return n
+	}
+	for _, name := range root.order {
+		root.children[name] = collapse(root.children[name])
+	}
+
+	// Flatten to lines
+	var lines []fileTreeLine
+	var walk func(n *treeNode, indent string)
+	walk = func(n *treeNode, indent string) {
+		for _, name := range n.order {
+			child := n.children[name]
+			if child.fileIdx >= 0 {
+				lines = append(lines, fileTreeLine{
+					display:   child.name,
+					indent:    indent,
+					fileIndex: child.fileIdx,
+				})
+			} else {
+				lines = append(lines, fileTreeLine{
+					display:   child.name,
+					indent:    indent,
+					fileIndex: -1,
+				})
+				walk(child, indent+"  ")
+			}
+		}
+	}
+	walk(root, " ")
+
+	return lines
 }
 
 // renderFileTree renders changed files as a compact tree.
@@ -922,6 +1083,62 @@ func (m *Model) refreshTerminals() {
 				IsActive:   m.drawerOpen && i == m.activeTermIdx,
 			})
 		}
+	}
+}
+
+func (m Model) showDiffPopup(file string) tea.Cmd {
+	if m.windowPath == "" {
+		return func() tea.Msg { return sidebarStatusMsg("no project path") }
+	}
+	title := fmt.Sprintf(" diff: %s ", filepath.Base(file))
+	diffCmd := fmt.Sprintf("git diff HEAD -- %s | less -R", file)
+	c := exec.Command("tmux", "display-popup", "-E",
+		"-w", "95%", "-h", "95%",
+		"-d", m.windowPath,
+		"-T", title,
+		"sh", "-c", diffCmd)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return sidebarStatusMsg(fmt.Sprintf("diff err: %v", err))
+		}
+		return nil
+	})
+}
+
+func (m Model) openFileInEditor(file string) tea.Cmd {
+	if m.windowPath == "" {
+		return func() tea.Msg { return sidebarStatusMsg("no project path") }
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+	absPath := filepath.Join(m.windowPath, file)
+	title := fmt.Sprintf(" %s ", filepath.Base(file))
+	c := exec.Command("tmux", "display-popup", "-E",
+		"-w", "90%", "-h", "90%",
+		"-d", m.windowPath,
+		"-T", title,
+		editor, absPath)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return sidebarStatusMsg(fmt.Sprintf("editor err: %v", err))
+		}
+		return nil
+	})
+}
+
+func (m Model) openFileExternal(file string) tea.Cmd {
+	absPath := filepath.Join(m.windowPath, file)
+	// Try VS Code first, fall back to macOS open
+	return func() tea.Msg {
+		if err := exec.Command("code", "--goto", absPath+":1:1").Run(); err == nil {
+			return sidebarStatusMsg("opened in VS Code")
+		}
+		if err := exec.Command("open", absPath).Run(); err == nil {
+			return sidebarStatusMsg("opened in default editor")
+		}
+		return sidebarStatusMsg("no external editor found")
 	}
 }
 
