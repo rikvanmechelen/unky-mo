@@ -405,13 +405,44 @@ func syncCmd() *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "pull <project>",
-		Short: "Pull a session from the sync repo and resume it",
-		Args:  cobra.ExactArgs(1),
+		Use:   "pull [project]",
+		Short: "Pull sessions from the sync repo (all by default, or one project with resume)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if len(args) == 0 {
+				resolver := func(name string) string {
+					path, err := findProject(cfg, name)
+					if err != nil {
+						return ""
+					}
+					return path
+				}
+				sessions, err := moSync.PullAll(syncDir, resolver)
+				if err != nil {
+					return err
+				}
+				if len(sessions) == 0 {
+					fmt.Println("No synced sessions found")
+					return nil
+				}
+				for _, s := range sessions {
+					title := s.Title
+					if title == "" {
+						title = s.SessionID[:8] + "..."
+					}
+					marker := ""
+					if _, err := findProject(cfg, s.ProjectName); err != nil {
+						marker = "  (no local repo)"
+					}
+					fmt.Printf("  %-25s %s  from %s%s\n", s.ProjectName, title, s.Hostname, marker)
+				}
+				fmt.Printf("\nPulled %d sessions\n", len(sessions))
+				return nil
 			}
 
 			projectPath, err := findProject(cfg, args[0])
@@ -459,6 +490,10 @@ func syncCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List available sessions in the sync repo",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
 			sessions, err := moSync.List(syncDir)
 			if err != nil {
 				return err
@@ -473,7 +508,11 @@ func syncCmd() *cobra.Command {
 					title = s.SessionID[:8] + "..."
 				}
 				age := time.Since(s.PushedAt).Truncate(time.Minute)
-				fmt.Printf("  %-25s %s  from %s  %s ago\n", s.ProjectName, title, s.Hostname, age)
+				marker := ""
+				if _, err := findProject(cfg, s.ProjectName); err != nil {
+					marker = "  (no local repo)"
+				}
+				fmt.Printf("  %-25s %s  from %s  %s ago%s\n", s.ProjectName, title, s.Hostname, age, marker)
 			}
 			fmt.Printf("\n%d synced sessions\n", len(sessions))
 			return nil

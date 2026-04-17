@@ -159,7 +159,8 @@ mo hooks uninstall              # Remove notification hooks
 mo hooks status                 # Check if hooks are installed
 mo sync init <repo-url>         # Connect to a private GitHub repo for syncing
 mo sync push <project>          # Push a session to the sync repo
-mo sync pull <project>          # Pull a session and resume it
+mo sync pull                    # Pull all sessions (files only, no tmux windows)
+mo sync pull <project>          # Pull a session and resume it in a tmux window
 mo sync list                    # List available synced sessions
 mo version                      # Print version
 ```
@@ -266,15 +267,21 @@ mo sync push moma-apps-rails
 
 This exports the Claude conversation history and metadata to the repo.
 
-### Pulling a session
+### Pulling sessions
 
-On the other machine:
+Pull every synced session's history down to this machine (no tmux windows opened):
+
+```bash
+mo sync pull
+```
+
+Or pull a single project and immediately resume it in a new tmux window:
 
 ```bash
 mo sync pull moma-apps-rails
 ```
 
-This downloads the session, opens a tmux window with a sidebar, and resumes the Claude session with `claude --resume`.
+Sessions for projects that aren't checked out on this machine are still downloaded so they show up in `mo sync list`; they're marked `(no local repo)`.
 
 ### Listing available sessions
 
@@ -287,6 +294,7 @@ Shows all sessions in the repo with their title, source machine, and age:
 ```
   moma-apps-rails           generate-test-qr-tickets  from mac-office  2h ago
   unky-mo                   unky-mo-session-orchestrator  from mac-office  5m ago
+  legacy-importer           one-off cleanup  from mac-office  3d ago  (no local repo)
 ```
 
 ### What gets synced

@@ -186,6 +186,63 @@ func List(syncDir string) ([]SessionMeta, error) {
 	return sessions, nil
 }
 
+// ProjectPathResolver returns the local filesystem path for a synced project name
+// on this machine, or "" if the project isn't present in the local workspace.
+type ProjectPathResolver func(projectName string) string
+
+// PullAll fetches every session in the sync repo and copies each JSONL to the
+// appropriate local Claude projects directory. When resolve returns a local path
+// for a project, the session lands in that path's encoded dir; otherwise it falls
+// back to the source machine's path from the metadata (so the session still shows
+// up in listings even if the project hasn't been checked out locally yet).
+func PullAll(syncDir string, resolve ProjectPathResolver) ([]SessionMeta, error) {
+	if err := ensureRepo(syncDir); err != nil {
+		return nil, err
+	}
+	if err := gitRun(syncDir, "pull"); err != nil {
+		return nil, fmt.Errorf("git pull: %w", err)
+	}
+
+	entries, err := os.ReadDir(syncDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessions []SessionMeta
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == ".git" {
+			continue
+		}
+		metaPath := filepath.Join(syncDir, e.Name(), "session.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		var meta SessionMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+
+		dstPath := resolve(meta.ProjectName)
+		if dstPath == "" {
+			dstPath = meta.ProjectPath
+		}
+
+		srcJSONL := filepath.Join(syncDir, e.Name(), meta.SessionID+".jsonl")
+		dstDir := claude.ProjectsDirForPath(dstPath)
+		if err := os.MkdirAll(dstDir, 0755); err != nil {
+			continue
+		}
+		dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
+		if err := copyFile(srcJSONL, dstJSONL); err != nil {
+			continue
+		}
+
+		sessions = append(sessions, meta)
+	}
+	return sessions, nil
+}
+
 func ensureRepo(syncDir string) error {
 	if _, err := os.Stat(filepath.Join(syncDir, ".git")); err != nil {
 		return fmt.Errorf("sync repo not initialized. Run 'mo sync init <repo-url>' first")
