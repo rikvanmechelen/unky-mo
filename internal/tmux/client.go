@@ -27,9 +27,15 @@ func (c *Client) CreateSession() error {
 	if err := runTmux("new-session", "-d", "-s", c.SessionName); err != nil {
 		return err
 	}
-	// Enable mouse support: scroll, click windows/panes, drag borders
-	runTmux("set-option", "-t", c.SessionName, "mouse", "on")
+	c.EnableMouse()
 	return nil
+}
+
+// EnableMouse turns on mouse support for the session (scroll, click panes/windows,
+// drag borders). Idempotent — safe to call on every launch. Silently no-ops if the
+// session does not exist.
+func (c *Client) EnableMouse() {
+	runTmux("set-option", "-t", c.SessionName, "mouse", "on")
 }
 
 // CreateWindow creates a new window in the session.

@@ -936,6 +936,9 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 			session = tmuxSession
 		}
 		tc = ttmux.NewClient(session)
+		// Ensure mouse support is enabled on this session every launch.
+		// Covers fresh Linux installs where no global `set -g mouse on` exists.
+		tc.EnableMouse()
 	}
 
 	// Start notification server

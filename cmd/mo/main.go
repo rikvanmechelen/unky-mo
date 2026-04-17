@@ -148,13 +148,21 @@ func launchInTmux(sessionName string) error {
 		} else {
 			fmt.Printf("Attaching to existing session %q...\n", sessionName)
 		}
+		tc.EnableMouse()
 		argv := []string{"tmux", "attach-session", "-t", sessionName}
 		return syscall.Exec(tmuxBin, argv, os.Environ())
 	}
 
-	// Create a new session running mo as the initial command
+	// Create a new session detached so we can configure it (mouse, etc.) before
+	// attaching. Using new-session + attach instead of a single foreground
+	// new-session ensures the session options are applied even when the user
+	// has no global tmux mouse setting (common on fresh Linux installs).
 	fmt.Printf("Starting tmux session %q...\n", sessionName)
-	argv := []string{"tmux", "new-session", "-s", sessionName, self}
+	if err := exec.Command("tmux", "new-session", "-d", "-s", sessionName, self).Run(); err != nil {
+		return fmt.Errorf("creating tmux session: %w", err)
+	}
+	tc.EnableMouse()
+	argv := []string{"tmux", "attach-session", "-t", sessionName}
 	return syscall.Exec(tmuxBin, argv, os.Environ())
 }
 
