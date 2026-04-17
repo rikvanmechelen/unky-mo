@@ -102,10 +102,12 @@ type Model struct {
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
 	// Pull requests panel (right side of project detail)
-	detailPRs       []gh.PullRequest
-	detailPRCursor  int
-	detailPRErr     string // error message if gh failed
-	detailFocusLeft bool   // true = left panel (sessions/worktrees), false = right (PRs)
+	detailPRs        []gh.PullRequest
+	detailPRCursor   int
+	detailPRErr      string         // error message if gh failed
+	detailPRExpanded int            // index of expanded PR (-1 = none)
+	detailPRDetail   *gh.PRDetail   // fetched detail for expanded PR
+	detailFocusLeft  bool           // true = left panel (sessions/worktrees), false = right (PRs)
 	// activeWorktrees tracks worktree sessions grouped by parent project path.
 	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
@@ -167,6 +169,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Clear sticky error messages on any keypress
+		if m.statusMsg != "" {
+			lower := strings.ToLower(m.statusMsg)
+			if strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "err:") {
+				m.statusMsg = ""
+			}
+		}
+
 		// Don't intercept keys when filtering
 		if m.list.FilterState() == list.Filtering {
 			break
@@ -232,6 +242,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailPRs = nil
 					m.detailPRCursor = 0
 					m.detailPRErr = ""
+					m.detailPRExpanded = -1
+					m.detailPRDetail = nil
 					m.detailFocusLeft = true
 					m.screen = ScreenProject
 					return m, m.fetchPRs(p.Path)
@@ -239,6 +251,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.screen == ScreenProject {
+				// PR panel: toggle expand/collapse
+				if !m.detailFocusLeft && len(m.detailPRs) > 0 {
+					if m.detailPRExpanded == m.detailPRCursor {
+						// Collapse
+						m.detailPRExpanded = -1
+						m.detailPRDetail = nil
+					} else {
+						// Expand and fetch detail
+						m.detailPRExpanded = m.detailPRCursor
+						m.detailPRDetail = nil
+						return m, m.fetchPRDetail(m.detailPRs[m.detailPRCursor].Number)
+					}
+					return m, nil
+				}
+
 				if m.detailCursor < 0 || m.detailCursor >= len(m.detailRows) {
 					return m, nil
 				}
@@ -311,8 +338,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case key.Matches(msg, keys.Checkout):
+			if m.screen == ScreenProject && !m.detailFocusLeft && m.detailPRExpanded >= 0 && m.detailPRExpanded < len(m.detailPRs) {
+				pr := m.detailPRs[m.detailPRExpanded]
+				projectPath := m.detailProject.Path
+				return m, func() tea.Msg {
+					if err := gh.CheckoutPRBranch(projectPath, pr.Number); err != nil {
+						return statusMsgEvent(fmt.Sprintf("Checkout failed: %v", err))
+					}
+					return statusMsgEvent(fmt.Sprintf("Checked out branch: %s", pr.Branch))
+				}
+			}
+
 		case key.Matches(msg, keys.NewWorktree):
 			if m.screen == ScreenProject && m.detailProject != nil {
+				// If a PR is expanded on the right panel, create worktree from its branch
+				if !m.detailFocusLeft && m.detailPRExpanded >= 0 && m.detailPRExpanded < len(m.detailPRs) {
+					pr := m.detailPRs[m.detailPRExpanded]
+					return m, m.createWorktreeFromPR(pr)
+				}
 				ti := textinput.New()
 				ti.Placeholder = "new branch name"
 				ti.Focus()
@@ -356,10 +400,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsgEvent:
 		m.statusMsg = string(msg)
 		m.list.NewStatusMessage(m.statusMsg)
-		// Clear status after 4 seconds
-		return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
-			return clearStatusMsg{}
-		})
+		// Auto-clear success messages after 4s; errors stay until user presses a key
+		lower := strings.ToLower(m.statusMsg)
+		isError := strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "err:")
+		if !isError {
+			return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
+				return clearStatusMsg{}
+			})
+		}
+		return m, nil
 
 	case clearStatusMsg:
 		m.statusMsg = ""
@@ -370,6 +419,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailPRErr = msg.err.Error()
 		} else {
 			m.detailPRs = msg.prs
+		}
+		return m, nil
+
+	case prDetailMsg:
+		if msg.err == nil {
+			m.detailPRDetail = msg.detail
 		}
 		return m, nil
 
@@ -784,6 +839,7 @@ func (m Model) projectDetailView() string {
 	} else {
 		for i, pr := range m.detailPRs {
 			selected := !m.detailFocusLeft && m.detailPRCursor == i
+			expanded := m.detailPRExpanded == i
 			cursor := "  "
 			if selected {
 				cursor = "▸ "
@@ -804,6 +860,11 @@ func (m Model) projectDetailView() string {
 				right.WriteString(selectedItemStyle.Render(line) + "\n")
 			} else {
 				right.WriteString(normalItemStyle.Render(line) + "\n")
+			}
+
+			// Expanded detail view
+			if expanded {
+				right.WriteString(m.renderPRDetail(pr, rightWidth) + "\n")
 			}
 		}
 	}
@@ -852,15 +913,28 @@ func (m Model) projectDetailView() string {
 			{"n", "no"},
 		})
 	default:
-		footer = m.renderFooter([]footerBinding{
-			{"↑↓", "select"},
-			{"tab", "switch panel"},
-			{"enter", "open"},
-			{"o", "open PR in browser"},
-			{"n", "new session"},
-			{"w", "new worktree"},
-			{"esc", "back"},
-		})
+		var bindings []footerBinding
+		if !m.detailFocusLeft && m.detailPRExpanded >= 0 {
+			bindings = []footerBinding{
+				{"o", "github"},
+				{"w", "worktree"},
+				{"c", "checkout"},
+				{"enter", "close"},
+				{"tab", "switch panel"},
+				{"esc", "back"},
+			}
+		} else {
+			bindings = []footerBinding{
+				{"↑↓", "select"},
+				{"tab", "switch panel"},
+				{"enter", "open"},
+				{"o", "open PR in browser"},
+				{"n", "new session"},
+				{"w", "new worktree"},
+				{"esc", "back"},
+			}
+		}
+		footer = m.renderFooter(bindings)
 	}
 
 	// Pad content to fill screen, then add footer
@@ -1084,6 +1158,94 @@ type clearStatusMsg struct{}
 // detailWorktrees and surfaces the carried status string.
 type worktreeCreatedMsg struct{ status string }
 
+func (m Model) renderPRDetail(pr gh.PullRequest, maxWidth int) string {
+	var b strings.Builder
+	indent := "  │ "
+
+	if m.detailPRDetail != nil && m.detailPRDetail.Number == pr.Number {
+		d := m.detailPRDetail
+
+		// Title + author + branch
+		b.WriteString(indent + selectedItemStyle.Render(d.Title) + "\n")
+		b.WriteString(indent + footerDescStyle.Render(fmt.Sprintf("by %s  %s → %s", d.Author.Login, d.Branch, d.BaseBranch)) + "\n")
+
+		// Stats + review
+		stats := fmt.Sprintf("+%d -%d", d.Additions, d.Deletions)
+		review := d.ReviewDecision
+		if review == "" {
+			review = "no reviews"
+		}
+		b.WriteString(indent + statusActive.Render(stats) + "  " + footerDescStyle.Render(review) + "\n")
+
+		// Body (first few lines)
+		if d.Body != "" {
+			bodyLines := strings.Split(d.Body, "\n")
+			maxLines := 4
+			if len(bodyLines) > maxLines {
+				bodyLines = bodyLines[:maxLines]
+			}
+			for _, line := range bodyLines {
+				line = strings.TrimSpace(line)
+				maxLen := maxWidth - len(indent) - 1
+				if maxLen > 0 && len(line) > maxLen {
+					line = line[:maxLen-3] + "..."
+				}
+				b.WriteString(indent + footerDescStyle.Render(line) + "\n")
+			}
+		}
+
+		b.WriteString(indent + "\n")
+		b.WriteString(indent + footerKeyStyle.Render("o") + ":" + footerDescStyle.Render("github") + "  ")
+		b.WriteString(footerKeyStyle.Render("w") + ":" + footerDescStyle.Render("worktree") + "  ")
+		b.WriteString(footerKeyStyle.Render("c") + ":" + footerDescStyle.Render("checkout") + "  ")
+		b.WriteString(footerKeyStyle.Render("⏎") + ":" + footerDescStyle.Render("close") + "\n")
+	} else {
+		b.WriteString(indent + footerDescStyle.Render("Loading...") + "\n")
+	}
+
+	return b.String()
+}
+
+func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+
+		// Fetch the PR branch from the remote first, then create worktree
+		_ = exec.Command("git", "-C", p.Path, "fetch", "origin", pr.Branch).Run()
+
+		// Create the worktree for the PR branch
+		wtPath, err := project.CreateWorktree(p.Path, pr.Branch)
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
+		}
+
+		// Reset the worktree to the remote branch to ensure it's up to date
+		_ = exec.Command("git", "-C", wtPath, "reset", "--hard", "origin/"+pr.Branch).Run()
+
+		windowName := p.Name + "@" + pr.Branch
+		var status string
+		if m.tmux.WindowExists(windowName) {
+			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+				status = fmt.Sprintf("Worktree ready but failed to switch: %v", err)
+			} else {
+				status = "Switched to " + windowName
+			}
+		} else {
+			launch := m.launchClaudeInWindow(windowName, wtPath, "claude")
+			if se, ok := launch.(statusMsgEvent); ok {
+				status = string(se)
+			}
+		}
+		return worktreeCreatedMsg{status: status}
+	}
+}
+
 // prFetchMsg carries the result of an async PR fetch.
 type prFetchMsg struct {
 	prs []gh.PullRequest
@@ -1094,6 +1256,22 @@ func (m Model) fetchPRs(projectPath string) tea.Cmd {
 	return func() tea.Msg {
 		prs, err := gh.ListPRs(projectPath)
 		return prFetchMsg{prs: prs, err: err}
+	}
+}
+
+// prDetailMsg carries the result of fetching a single PR's detail.
+type prDetailMsg struct {
+	detail *gh.PRDetail
+	err    error
+}
+
+func (m Model) fetchPRDetail(number int) tea.Cmd {
+	return func() tea.Msg {
+		if m.detailProject == nil {
+			return prDetailMsg{err: fmt.Errorf("no project")}
+		}
+		detail, err := gh.GetPRDetail(m.detailProject.Path, number)
+		return prDetailMsg{detail: detail, err: err}
 	}
 }
 

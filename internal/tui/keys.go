@@ -11,6 +11,7 @@ type keyMap struct {
 	NewWorktree   key.Binding
 	Tab           key.Binding
 	OpenInBrowser key.Binding
+	Checkout      key.Binding
 	Help          key.Binding
 	Restart       key.Binding
 	Quit          key.Binding
@@ -48,6 +49,10 @@ var keys = keyMap{
 	OpenInBrowser: key.NewBinding(
 		key.WithKeys("o"),
 		key.WithHelp("o", "open in browser"),
+	),
+	Checkout: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "checkout branch"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),

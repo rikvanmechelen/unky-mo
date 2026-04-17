@@ -93,6 +93,17 @@ func OpenPRInBrowser(projectPath string, number int) error {
 	return cmd.Run()
 }
 
+// CheckoutPRBranch checks out a PR's branch in the given directory.
+func CheckoutPRBranch(projectPath string, number int) error {
+	cmd := exec.Command("gh", "pr", "checkout", fmt.Sprintf("%d", number))
+	cmd.Dir = projectPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // IsGHAvailable checks if the gh CLI is installed and authenticated.
 func IsGHAvailable(projectPath string) bool {
 	cmd := exec.Command("gh", "auth", "status")
