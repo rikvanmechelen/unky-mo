@@ -837,23 +837,21 @@ func (m Model) currentProject() *project.Project {
 
 func (m Model) launchSession() tea.Cmd {
 	return func() tea.Msg {
-		p := m.currentProject()
-		if p == nil {
-			return statusMsgEvent("No project selected")
-		}
-
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
+		windowName, cwd, ok := m.detailContext()
+		if !ok {
+			return statusMsgEvent("No project selected")
+		}
 
-		windowName := p.Name
 		if m.tmux.WindowExists(windowName) {
 			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
-		return m.launchClaudeInWindow(windowName, p.Path, "claude")
+		return m.launchClaudeInWindow(windowName, cwd, "claude")
 	}
 }
 
@@ -942,45 +940,26 @@ func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
 
 func (m Model) resumeSession() tea.Cmd {
 	return func() tea.Msg {
-		p := m.currentProject()
-		if p == nil {
-			return statusMsgEvent("No project selected")
-		}
-
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-
-		session := claude.SessionForPath(p.Path)
-		if session == nil {
-			return statusMsgEvent("No session to resume for " + p.Name)
+		windowName, cwd, ok := m.detailContext()
+		if !ok {
+			return statusMsgEvent("No project selected")
 		}
 
-		windowName := p.Name
+		session := claude.SessionForPath(cwd)
+		if session == nil {
+			return statusMsgEvent("No session to resume for " + windowName)
+		}
+
 		if m.tmux.WindowExists(windowName) {
 			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
-
-		target, err := m.tmux.CreateWindow(windowName, p.Path)
-		if err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
-		}
-
-		resumeCmd := fmt.Sprintf("claude --resume %s", session.SessionID)
-		if err := m.tmux.SendKeys(target, resumeCmd); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
-		}
-
-		m.addSidebarPane(target)
-
-		if err := m.tmux.SwitchToWindow(target); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
-		}
-
-		return statusMsgEvent("Resumed session in " + windowName)
+		return m.launchClaudeInWindow(windowName, cwd, fmt.Sprintf("claude --resume %s", session.SessionID))
 	}
 }
 
@@ -1048,23 +1027,47 @@ func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) t
 	return statusMsgEvent("Resumed session in " + windowName)
 }
 
+// detailContext resolves the tmux window name and cwd for the row the detail
+// cursor is currently on. When the cursor is on a worktree, returns that
+// worktree's window (<project>@<branch>) and path; otherwise returns the main
+// project's. Returns (nil) if no project is in context.
+func (m Model) detailContext() (windowName, cwd string, ok bool) {
+	p := m.currentProject()
+	if p == nil {
+		return "", "", false
+	}
+	if m.screen == ScreenProject {
+		sessionN := len(m.detailRecentSessions)
+		worktrees := m.visibleWorktrees()
+		wtIdx := m.detailCursor - sessionN
+		if wtIdx >= 0 && wtIdx < len(worktrees) {
+			wt := worktrees[wtIdx]
+			branch := wt.Branch
+			if branch == "" && len(wt.HEAD) >= 8 {
+				branch = wt.HEAD[:8]
+			}
+			return p.Name + "@" + branch, wt.Path, true
+		}
+	}
+	return p.Name, p.Path, true
+}
+
 func (m Model) openTerminal() tea.Cmd {
 	return func() tea.Msg {
-		p := m.currentProject()
-		if p == nil {
-			return statusMsgEvent("No project selected")
-		}
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
+		windowName, cwd, ok := m.detailContext()
+		if !ok {
+			return statusMsgEvent("No project selected")
+		}
 
-		windowName := p.Name
 		if !m.tmux.WindowExists(windowName) {
 			return statusMsgEvent("No session window for " + windowName + ". Start a session first.")
 		}
 
 		target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, windowName)
-		paneID, err := m.tmux.SplitWindowHorizontal(target, p.Path)
+		paneID, err := m.tmux.SplitWindowHorizontal(target, cwd)
 		if err != nil {
 			return statusMsgEvent(fmt.Sprintf("Failed to open terminal: %v", err))
 		}
@@ -1078,16 +1081,16 @@ func (m Model) openTerminal() tea.Cmd {
 
 func (m Model) openPopup() tea.Cmd {
 	return func() tea.Msg {
-		p := m.currentProject()
-		if p == nil {
-			return statusMsgEvent("No project selected")
-		}
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
+		windowName, cwd, ok := m.detailContext()
+		if !ok {
+			return statusMsgEvent("No project selected")
+		}
 
-		title := fmt.Sprintf(" %s ", p.Name)
-		if err := m.tmux.Popup(p.Path, title); err != nil {
+		title := fmt.Sprintf(" %s ", windowName)
+		if err := m.tmux.Popup(cwd, title); err != nil {
 			return statusMsgEvent(fmt.Sprintf("Failed to open popup: %v", err))
 		}
 		return nil
@@ -1096,16 +1099,14 @@ func (m Model) openPopup() tea.Cmd {
 
 func (m Model) attachSession() tea.Cmd {
 	return func() tea.Msg {
-		p := m.currentProject()
-		if p == nil {
-			return statusMsgEvent("No project selected")
-		}
-
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
+		windowName, _, ok := m.detailContext()
+		if !ok {
+			return statusMsgEvent("No project selected")
+		}
 
-		windowName := p.Name
 		if !m.tmux.WindowExists(windowName) {
 			return statusMsgEvent("No session for " + windowName)
 		}
