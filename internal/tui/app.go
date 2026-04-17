@@ -809,7 +809,7 @@ func (m Model) addSidebarPane(target, cwd string) {
 		return
 	}
 	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	m.tmux.SplitWindow(target, 22, cwd, sidebarCmd)
+	m.tmux.SplitWindow(target, 33, cwd, sidebarCmd)
 	// Refocus to the main pane (left/first pane)
 	m.tmux.SelectPane(target + ".0")
 }

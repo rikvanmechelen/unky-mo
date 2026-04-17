@@ -174,7 +174,7 @@ func addCLISidebarPane(tc *tmux.Client, target, cwd string) {
 		return
 	}
 	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	tc.SplitWindow(target, 22, cwd, sidebarCmd)
+	tc.SplitWindow(target, 33, cwd, sidebarCmd)
 	tc.SelectPane(target + ".0")
 }
 
