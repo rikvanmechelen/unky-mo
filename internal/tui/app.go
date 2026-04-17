@@ -408,7 +408,6 @@ func (m Model) helpView() string {
 			{"n", "Start new Claude session"},
 			{"a", "Attach to session (switch tmux window)"},
 			{"r", "Resume most recent session"},
-			{"s", "View all active sessions"},
 		}},
 		{"Other", []footerBinding{
 			{"w", "Create new git worktree + session"},
@@ -1050,51 +1049,6 @@ func (m Model) detailContext() (windowName, cwd string, ok bool) {
 		}
 	}
 	return p.Name, p.Path, true
-}
-
-func (m Model) openTerminal() tea.Cmd {
-	return func() tea.Msg {
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
-		}
-		windowName, cwd, ok := m.detailContext()
-		if !ok {
-			return statusMsgEvent("No project selected")
-		}
-
-		if !m.tmux.WindowExists(windowName) {
-			return statusMsgEvent("No session window for " + windowName + ". Start a session first.")
-		}
-
-		target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, windowName)
-		paneID, err := m.tmux.SplitWindowHorizontal(target, cwd)
-		if err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to open terminal: %v", err))
-		}
-
-		m.tmux.SelectPane(paneID)
-		m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName)
-
-		return statusMsgEvent("Opened terminal in " + windowName)
-	}
-}
-
-func (m Model) openPopup() tea.Cmd {
-	return func() tea.Msg {
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
-		}
-		windowName, cwd, ok := m.detailContext()
-		if !ok {
-			return statusMsgEvent("No project selected")
-		}
-
-		title := fmt.Sprintf(" %s ", windowName)
-		if err := m.tmux.Popup(cwd, title); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to open popup: %v", err))
-		}
-		return nil
-	}
 }
 
 func (m Model) attachSession() tea.Cmd {
