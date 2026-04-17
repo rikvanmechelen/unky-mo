@@ -60,6 +60,8 @@ type Model struct {
 	activeTermIdx int  // index into terminals; -1 when drawer closed
 	drawerOpen    bool
 	termCounter   int // incrementing counter for naming
+	// Changed files tree (from git status)
+	changedFiles []string // raw file paths from git status --porcelain
 }
 
 func NewModel(sessionName, stateFile string) Model {
@@ -286,9 +288,29 @@ func (m Model) View() string {
 		b.WriteString(footerStyle.Render("  ▼ more") + "\n")
 	}
 
-	// Pad remaining space
+	// Changed files tree in the bottom half
 	contentLines := strings.Count(b.String(), "\n")
 	remaining := m.height - contentLines - footerLines
+	if m.statusMsg != "" {
+		remaining-- // reserve a line for status
+	}
+
+	if len(m.changedFiles) > 0 && remaining > 3 {
+		// Header takes 2 lines (blank + title)
+		maxTreeLines := remaining - 2
+		if maxTreeLines > 0 {
+			tree := renderFileTree(m.changedFiles, m.width, maxTreeLines)
+			if tree != "" {
+				b.WriteString("\n")
+				b.WriteString(headerStyle.Render(fmt.Sprintf("Changed (%d)", len(m.changedFiles))) + "\n")
+				treeLines := strings.Count(tree, "\n") + 1
+				b.WriteString(normalStyle.Render(tree) + "\n")
+				remaining -= treeLines + 2
+			}
+		}
+	}
+
+	// Pad remaining space
 	for i := 0; i < remaining; i++ {
 		b.WriteString("\n")
 	}
@@ -379,6 +401,7 @@ func (m *Model) refreshState() {
 
 	m.items = items
 	m.refreshTerminals()
+	m.refreshChangedFiles()
 
 	// Set cursor to own project on first load only
 	if !m.cursorSetOnce {
@@ -415,6 +438,121 @@ func (m *Model) refreshFromSessions() {
 			m.items[i].Status = "none"
 		}
 	}
+}
+
+func (m *Model) refreshChangedFiles() {
+	if m.windowPath == "" {
+		m.changedFiles = nil
+		return
+	}
+	cmd := exec.Command("git", "-C", m.windowPath, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		m.changedFiles = nil
+		return
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// Strip the 2-char status prefix + space
+		file := strings.TrimSpace(line[2:])
+		// Handle renames: "old -> new"
+		if idx := strings.Index(file, " -> "); idx >= 0 {
+			file = file[idx+4:]
+		}
+		files = append(files, file)
+	}
+	m.changedFiles = files
+}
+
+// renderFileTree renders changed files as a compact tree.
+func renderFileTree(files []string, maxWidth, maxLines int) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	// Build tree structure
+	type node struct {
+		name     string
+		children map[string]*node
+		isFile   bool
+		order    []string // preserve insertion order
+	}
+
+	root := &node{children: make(map[string]*node)}
+
+	for _, file := range files {
+		parts := strings.Split(file, "/")
+		current := root
+		for i, part := range parts {
+			if _, ok := current.children[part]; !ok {
+				child := &node{name: part, children: make(map[string]*node)}
+				if i == len(parts)-1 {
+					child.isFile = true
+				}
+				current.children[part] = child
+				current.order = append(current.order, part)
+			}
+			current = current.children[part]
+		}
+	}
+
+	// Collapse single-child directories (e.g. "internal/tui/" → "internal/tui/")
+	var collapse func(n *node) *node
+	collapse = func(n *node) *node {
+		for _, name := range n.order {
+			child := n.children[name]
+			n.children[name] = collapse(child)
+		}
+		if !n.isFile && len(n.children) == 1 {
+			childName := n.order[0]
+			child := n.children[childName]
+			if !child.isFile {
+				merged := &node{
+					name:     n.name + "/" + child.name,
+					children: child.children,
+					order:    child.order,
+					isFile:   child.isFile,
+				}
+				return merged
+			}
+		}
+		return n
+	}
+
+	for _, name := range root.order {
+		root.children[name] = collapse(root.children[name])
+	}
+
+	// Render tree
+	var lines []string
+	var render func(n *node, indent string)
+	render = func(n *node, indent string) {
+		if len(lines) >= maxLines {
+			return
+		}
+		for _, name := range n.order {
+			child := n.children[name]
+			if len(lines) >= maxLines {
+				return
+			}
+			if child.isFile {
+				lines = append(lines, indent+child.name)
+			} else {
+				lines = append(lines, indent+child.name+"/")
+				render(child, indent+"  ")
+			}
+		}
+	}
+	render(root, " ")
+
+	if len(files) > len(lines) {
+		lines = append(lines, fmt.Sprintf(" +%d more", len(files)-len(lines)))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) selectedItem() *SidebarItem {
