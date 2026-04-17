@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/state"
+	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 )
 
@@ -171,6 +172,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.closeTerminal()
 		case "`":
 			return m, m.openPopup()
+		case "s":
+			return m, m.syncPush()
 		case "ctrl+r":
 			self, err := os.Executable()
 			if err == nil {
@@ -197,7 +200,7 @@ func (m Model) View() string {
 
 	// Calculate visible range
 	headerLines := 1
-	footerLines := 4
+	footerLines := 5
 	maxVisible := m.height - headerLines - footerLines
 	if maxVisible < 1 {
 		maxVisible = 1
@@ -324,7 +327,8 @@ func (m Model) View() string {
 	b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
 	b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
 	b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
-	b.WriteString(footerStyle.Render(" ` popup  ^r refresh"))
+	b.WriteString(footerStyle.Render(" ` popup  s sync")  + "\n")
+	b.WriteString(footerStyle.Render(" ^r refresh"))
 
 	return b.String()
 }
@@ -354,7 +358,7 @@ func truncateName(name string, maxLen int) string {
 
 func (m *Model) ensureCursorVisible() {
 	headerLines := 1
-	footerLines := 4
+	footerLines := 5
 	maxVisible := m.height - headerLines - footerLines
 	if maxVisible < 1 {
 		maxVisible = 1
@@ -844,6 +848,19 @@ func (m *Model) refreshTerminals() {
 				IsActive:   m.drawerOpen && i == m.activeTermIdx,
 			})
 		}
+	}
+}
+
+func (m Model) syncPush() tea.Cmd {
+	return func() tea.Msg {
+		if m.windowName == "" || m.windowPath == "" {
+			return sidebarStatusMsg("no project")
+		}
+		syncDir := moSync.DefaultSyncDir()
+		if err := moSync.Push(m.windowName, m.windowPath, syncDir); err != nil {
+			return sidebarStatusMsg(fmt.Sprintf("sync err: %v", err))
+		}
+		return sidebarStatusMsg("synced " + m.windowName)
 	}
 }
 
