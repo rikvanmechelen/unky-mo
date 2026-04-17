@@ -16,6 +16,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/claude"
 	gh "github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/notify"
+	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
@@ -128,6 +129,7 @@ type Model struct {
 	detailPRExpanded int            // index of expanded PR (-1 = none)
 	detailPRDetail   *gh.PRDetail   // fetched detail for expanded PR
 	detailFocusLeft  bool           // true = left panel (sessions/worktrees), false = right (PRs)
+	syncedSessionIDs map[string]bool // session IDs that exist in the sync repo
 	// activeWorktrees tracks worktree sessions grouped by parent project path.
 	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
@@ -277,9 +279,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailPRErr = ""
 					m.detailPRExpanded = -1
 					m.detailPRDetail = nil
+					m.syncedSessionIDs = nil
 					m.detailFocusLeft = true
 					m.screen = ScreenProject
-					return m, m.fetchPRs(p.Path)
+					return m, tea.Batch(
+						m.fetchPRs(p.Path),
+						m.autoSyncPull(p.Name, p.Path),
+					)
 				}
 				return m, nil
 			}
@@ -506,6 +512,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prDetailMsg:
 		if msg.err == nil {
 			m.detailPRDetail = msg.detail
+		}
+		return m, nil
+
+	case syncPullMsg:
+		m.syncedSessionIDs = msg.syncedIDs
+		if msg.pulled && m.detailProject != nil {
+			// Rebuild rows to include the newly pulled session
+			m.buildDetailRows()
+			m.loadRecap()
 		}
 		return m, nil
 
@@ -1227,7 +1242,13 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, selected bool, maxWidt
 		name = name[:maxName-3] + "..."
 	}
 
-	line := fmt.Sprintf("%s%s %s  %s", cursor, statusStr, age, name)
+	// Sync indicator
+	syncMark := ""
+	if m.syncedSessionIDs[rs.SessionID] {
+		syncMark = " ⇅"
+	}
+
+	line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, name, syncMark)
 	if selected {
 		return selectedItemStyle.Render(line)
 	}
@@ -1540,6 +1561,41 @@ func (m Model) fetchPRDetail(number int) tea.Cmd {
 		}
 		detail, err := gh.GetPRDetail(m.detailProject.Path, number)
 		return prDetailMsg{detail: detail, err: err}
+	}
+}
+
+// syncPullMsg carries the result of an auto-sync-pull when opening a project.
+type syncPullMsg struct {
+	syncedIDs map[string]bool // session IDs that exist in the sync repo
+	pulled    bool            // true if a new session was pulled
+}
+
+func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
+	return func() tea.Msg {
+		syncDir := moSync.DefaultSyncDir()
+		result := syncPullMsg{syncedIDs: make(map[string]bool)}
+
+		// List what's in the sync repo for this project
+		sessions, err := moSync.List(syncDir)
+		if err != nil {
+			return result // silently fail — sync is optional
+		}
+
+		for _, s := range sessions {
+			if s.ProjectName == projectName {
+				result.syncedIDs[s.SessionID] = true
+
+				// Pull the session if we don't have it locally
+				localDir := claude.ProjectsDirForPath(projectPath)
+				localPath := localDir + "/" + s.SessionID + ".jsonl"
+				if _, err := os.Stat(localPath); os.IsNotExist(err) {
+					moSync.Pull(projectName, projectPath, syncDir)
+					result.pulled = true
+				}
+			}
+		}
+
+		return result
 	}
 }
 

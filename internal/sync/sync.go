@@ -172,6 +172,18 @@ func List(syncDir string) ([]SessionMeta, error) {
 	return readAllMeta(key, syncDir)
 }
 
+// ListLocal reads synced sessions from the local sync repo without pulling.
+func ListLocal(syncDir string) ([]SessionMeta, error) {
+	if err := ensureRepo(syncDir); err != nil {
+		return nil, err
+	}
+	key, err := LoadKey()
+	if err != nil {
+		return nil, err
+	}
+	return readAllMeta(key, syncDir)
+}
+
 // PullAll fetches every session in the sync repo and copies each JSONL to the
 // appropriate local Claude projects directory. Sessions whose project isn't
 // present locally are skipped with a warning (project metadata no longer

@@ -61,6 +61,8 @@ type Model struct {
 	activeTermIdx int  // index into terminals; -1 when drawer closed
 	drawerOpen    bool
 	termCounter   int // incrementing counter for naming
+	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
+	syncStatus string
 	// Changed files tree (from git status)
 	changedFiles []string // raw file paths from git status --porcelain
 }
@@ -103,6 +105,7 @@ func NewModel(sessionName, stateFile string) Model {
 		IsHome: true,
 	})
 	m.refreshState()
+	m.refreshSyncStatus()
 	return m
 }
 
@@ -119,6 +122,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sidebarStatusMsg:
 		m.statusMsg = string(msg)
+		// Update sync status after a successful push
+		if strings.HasPrefix(string(msg), "synced ") {
+			m.syncStatus = "synced"
+		}
 		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 			return sidebarStatusMsg("")
 		})
@@ -327,7 +334,14 @@ func (m Model) View() string {
 	b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
 	b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
 	b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
-	b.WriteString(footerStyle.Render(" ` popup  s sync")  + "\n")
+	syncLabel := " s sync"
+	switch m.syncStatus {
+	case "synced":
+		syncLabel = " s " + dotIdle.Render("synced")
+	case "stale":
+		syncLabel = " s " + dotActive.Render("sync ↑")
+	}
+	b.WriteString(footerStyle.Render(" ` popup") + syncLabel + "\n")
 	b.WriteString(footerStyle.Render(" ^r refresh"))
 
 	return b.String()
@@ -406,6 +420,8 @@ func (m *Model) refreshState() {
 	m.items = items
 	m.refreshTerminals()
 	m.refreshChangedFiles()
+	// Sync status is checked on init and after push, not every tick
+	// (moSync.List does git pull which is too slow for 1s polling)
 
 	// Set cursor to own project on first load only
 	if !m.cursorSetOnce {
@@ -557,6 +573,37 @@ func renderFileTree(files []string, maxWidth, maxLines int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (m *Model) refreshSyncStatus() {
+	m.syncStatus = ""
+	if m.windowName == "" || m.windowPath == "" {
+		return
+	}
+	syncDir := moSync.DefaultSyncDir()
+	// Read local sync repo metadata without network (no git pull)
+	sessions, err := moSync.ListLocal(syncDir)
+	if err != nil {
+		return
+	}
+	for _, s := range sessions {
+		if s.ProjectName == m.windowName {
+			// Found a synced session — check if local JSONL is newer
+			localDir := claude.ProjectsDirForPath(m.windowPath)
+			localPath := localDir + "/" + s.SessionID + ".jsonl"
+			info, err := os.Stat(localPath)
+			if err != nil {
+				m.syncStatus = "stale"
+				return
+			}
+			if info.ModTime().After(s.PushedAt) {
+				m.syncStatus = "stale"
+			} else {
+				m.syncStatus = "synced"
+			}
+			return
+		}
+	}
 }
 
 func (m Model) selectedItem() *SidebarItem {
