@@ -163,6 +163,13 @@ func (c *Client) Popup(cwd, title string) error {
 }
 
 // SelectPane focuses a specific pane.
+// SetWindowHook sets a tmux hook on a window. For example,
+// SetWindowHook("mo:rails", "pane-exited", "kill-window") will kill the
+// window when any pane in it exits.
+func (c *Client) SetWindowHook(target, hookName, command string) {
+	runTmux("set-hook", "-t", target, hookName, command)
+}
+
 func (c *Client) SelectPane(target string) error {
 	return runTmux("select-pane", "-t", target)
 }

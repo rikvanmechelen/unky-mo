@@ -224,15 +224,16 @@ func startCmd() *cobra.Command {
 				return fmt.Errorf("creating window: %w", err)
 			}
 
-			claudeCmd := "claude"
+			claudeCmd := "exec claude"
 			if prompt != "" {
-				claudeCmd = fmt.Sprintf("claude -p %q", prompt)
+				claudeCmd = fmt.Sprintf("exec claude -p %q", prompt)
 			}
 
 			if err := tc.SendKeys(target, claudeCmd); err != nil {
 				return fmt.Errorf("launching claude: %w", err)
 			}
 
+			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
 
 			fmt.Printf("Started Claude session in %s (tmux: %s)\n", windowName, target)
@@ -345,11 +346,12 @@ func resumeCmd() *cobra.Command {
 				return fmt.Errorf("creating window: %w", err)
 			}
 
-			resumeCmd := fmt.Sprintf("claude --resume %s", sessionID)
+			resumeCmd := fmt.Sprintf("exec claude --resume %s", sessionID)
 			if err := tc.SendKeys(target, resumeCmd); err != nil {
 				return fmt.Errorf("resuming session: %w", err)
 			}
 
+			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
 
 			fmt.Printf("Resuming session %s in %s\n", sessionID, windowName)
@@ -527,11 +529,12 @@ func syncCmd() *cobra.Command {
 				return fmt.Errorf("creating window: %w", err)
 			}
 
-			resumeCmd := fmt.Sprintf("claude --resume %s", meta.SessionID)
+			resumeCmd := fmt.Sprintf("exec claude --resume %s", meta.SessionID)
 			if err := tc.SendKeys(target, resumeCmd); err != nil {
 				return fmt.Errorf("resuming session: %w", err)
 			}
 
+			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
 
 			fmt.Printf("Resumed session in %s\n", windowName)
