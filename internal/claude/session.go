@@ -115,6 +115,92 @@ func SessionForPath(path string) *Session {
 	return nil
 }
 
+// SessionMessage represents a single user or assistant message from a session.
+type SessionMessage struct {
+	Role    string // "user" or "assistant"
+	Content string // truncated text content
+}
+
+// LastMessages returns the last N user/assistant messages from a session JSONL.
+func LastMessages(projectPath, sessionID string, count int) []SessionMessage {
+	dir := ProjectsDirForPath(projectPath)
+	path := filepath.Join(dir, sessionID+".jsonl")
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+
+	// Read the last ~256KB to find recent messages
+	readSize := int64(256 * 1024)
+	if info.Size() < readSize {
+		readSize = info.Size()
+	}
+	if readSize == 0 {
+		return nil
+	}
+
+	buf := make([]byte, readSize)
+	_, err = f.ReadAt(buf, info.Size()-readSize)
+	if err != nil {
+		return nil
+	}
+
+	// Parse lines from the end, collecting user/assistant messages
+	lines := strings.Split(string(buf), "\n")
+	var messages []SessionMessage
+
+	for i := len(lines) - 1; i >= 0 && len(messages) < count*2; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+
+		var msg struct {
+			Type    string `json:"type"`
+			Message struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &msg) != nil {
+			continue
+		}
+
+		if msg.Type != "user" && msg.Type != "assistant" {
+			continue
+		}
+
+		text := extractTextContent(msg.Message.Content)
+		if text == "" {
+			continue
+		}
+
+		messages = append(messages, SessionMessage{
+			Role:    msg.Type,
+			Content: truncate(text, 120),
+		})
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	// Keep only the last `count` messages
+	if len(messages) > count {
+		messages = messages[len(messages)-count:]
+	}
+
+	return messages
+}
+
 // IsSessionIdle checks whether a live session is waiting for user input or
 // is stuck on a permission prompt. Uses two signals:
 //  1. If the JSONL's last meaningful message is type=assistant, Claude finished its turn.

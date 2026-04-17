@@ -64,23 +64,45 @@ func (d projectDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		statusStr = statusNone.Render(symbolNone + " no session")
 	}
 
+	// Git info
+	var gitStr string
+	if pi.git.Branch != "" {
+		branch := pi.git.Branch
+		if len(branch) > 18 {
+			branch = branch[:15] + "..."
+		}
+		gitStr = branch
+		if pi.git.Dirty > 0 {
+			gitStr += fmt.Sprintf(" *%d", pi.git.Dirty)
+		}
+		if pi.git.Ahead > 0 {
+			gitStr += fmt.Sprintf(" ↑%d", pi.git.Ahead)
+		}
+		if pi.git.Behind > 0 {
+			gitStr += fmt.Sprintf(" ↓%d", pi.git.Behind)
+		}
+	}
+
 	// Compose the line
 	nameWidth := 28
 	langWidth := 8
-	statusWidth := 16
+	gitWidth := 22
 
 	nameCol := fmt.Sprintf("%-*s", nameWidth, name)
 	langCol := fmt.Sprintf("%-*s", langWidth, langBadge)
+	gitCol := fmt.Sprintf("%-*s", gitWidth, gitStr)
 
 	if isSelected {
 		nameCol = selectedItemStyle.Render(nameCol)
 		langCol = langStyle.Copy().Bold(true).Render(langCol)
+		gitCol = footerDescStyle.Copy().Bold(true).Render(gitCol)
 	} else {
 		nameCol = normalItemStyle.Render(nameCol)
 		langCol = langStyle.Render(langCol)
+		gitCol = footerDescStyle.Render(gitCol)
 	}
 
-	line := cursor + nameCol + " " + langCol + " " + statusStr
+	line := cursor + nameCol + " " + langCol + " " + gitCol + " " + statusStr
 
 	// Pad to full width
 	lineLen := lipgloss.Width(line)
@@ -88,6 +110,6 @@ func (d projectDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		line += strings.Repeat(" ", width-lineLen)
 	}
 
-	_ = statusWidth // used implicitly in statusStr rendering
+	_ = gitWidth // widths used in formatting above
 	fmt.Fprint(w, line)
 }

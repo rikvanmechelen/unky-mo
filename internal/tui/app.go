@@ -35,6 +35,7 @@ const (
 type ProjectItem struct {
 	project project.Project
 	status  SessionStatus
+	git     project.GitStatus
 }
 
 func (i ProjectItem) Title() string       { return i.project.Name }
@@ -57,6 +58,19 @@ func sessionTick() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg(t)
 	})
+}
+
+// gitStatusMsg carries refreshed git statuses for all projects.
+type gitStatusMsg map[string]project.GitStatus
+
+func (m Model) refreshGitStatuses() tea.Cmd {
+	return func() tea.Msg {
+		statuses := make(map[string]project.GitStatus)
+		for _, p := range m.projects {
+			statuses[p.Path] = project.GetGitStatus(p.Path)
+		}
+		return gitStatusMsg(statuses)
+	}
 }
 
 // WorktreeStatus tracks an active session in a git worktree.
@@ -85,6 +99,7 @@ type Model struct {
 	statusMsg      string
 	activeSessions int
 	attentionCount int
+	gitStatuses    map[string]project.GitStatus // project path → git status
 	// Detail views
 	detailProject   *project.Project
 	detailSession   *claude.Session
@@ -93,6 +108,7 @@ type Model struct {
 	// main sessions, then for each worktree: a header row + its sessions.
 	detailRows   []detailRow
 	detailCursor int
+	detailRecap  []claude.SessionMessage // last messages for currently selected session
 	// Resume-confirmation prompt: non-empty means we're asking the user whether
 	// to disconnect the currently-running session and resume this one instead.
 	pendingResumeSessionID string
@@ -143,7 +159,7 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{sessionTick(), m.refreshSessions()}
+	cmds := []tea.Cmd{sessionTick(), m.refreshSessions(), m.refreshGitStatuses()}
 	if m.notifServer != nil {
 		cmds = append(cmds, m.waitForNotification())
 	}
@@ -239,6 +255,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
 					m.buildDetailRows()
 					m.detailCursor = 0
+					m.loadRecap()
 					m.detailPRs = nil
 					m.detailPRCursor = 0
 					m.detailPRErr = ""
@@ -383,10 +400,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sessionTickMsg:
-		return m, tea.Batch(sessionTick(), m.refreshSessions())
+		return m, tea.Batch(sessionTick(), m.refreshSessions(), m.refreshGitStatuses())
 
 	case sessionRefreshMsg:
 		m.updateProjectStatuses(msg)
+		return m, nil
+
+	case gitStatusMsg:
+		m.gitStatuses = map[string]project.GitStatus(msg)
+		// Update ProjectItems with git info
+		items := m.list.Items()
+		for i, item := range items {
+			pi, ok := item.(ProjectItem)
+			if !ok {
+				continue
+			}
+			if gs, ok := m.gitStatuses[pi.project.Path]; ok {
+				pi.git = gs
+				items[i] = pi
+			}
+		}
+		m.list.SetItems(items)
 		return m, nil
 
 	case notificationMsg:
@@ -450,6 +484,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					n := m.detailCombinedLen()
 					if n > 0 {
 						m.detailCursor = (m.detailCursor - 1 + n) % n
+						m.loadRecap()
 					}
 				} else {
 					n := len(m.detailPRs)
@@ -462,6 +497,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					n := m.detailCombinedLen()
 					if n > 0 {
 						m.detailCursor = (m.detailCursor + 1) % n
+						m.loadRecap()
 					}
 				} else {
 					n := len(m.detailPRs)
@@ -821,6 +857,23 @@ func (m Model) projectDetailView() string {
 		left.WriteString("  " + footerDescStyle.Render("No sessions found") + "\n")
 	}
 
+	// Session recap preview
+	if len(m.detailRecap) > 0 && m.detailFocusLeft {
+		left.WriteString("\n" + headerStyle.Render("Last messages") + "\n")
+		for _, msg := range m.detailRecap {
+			role := footerKeyStyle.Render("You:")
+			if msg.Role == "assistant" {
+				role = statusActive.Render("Claude:")
+			}
+			content := msg.Content
+			maxLen := leftWidth - 12
+			if maxLen > 0 && len(content) > maxLen {
+				content = content[:maxLen-3] + "..."
+			}
+			left.WriteString(fmt.Sprintf("  %s %s\n", role, footerDescStyle.Render(content)))
+		}
+	}
+
 	// === RIGHT PANEL: Pull Requests ===
 	var right strings.Builder
 
@@ -1042,6 +1095,19 @@ func (m *Model) buildDetailRows() {
 // detailCombinedLen returns the number of navigable rows (skipping wt-empty which is not selectable).
 func (m Model) detailCombinedLen() int {
 	return len(m.detailRows)
+}
+
+// loadRecap loads the last few messages for the session at the current cursor.
+func (m *Model) loadRecap() {
+	m.detailRecap = nil
+	if m.detailCursor < 0 || m.detailCursor >= len(m.detailRows) {
+		return
+	}
+	row := m.detailRows[m.detailCursor]
+	if row.session == nil {
+		return
+	}
+	m.detailRecap = claude.LastMessages(row.path, row.session.SessionID, 6)
 }
 
 // visibleWorktrees returns worktrees shown in the detail view — all known
