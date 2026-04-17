@@ -12,9 +12,9 @@ A terminal UI for orchestrating multiple Claude Code sessions across your projec
 ## Installation
 
 ```bash
-# Clone and build
-cd /path/to/unky-mo
-make install
+git clone git@github.com:rikvanmechelen/unky-mo.git
+cd unky-mo
+make install   # builds and installs to ~/go/bin/mo
 ```
 
 ## Quick Start
@@ -47,55 +47,121 @@ If you're not already inside tmux, Unky Mo automatically creates a tmux session 
 
 When you launch Claude sessions from the TUI, they open as sibling tmux windows with an interactive sidebar. When you exit a Claude session (`ctrl-d ctrl-d` or `/exit`), the window closes cleanly — no orphaned panes.
 
-## Sidebar
+## Dashboard
 
-Every Claude session window includes a sidebar pane on the right showing active sessions with live status indicators. The current window's project is highlighted in bold white + underline.
+The main screen shows all your projects with git status and session indicators, plus an active sessions panel on the right:
 
 ```
-┌──────────────────────────────────┬────────────────────────────────┐
-│                                  │ ── Sessions ──                 │
-│  Claude Code session             │    ☗ Unky Mo Home              │
-│  (your main work area)           │    ● rails-app                 │
-│                                  │ ▸  ● unky-mo           idle   │
-│  > working on feature...         │    ○ mla-wrapper               │
-│                                  │                                │
-│                                  │  ↑↓ nav  ⏎ switch             │
-│                                  │  t term  ` popup               │
-│                                  │  ctrl+r restart                │
-└──────────────────────────────────┴────────────────────────────────┘
+ Unky Mo  3 active  ▲1                    │
+ ▸ moma-apps-rails  [ruby]  main *2  ● active   │ Active Sessions ◀
+   moma-go          [go  ]  main     ○ no session│   ● moma-apps-rails
+   unky-mo          [go  ]  main ↑3  ● idle      │ ▸ ● unky-mo        idle
+   moma-auth0       [node]  main     ○ no session│   ● mla-wrapper
+   ...                                            │
 ```
 
-### Sidebar shortcuts
+Each project row shows: name, language, git branch, dirty/ahead/behind counts, and session status.
+
+### Dashboard shortcuts
 
 | Key          | Action                                |
 |--------------|---------------------------------------|
 | `↑` / `k`   | Move up                               |
 | `↓` / `j`   | Move down                             |
+| `→`          | Focus active sessions panel           |
+| `←`          | Focus project list                    |
+| `enter`      | Open project detail / switch to session |
+| `/`          | Filter projects (fuzzy search)        |
+| `n`          | Start a new Claude session            |
+| `a`          | Attach to session window              |
+| `?`          | Toggle help overlay                   |
+| `ctrl+r`     | Restart TUI + all sidebars            |
+| `q`          | Quit                                  |
+
+### Status indicators
+
+| Symbol         | Color  | Meaning                                         |
+|----------------|--------|--------------------------------------------------|
+| ● active       | Yellow | Claude is working (mid-turn)                     |
+| ● needs input  | Green  | Claude finished its turn, waiting for you         |
+| ● permission!  | Red    | Claude needs you to approve a permission          |
+| ○ no session   | Gray   | No Claude session running in this project         |
+
+Lists wrap around — pressing up at the top goes to the bottom.
+
+## Sidebar
+
+Every Claude session window includes a sidebar pane on the right. It has two sections: **active sessions** at the top and **changed files** at the bottom.
+
+```
+┌──────────────────────────────────┬────────────────────────────────────┐
+│                                  │ ── Sessions ──                     │
+│  Claude Code session             │    ☗ Unky Mo Home                  │
+│  (your main work area)           │    ● rails-app                     │
+│                                  │ ▸  ● unky-mo              idle    │
+│  > working on feature...         │                                    │
+│                                  │ Changed 3 files +42 -8             │
+│                                  │  internal/tui/                     │
+│                                  │ ▸   app.go                         │
+│                                  │     sidebar/                       │
+│                                  │       model.go                     │
+│                                  │  go.mod                            │
+│                                  │                                    │
+│                                  │  ↑↓ nav   ⏎/d diff                │
+│                                  │  v edit   o open                   │
+│                                  │  ` popup  s synced                 │
+│                                  │  ^r refresh                        │
+└──────────────────────────────────┴────────────────────────────────────┘
+```
+
+The current window's project is highlighted in bold white + underline. Arrow down past the sessions to navigate into the changed files tree.
+
+### Sidebar shortcuts — Sessions section
+
+| Key          | Action                                |
+|--------------|---------------------------------------|
+| `↑` / `k`   | Move up                               |
+| `↓` / `j`   | Move down (into files section at end) |
 | `enter`      | Switch to selected session            |
-| `t`          | Open a terminal split below Claude    |
+| `t`          | Toggle terminal drawer                |
+| `T`          | Create new terminal tab               |
+| `tab`        | Cycle terminal tabs                   |
+| `x`          | Close current terminal tab            |
 | `` ` ``      | Open a floating popup terminal        |
+| `s`          | Push session to sync repo             |
 | `ctrl+r`     | Restart sidebar (reload binary)       |
 | click        | Switch to clicked session             |
-| `q`          | Close the sidebar pane                |
 
-**Unky Mo Home** (first item) switches back to the main TUI (window 0).
+### Sidebar shortcuts — Files section
 
-The sidebar only shows projects with active Claude sessions. It always targets its own project window for terminals — `t` and `` ` `` work regardless of which item the cursor is on.
+| Key          | Action                                |
+|--------------|---------------------------------------|
+| `↑` / `k`   | Move up (into sessions at top)        |
+| `↓` / `j`   | Move down                             |
+| `enter` / `d`| Show git diff in floating popup      |
+| `v`          | Open in `$EDITOR` (vim/nvim) popup    |
+| `o`          | Open in VS Code or default editor     |
+
+### Sync status
+
+The `s sync` label in the footer shows sync status:
+- **`s sync`** (gray) — not synced
+- **`s synced`** (green) — up to date with sync repo
+- **`s sync ↑`** (yellow) — local changes newer than last push
 
 ### Terminals
 
-From the sidebar you can open terminals for the current project:
-
-- **`t`** — Split a terminal pane below the Claude session. Press `t` multiple times to create more panes. Use `Ctrl-b ↑/↓` to switch between them.
-- **`` ` ``** — Open a floating 80% popup terminal. Closes when you `exit` or press `Esc`. Great for one-off commands.
-
-Both open in the project's directory.
+- **`t`** — Toggle a terminal drawer below the Claude pane
+- **`T`** — Create additional terminal tabs
+- **`tab`** / **`shift+tab`** — Cycle between terminal tabs
+- **`x`** — Close current terminal tab
+- **`` ` ``** — Open a floating 80% popup terminal
 
 ### Focus management
 
-- `Ctrl-b` + right arrow — focus the sidebar
+- `Ctrl-b` + right arrow — focus the sidebar pane
 - `Ctrl-b` + left arrow — focus the Claude pane
-- Click — tmux mouse support is enabled, so you can click on panes
+- Click — tmux mouse support is enabled
 
 ## Project Detail Screen
 
@@ -105,79 +171,39 @@ Press `enter` on a project in the dashboard to see its detail view with a side-b
  ← moma-apps-rails  [ruby]  /Users/.../moma-apps-rails
 
  Sessions ◀                          │ Pull Requests
- ▸ ● generate-test-qr  2h           │   #42 fix auth flow
+ ▸ ● generate-test-qr  2h ⇅         │   #42 fix auth flow
    ○ fix-modal-back    3d           │   #41 add QR scanner
                                      │   #39 update deps
+ Last messages                       │
+   You: fix the failing test...      │
+   Claude: I found the issue...      │
+                                     │
  Worktrees                           │
    testing-worktrees                 │
      ○ worktree-session-1   1d      │
-     ○ worktree-session-2   5d      │
    feature-branch                    │
      (no sessions)                   │
 ```
 
-**Left panel** — Sessions grouped by location (main project + each worktree), and worktree headers you can launch new sessions into.
+**Left panel** — Sessions (with recap preview), worktrees with nested sessions. Synced sessions marked with `⇅`. Sessions auto-pull from the sync repo when you open a project.
 
-**Right panel** — Open pull requests from GitHub (requires `gh auth login`).
+**Right panel** — Open pull requests from GitHub (requires `gh auth login`). Press `enter` to expand a PR inline showing description, stats, review status, and actions.
 
 ### Project detail shortcuts
 
-| Key     | Action                                    |
-|---------|-------------------------------------------|
-| `↑/↓`  | Navigate within the focused panel         |
-| `tab`   | Switch between left and right panels      |
-| `enter` | Resume selected session / launch worktree |
-| `o`     | Open selected PR in browser               |
-| `n`     | Start a new Claude session                |
-| `a`     | Attach to existing session window         |
-| `w`     | Create a new git worktree + session       |
-| `esc`   | Back to dashboard                         |
+| Key     | Action                                          |
+|---------|-------------------------------------------------|
+| `↑/↓`  | Navigate within the focused panel               |
+| `←/→`  | Switch between left and right panels            |
+| `enter` | Resume session / launch worktree / expand PR   |
+| `o`     | Open PR in browser                              |
+| `w`     | Create worktree (or worktree from expanded PR)  |
+| `c`     | Checkout expanded PR's branch locally           |
+| `n`     | Start a new Claude session                      |
+| `a`     | Attach to existing session window               |
+| `esc`   | Back to dashboard                               |
 
 Sessions under worktrees resume in the **worktree's directory**, not the project root.
-
-## TUI Overview
-
-```
-┌────────────────────────────────────────────────────┐
-│  Unky Mo                             2 active  ▲1  │
-├────────────────────────────────────────────────────┤
-│  ▸ my-rails-app       [ruby]    ● active           │
-│    my-go-service      [go  ]    ● needs input      │
-│    my-frontend        [node]    ○ no session        │
-│    another-project    [py  ]    ○ no session        │
-│    ...                                              │
-├────────────────────────────────────────────────────┤
-│ ↑↓:navigate  enter:open  n:new session  a:attach   │
-│ /:filter  ?:help  q:quit                            │
-└────────────────────────────────────────────────────┘
-```
-
-### Status indicators
-
-| Symbol | Color  | Meaning                                      |
-|--------|--------|----------------------------------------------|
-| ● active       | Green  | Claude is working                            |
-| ● needs input  | Yellow | Claude has been idle 60s+ or stuck on a permission prompt |
-| ○ no session   | Gray   | No Claude session running in this project    |
-
-The header shows a count of active sessions and an attention badge (▲) when sessions need you.
-
-### Dashboard shortcuts
-
-| Key        | Action                    |
-|------------|---------------------------|
-| `↑` / `k`   | Move up                   |
-| `↓` / `j`   | Move down                 |
-| `enter` / `→` | Open project detail       |
-| `esc` / `←`   | Go back                   |
-| `/`          | Filter projects (fuzzy search) |
-| `n`          | Start a new Claude session |
-| `a`          | Attach to session window  |
-| `?`          | Toggle help overlay       |
-| `ctrl+r`     | Restart TUI + all sidebars (picks up new binary) |
-| `q`          | Quit                      |
-
-Lists wrap around — pressing up at the top goes to the bottom.
 
 ## CLI Commands
 
@@ -201,6 +227,7 @@ mo sync pull                    # Pull + decrypt all sessions (files only)
 mo sync pull <project>          # Pull a session and resume it in a tmux window
 mo sync list                    # List available synced sessions
 mo sync migrate                 # Re-encrypt any legacy plaintext sessions
+mo debug <project>              # Dump session/worktree debug info
 mo version                      # Print version
 ```
 
@@ -221,6 +248,9 @@ mo sessions
 
 # Resume where you left off
 mo resume my-rails-app
+
+# Debug session detection for a project
+mo debug my-rails-app
 ```
 
 ## Configuration
@@ -275,9 +305,9 @@ When you run `mo hooks install`, Unky Mo adds two hooks to `~/.claude/settings.j
 1. **Notification hook** — Fires when Claude has been idle for 60+ seconds (`idle_prompt`) or needs a permission approval (`permission_prompt`). Sends a message to Unky Mo's Unix socket.
 2. **Stop hook** — Fires when Claude finishes a turn. Clears the idle/permission status.
 
-The TUI also proactively detects idle sessions by checking if the session JSONL file hasn't been modified in >60 seconds, so status updates work even if a notification is missed.
+The TUI also proactively detects idle sessions by checking the `stop_reason` of the last assistant message in the session JSONL (`end_turn` = idle, `tool_use` = still working). This works even if a notification is missed.
 
-The TUI listens on a Unix socket (`/tmp/unky-mo.sock` by default) and updates the status indicators in real time. Sidebar instances read a shared state file (`/tmp/unky-mo-state.json`) written by the TUI. If Unky Mo isn't running, the hooks exit silently with no effect on Claude.
+The TUI listens on a Unix socket (`/tmp/unky-mo.sock` by default) and updates status indicators in real time. Sidebar instances read a shared state file (`/tmp/unky-mo-state.json`) written by the TUI. If Unky Mo isn't running, the hooks exit silently with no effect on Claude.
 
 To remove the hooks:
 
@@ -325,27 +355,28 @@ mo sync init git@github.com:youruser/coding-sessions.git
 
 ### Pushing a session
 
+From the CLI:
 ```bash
 mo sync push moma-apps-rails
 ```
 
-The session JSONL and metadata are encrypted and committed to the repo under an opaque directory name.
+Or press `s` in any sidebar to push the current project's session.
+
+The session JSONL and metadata are encrypted and committed to the repo. The sidebar shows sync status: green when synced, yellow when local changes are newer.
 
 ### Pulling sessions
 
-Pull every synced session's history down to this machine (decrypts into `~/.claude/projects/...`, no tmux windows opened):
-
+Pull every synced session's history down to this machine:
 ```bash
 mo sync pull
 ```
 
-Pull a single project and immediately resume it in a new tmux window:
-
+Pull a single project and immediately resume it:
 ```bash
 mo sync pull moma-apps-rails
 ```
 
-Sessions for projects that aren't checked out on this machine are skipped with a warning — check the project out locally and re-run to pull.
+Sessions also auto-pull when you open a project detail screen.
 
 ### Listing available sessions
 
@@ -353,34 +384,36 @@ Sessions for projects that aren't checked out on this machine are skipped with a
 mo sync list
 ```
 
-Shows all sessions in the repo with their title, source machine, and age (the metadata is decrypted on the fly):
-
-```
-  moma-apps-rails           generate-test-qr-tickets  from mac-office  2h ago
-  unky-mo                   unky-mo-session-orchestrator  from mac-office  5m ago
-```
-
 ### Migrating from an older plaintext repo
-
-Early versions of the sync tooling pushed plaintext JSONL and metadata. If your sync repo still contains any of those, run:
 
 ```bash
 mo sync migrate
 ```
 
-This re-encrypts each plaintext project directory into the new hashed/encrypted layout, commits, and pushes.
-
-Important: git history still contains the original plaintext blobs. To fully purge them, either (1) delete and recreate the remote repo on GitHub and `mo sync init <new-url>` / push from each machine, or (2) rewrite history with `git-filter-repo` on the sync clone and force-push.
+Re-encrypts plaintext sessions. Git history still contains old blobs — delete and recreate the remote to fully purge.
 
 ### Lost or leaking keys
-
-If the shared key leaks (published to a public gist, included in a screenshot, committed by mistake), rotate immediately:
 
 1. Delete and recreate the sync repo on GitHub.
 2. `rm ~/.config/unky-mo/sync/` on each machine, then `mo sync init-key --force` once and redistribute the new key.
 3. `mo sync init <new-url>` and push fresh from each machine.
 
-Rotating the key does not re-encrypt old pushes, so the old remote must be destroyed.
+## Development
+
+```bash
+# Build and install
+make install
+
+# Build only (local binary)
+go build -o mo ./cmd/mo
+
+# Run tests
+go vet ./...
+
+# Dev workflow: edit code → make install → ctrl+r in Mo to reload
+```
+
+When developing Mo while using it, `ctrl+r` restarts the TUI and all sidebars to pick up the new binary.
 
 ## tmux Tips
 
@@ -404,10 +437,10 @@ unky-mo/
 │   ├── notify/             # Unix socket notification server
 │   ├── state/              # Shared JSON state file (TUI ↔ sidebars)
 │   ├── sync/               # Encrypted session sync via private git repo
-│   ├── project/            # Project model, scanner, worktree support
+│   ├── project/            # Project model, scanner, worktree support, git status
 │   └── tui/
 │       ├── app.go          # Main TUI model, views, key handling
-│       ├── delegate.go     # Project list item renderer
+│       ├── delegate.go     # Project list item renderer (with git status)
 │       ├── keys.go         # Key bindings
 │       ├── styles.go       # Lipgloss theme (dark background ~#14191E)
 │       └── sidebar/        # Compact sidebar TUI for tmux panes
