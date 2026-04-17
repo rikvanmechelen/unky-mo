@@ -1091,7 +1091,7 @@ func (m Model) showDiffPopup(file string) tea.Cmd {
 		return func() tea.Msg { return sidebarStatusMsg("no project path") }
 	}
 	title := fmt.Sprintf(" diff: %s ", filepath.Base(file))
-	diffCmd := fmt.Sprintf("git diff HEAD -- %s | less -R", file)
+	diffCmd := fmt.Sprintf("git diff --color=always HEAD -- %s | less -R", file)
 	c := exec.Command("tmux", "display-popup", "-E",
 		"-w", "95%", "-h", "95%",
 		"-d", m.windowPath,
