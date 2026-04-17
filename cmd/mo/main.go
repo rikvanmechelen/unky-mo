@@ -10,6 +10,7 @@ import (
 
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
+	"github.com/rvanmech/unky-mo/internal/project"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 	"github.com/rvanmech/unky-mo/internal/tui"
@@ -36,6 +37,7 @@ func main() {
 	rootCmd.AddCommand(hooksCmd())
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(sidebarCmd())
+	rootCmd.AddCommand(debugCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -578,6 +580,61 @@ func syncCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+func debugCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "debug <project>",
+		Short: "Show debug info for a project (sessions, worktrees, encoding)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			projectPath, err := findProject(cfg, args[0])
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Project: %s\n", args[0])
+			fmt.Printf("Path: %s\n", projectPath)
+			fmt.Printf("Claude dir: %s\n\n", claude.ProjectsDirForPath(projectPath))
+
+			// Main sessions
+			mainSessions := claude.RecentSessions(projectPath, 10)
+			fmt.Printf("Main sessions: %d\n", len(mainSessions))
+			for _, s := range mainSessions {
+				fmt.Printf("  %s  %s  %s\n", s.DisplayName(), s.SessionID[:8], s.LastActive.Format("Jan 02 15:04"))
+			}
+
+			// Worktrees
+			wts, _ := project.ListWorktrees(projectPath)
+			fmt.Printf("\nWorktrees: %d\n", len(wts))
+			for _, wt := range wts {
+				if wt.Path == projectPath {
+					fmt.Printf("  %s  %s  (main - skipped)\n", wt.Branch, wt.Path)
+					continue
+				}
+				claudeDir := claude.ProjectsDirForPath(wt.Path)
+				fmt.Printf("  %s  %s\n", wt.Branch, wt.Path)
+				fmt.Printf("    Claude dir: %s\n", claudeDir)
+
+				// Check if Claude dir exists
+				if _, err := os.Stat(claudeDir); err != nil {
+					fmt.Printf("    ERROR: Claude dir does not exist!\n")
+				}
+
+				wtSessions := claude.RecentSessions(wt.Path, 5)
+				fmt.Printf("    Sessions: %d\n", len(wtSessions))
+				for _, s := range wtSessions {
+					fmt.Printf("      %s  %s  %s\n", s.DisplayName(), s.SessionID[:8], s.LastActive.Format("Jan 02 15:04"))
+				}
+			}
+
+			return nil
+		},
+	}
 }
 
 func sidebarCmd() *cobra.Command {

@@ -208,13 +208,15 @@ func (rs RecentSession) DisplayName() string {
 }
 
 // ProjectsDirForPath returns the Claude projects subdirectory for a given project path.
-// Claude encodes paths by replacing both "/" and "_" with "-".
+// Claude encodes paths by replacing "/", "_", and "." with "-".
 // e.g. /Users/rvanmech/workspace/mla_wrapper_app -> ~/.claude/projects/-Users-rvanmech-workspace-mla-wrapper-app
+// e.g. /Users/.../unky-mo.worktrees/testing_worktrees -> -Users-...-unky-mo-worktrees-testing-worktrees
 func ProjectsDirForPath(projectPath string) string {
 	home, _ := os.UserHomeDir()
 	encoded := strings.TrimPrefix(projectPath, "/")
 	encoded = strings.ReplaceAll(encoded, "/", "-")
 	encoded = strings.ReplaceAll(encoded, "_", "-")
+	encoded = strings.ReplaceAll(encoded, ".", "-")
 	encoded = "-" + encoded
 	return filepath.Join(home, ".claude", "projects", encoded)
 }
