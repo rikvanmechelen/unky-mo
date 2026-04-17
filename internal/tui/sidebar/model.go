@@ -64,6 +64,8 @@ type Model struct {
 	termCounter   int // incrementing counter for naming
 	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
 	syncStatus string
+	// Active Claude shells (Bash tool subprocesses)
+	activeShells []claude.ActiveShell
 	// Changed files (from git status)
 	changedFiles   []string // raw file paths from git status --porcelain
 	changedAdded   int      // total lines added
@@ -345,13 +347,29 @@ func (m Model) View() string {
 		b.WriteString(footerStyle.Render("  ▼ more") + "\n")
 	}
 
-	// Changed files tree in the bottom half
+	// Active shells section
 	contentLines := strings.Count(b.String(), "\n")
 	remaining := m.height - contentLines - footerLines
 	if m.statusMsg != "" {
 		remaining-- // reserve a line for status
 	}
 
+	if len(m.activeShells) > 0 && remaining > 3 {
+		b.WriteString("\n")
+		b.WriteString(headerStyle.Render(fmt.Sprintf("Shells (%d)", len(m.activeShells))) + "\n")
+		for _, sh := range m.activeShells {
+			display := claude.FormatShellCommand(sh.Command, m.width-4)
+			b.WriteString(" " + dotIdle.Render("●") + " " + normalStyle.Render(display) + "\n")
+		}
+		// Recalculate remaining
+		contentLines = strings.Count(b.String(), "\n")
+		remaining = m.height - contentLines - footerLines
+		if m.statusMsg != "" {
+			remaining--
+		}
+	}
+
+	// Changed files tree
 	if len(m.changedFiles) > 0 && remaining > 3 {
 		maxFileLines := remaining - 2
 		if maxFileLines > 0 {
@@ -500,6 +518,7 @@ func (m *Model) refreshState() {
 	m.items = items
 	m.refreshTerminals()
 	m.refreshChangedFiles()
+	m.activeShells = claude.ActiveShellsForSession(m.windowPath)
 	// Sync status is checked on init and after push, not every tick
 	// (moSync.List does git pull which is too slow for 1s polling)
 
