@@ -173,7 +173,9 @@ func addCLISidebarPane(tc *tmux.Client, target string) {
 		return
 	}
 	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	tc.SplitWindow(target, 22, sidebarCmd)
+	// Split pane .0 specifically so tmux expands #{pane_current_path} against
+	// that pane (a session:window target expands against the client instead).
+	tc.SplitWindow(target+".0", 22, sidebarCmd)
 	tc.SelectPane(target + ".0")
 }
 
