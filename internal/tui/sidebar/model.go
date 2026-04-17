@@ -19,6 +19,17 @@ type SidebarItem struct {
 	WindowName string // tmux window target; empty for Home (window 0)
 	Status     string // "none", "active", "idle", "permission"
 	IsHome     bool
+	IsHeader   bool // non-interactive section header (e.g., "── Terminals ──")
+	// Terminal items
+	IsTerminal bool
+	PaneID     string
+	IsActive   bool // terminal is currently visible in drawer
+}
+
+// TerminalTab tracks a terminal pane managed by the drawer.
+type TerminalTab struct {
+	PaneID string // stable tmux pane ID (e.g., "%5")
+	Name   string // display name ("term-1", "term-2")
 }
 
 type sidebarStatusMsg string
@@ -43,6 +54,11 @@ type Model struct {
 	windowPath string
 	width      int
 	height     int
+	// Terminal drawer state
+	terminals     []TerminalTab
+	activeTermIdx int  // index into terminals; -1 when drawer closed
+	drawerOpen    bool
+	termCounter   int // incrementing counter for naming
 }
 
 func NewModel(sessionName, stateFile string) Model {
@@ -68,11 +84,15 @@ func NewModel(sessionName, stateFile string) Model {
 	// right path for the window we're in — including worktrees.
 	windowPath, _ := os.Getwd()
 
+	tc := ttmux.NewClient(sessionName)
+	tc.ConfigureStatusFormat()
+
 	m := Model{
-		tmux:       ttmux.NewClient(sessionName),
-		stateFile:  stateFile,
-		windowName: windowName,
-		windowPath: windowPath,
+		tmux:          tc,
+		stateFile:     stateFile,
+		windowName:    windowName,
+		windowPath:    windowPath,
+		activeTermIdx: -1,
 	}
 	m.items = append(m.items, SidebarItem{
 		Name:   "Unky Mo Home",
@@ -107,10 +127,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			// Calculate which item was clicked (Y=0 is the header line)
 			clicked := m.viewportStart + msg.Y - 1 // -1 for header
-			if clicked >= 0 && clicked < len(m.items) {
+			if clicked >= 0 && clicked < len(m.items) && !m.items[clicked].IsHeader {
 				m.cursor = clicked
 				m.ensureCursorVisible()
-				return m, m.switchToSelected()
+				return m, m.handleEnter()
 			}
 		}
 
@@ -119,17 +139,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if len(m.items) > 0 {
 				m.cursor = (m.cursor - 1 + len(m.items)) % len(m.items)
+				// Skip header items
+				if m.items[m.cursor].IsHeader {
+					m.cursor = (m.cursor - 1 + len(m.items)) % len(m.items)
+				}
 				m.ensureCursorVisible()
 			}
 		case "down", "j":
 			if len(m.items) > 0 {
 				m.cursor = (m.cursor + 1) % len(m.items)
+				// Skip header items
+				if m.items[m.cursor].IsHeader {
+					m.cursor = (m.cursor + 1) % len(m.items)
+				}
 				m.ensureCursorVisible()
 			}
 		case "enter":
-			return m, m.switchToSelected()
+			return m, m.handleEnter()
 		case "t":
-			return m, m.openTerminal()
+			return m, m.toggleDrawer()
+		case "T":
+			return m, m.newTerminal()
+		case "tab":
+			return m, m.cycleTerminal(1)
+		case "shift+tab":
+			return m, m.cycleTerminal(-1)
+		case "x":
+			return m, m.closeTerminal()
 		case "`":
 			return m, m.openPopup()
 		case "ctrl+r":
@@ -158,7 +194,7 @@ func (m Model) View() string {
 
 	// Calculate visible range
 	headerLines := 1
-	footerLines := 3
+	footerLines := 4
 	maxVisible := m.height - headerLines - footerLines
 	if maxVisible < 1 {
 		maxVisible = 1
@@ -185,9 +221,23 @@ func (m Model) View() string {
 			cursor = "▸ "
 		}
 
-		// Dot + name
 		var line string
-		if item.IsHome {
+		if item.IsHeader {
+			// Section header — not selectable
+			line = headerStyle.Render(item.Name)
+			b.WriteString(line + "\n")
+			continue
+		} else if item.IsTerminal {
+			// Terminal item: "  1: term-1 ◀"
+			name := truncateName(item.Name, maxNameLen-2)
+			var styledName string
+			if item.IsActive {
+				styledName = termActiveStyle.Render(name) + " " + termActiveStyle.Render("◀")
+			} else {
+				styledName = normalStyle.Render(name)
+			}
+			line = cursor + styledName
+		} else if item.IsHome {
 			name := truncateName("☗ "+item.Name, maxNameLen)
 			line = cursor + homeStyle.Render(name)
 		} else {
@@ -240,9 +290,10 @@ func (m Model) View() string {
 	}
 
 	// Footer
-	b.WriteString(footerStyle.Render(" ↑↓ nav  ⏎ switch") + "\n")
-	b.WriteString(footerStyle.Render(" t term  ` popup") + "\n")
-	b.WriteString(footerStyle.Render(" ctrl+r restart"))
+	b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
+	b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
+	b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
+	b.WriteString(footerStyle.Render(" ` popup  ^r redo"))
 
 	return b.String()
 }
@@ -272,7 +323,7 @@ func truncateName(name string, maxLen int) string {
 
 func (m *Model) ensureCursorVisible() {
 	headerLines := 1
-	footerLines := 3
+	footerLines := 4
 	maxVisible := m.height - headerLines - footerLines
 	if maxVisible < 1 {
 		maxVisible = 1
@@ -291,12 +342,14 @@ func (m *Model) refreshState() {
 	if err != nil {
 		// Fallback: try to detect sessions independently
 		m.refreshFromSessions()
+		m.refreshTerminals()
 		return
 	}
 
 	// Check staleness (>30s means main TUI might not be running)
 	if time.Since(sf.UpdatedAt) > 30*time.Second {
 		m.refreshFromSessions()
+		m.refreshTerminals()
 		return
 	}
 
@@ -315,6 +368,7 @@ func (m *Model) refreshState() {
 	}
 
 	m.items = items
+	m.refreshTerminals()
 
 	// Set cursor to own project on first load only
 	if !m.cursorSetOnce {
@@ -364,19 +418,284 @@ func (m Model) selectedItem() *SidebarItem {
 	return &item
 }
 
-func (m Model) openTerminal() tea.Cmd {
-	return func() tea.Msg {
-		if m.windowPath == "" {
-			return sidebarStatusMsg("no project path")
+// statusCmd returns a tea.Cmd that sends a status message, or nil if empty.
+func statusCmd(s string) tea.Cmd {
+	if s == "" {
+		return nil
+	}
+	return func() tea.Msg { return sidebarStatusMsg(s) }
+}
+
+// handleEnter dispatches enter based on whether a session or terminal is selected.
+func (m *Model) handleEnter() tea.Cmd {
+	if m.cursor < 0 || m.cursor >= len(m.items) {
+		return nil
+	}
+	item := m.items[m.cursor]
+	if item.IsTerminal {
+		return m.switchTerminalByPaneID(item.PaneID)
+	}
+	return m.switchToSelected()
+}
+
+// toggleDrawer opens or closes the terminal drawer.
+func (m *Model) toggleDrawer() tea.Cmd {
+	if m.drawerOpen {
+		return m.closeDrawer()
+	}
+	return m.openDrawer()
+}
+
+// openDrawer shows the terminal drawer. Creates a terminal if none exist.
+func (m *Model) openDrawer() tea.Cmd {
+	if m.windowPath == "" {
+		return statusCmd("no project path")
+	}
+
+	if len(m.terminals) == 0 {
+		return m.createTerminalPane()
+	}
+
+	// Restore the last active terminal (or the first one)
+	idx := m.activeTermIdx
+	if idx < 0 || idx >= len(m.terminals) {
+		idx = 0
+	}
+
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	if err := m.tmux.JoinPaneVertical(m.terminals[idx].PaneID, target); err != nil {
+		return statusCmd(fmt.Sprintf("err: %v", err))
+	}
+
+	m.tmux.SelectPane(m.terminals[idx].PaneID)
+	m.activeTermIdx = idx
+	m.drawerOpen = true
+	return statusCmd("drawer opened")
+}
+
+// closeDrawer hides the active terminal pane.
+func (m *Model) closeDrawer() tea.Cmd {
+	if !m.drawerOpen || m.activeTermIdx < 0 || m.activeTermIdx >= len(m.terminals) {
+		return nil
+	}
+
+	activePaneID := m.terminals[m.activeTermIdx].PaneID
+	if err := m.hidePane(activePaneID); err != nil {
+		return statusCmd(fmt.Sprintf("err: %v", err))
+	}
+
+	m.drawerOpen = false
+	return statusCmd("drawer closed")
+}
+
+// newTerminal creates a new terminal tab and switches to it.
+func (m *Model) newTerminal() tea.Cmd {
+	if m.windowPath == "" {
+		return statusCmd("no project path")
+	}
+
+	// Hide current terminal if drawer is open
+	if m.drawerOpen && m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
+		activePaneID := m.terminals[m.activeTermIdx].PaneID
+		if err := m.hidePane(activePaneID); err != nil {
+			return statusCmd(fmt.Sprintf("err: %v", err))
 		}
-		// Split a terminal below the Claude pane in this window
-		target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
-		paneID, err := m.tmux.SplitWindowHorizontal(target, m.windowPath)
-		if err != nil {
-			return sidebarStatusMsg(fmt.Sprintf("err: %v", err))
+	}
+
+	return m.createTerminalPane()
+}
+
+// createTerminalPane splits a new terminal below the Claude pane.
+func (m *Model) createTerminalPane() tea.Cmd {
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	paneID, err := m.tmux.SplitWindowHorizontal(target, m.windowPath)
+	if err != nil {
+		return statusCmd(fmt.Sprintf("err: %v", err))
+	}
+
+	m.tmux.SelectPane(paneID)
+	m.termCounter++
+	tab := TerminalTab{
+		PaneID: paneID,
+		Name:   fmt.Sprintf("term-%d", m.termCounter),
+	}
+	m.terminals = append(m.terminals, tab)
+	m.activeTermIdx = len(m.terminals) - 1
+	m.drawerOpen = true
+	return statusCmd(fmt.Sprintf("%s opened", tab.Name))
+}
+
+// switchTerminalByPaneID switches to a terminal tab by its pane ID.
+func (m *Model) switchTerminalByPaneID(paneID string) tea.Cmd {
+	for i, t := range m.terminals {
+		if t.PaneID == paneID {
+			return m.switchTerminalIdx(i)
 		}
-		m.tmux.SelectPane(paneID)
-		return sidebarStatusMsg("terminal opened")
+	}
+	return nil
+}
+
+// switchTerminalIdx switches to a terminal tab by index.
+func (m *Model) switchTerminalIdx(idx int) tea.Cmd {
+	if idx < 0 || idx >= len(m.terminals) {
+		return nil
+	}
+	// Already active — just focus it
+	if m.drawerOpen && idx == m.activeTermIdx {
+		m.tmux.SelectPane(m.terminals[idx].PaneID)
+		return nil
+	}
+
+	// Hide current if drawer is open
+	if m.drawerOpen && m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
+		if err := m.hidePane(m.terminals[m.activeTermIdx].PaneID); err != nil {
+			return statusCmd(fmt.Sprintf("err: %v", err))
+		}
+	}
+
+	// Show target
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	if err := m.tmux.JoinPaneVertical(m.terminals[idx].PaneID, target); err != nil {
+		return statusCmd(fmt.Sprintf("err: %v", err))
+	}
+
+	m.tmux.SelectPane(m.terminals[idx].PaneID)
+	m.activeTermIdx = idx
+	m.drawerOpen = true
+	return statusCmd(m.terminals[idx].Name)
+}
+
+// cycleTerminal switches to the next or previous terminal tab.
+func (m *Model) cycleTerminal(direction int) tea.Cmd {
+	if len(m.terminals) < 2 {
+		return nil
+	}
+	next := (m.activeTermIdx + direction + len(m.terminals)) % len(m.terminals)
+	return m.switchTerminalIdx(next)
+}
+
+// closeTerminal kills the active terminal and switches to the next one.
+func (m *Model) closeTerminal() tea.Cmd {
+	if len(m.terminals) == 0 || m.activeTermIdx < 0 {
+		return statusCmd("no terminal")
+	}
+
+	idx := m.activeTermIdx
+	paneID := m.terminals[idx].PaneID
+	name := m.terminals[idx].Name
+
+	// Kill the pane
+	m.tmux.KillPane(paneID)
+
+	// Remove from list
+	m.terminals = append(m.terminals[:idx], m.terminals[idx+1:]...)
+
+	if len(m.terminals) == 0 {
+		m.activeTermIdx = -1
+		m.drawerOpen = false
+		return statusCmd(name + " closed")
+	}
+
+	// Switch to next (or wrap)
+	if idx >= len(m.terminals) {
+		idx = len(m.terminals) - 1
+	}
+
+	// Show the next terminal
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	if err := m.tmux.JoinPaneVertical(m.terminals[idx].PaneID, target); err != nil {
+		m.activeTermIdx = idx
+		m.drawerOpen = false
+		return statusCmd(fmt.Sprintf("err: %v", err))
+	}
+
+	m.tmux.SelectPane(m.terminals[idx].PaneID)
+	m.activeTermIdx = idx
+	m.drawerOpen = true
+	return statusCmd(name + " closed")
+}
+
+// hidePane moves a terminal pane out of the main window into hidden storage.
+// If other hidden panes exist, consolidates into the same hidden window.
+// The hidden window is marked with @mo_hidden so ConfigureStatusFormat filters
+// it from the tmux status bar.
+func (m *Model) hidePane(paneID string) error {
+	// Find another hidden pane to consolidate with
+	for i, t := range m.terminals {
+		if t.PaneID == paneID {
+			continue
+		}
+		// Check if this pane is hidden (not the active visible one)
+		isActive := m.drawerOpen && i == m.activeTermIdx
+		if !isActive {
+			if err := m.tmux.JoinPaneConsolidate(paneID, t.PaneID); err != nil {
+				return err
+			}
+			// Mark using the destination pane ID — tmux resolves it to the
+			// containing window.
+			m.tmux.SetWindowOption(t.PaneID, "@mo_hidden", "1")
+			return nil
+		}
+	}
+	// No other hidden panes — break into a new window and mark it hidden.
+	if err := m.tmux.BreakPane(paneID); err != nil {
+		return err
+	}
+	// The pane is now in its new window — mark it directly via pane ID.
+	m.tmux.SetWindowOption(paneID, "@mo_hidden", "1")
+	return nil
+}
+
+// refreshTerminals verifies tracked terminals are still alive and appends
+// terminal items to the sidebar item list.
+func (m *Model) refreshTerminals() {
+	// Remember the active pane so we can detect if it gets pruned
+	activePaneID := ""
+	if m.drawerOpen && m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
+		activePaneID = m.terminals[m.activeTermIdx].PaneID
+	}
+
+	// Prune dead terminals
+	alive := m.terminals[:0]
+	newActiveIdx := -1
+	for _, t := range m.terminals {
+		if m.tmux.IsPaneAlive(t.PaneID) {
+			if t.PaneID == activePaneID {
+				newActiveIdx = len(alive)
+			}
+			alive = append(alive, t)
+		}
+	}
+	m.terminals = alive
+
+	if len(m.terminals) == 0 {
+		m.activeTermIdx = -1
+		m.drawerOpen = false
+	} else if activePaneID != "" && newActiveIdx == -1 {
+		// The visible terminal was pruned — the drawer pane is gone from
+		// the window layout, so mark the drawer as closed.
+		m.activeTermIdx = 0
+		m.drawerOpen = false
+	} else if newActiveIdx >= 0 {
+		m.activeTermIdx = newActiveIdx
+	} else if m.activeTermIdx >= len(m.terminals) {
+		m.activeTermIdx = len(m.terminals) - 1
+	}
+
+	// Append terminal items to the sidebar list
+	if len(m.terminals) > 0 {
+		m.items = append(m.items, SidebarItem{
+			Name:     "── Terminals ──",
+			IsHeader: true,
+		})
+		for i, t := range m.terminals {
+			m.items = append(m.items, SidebarItem{
+				Name:       fmt.Sprintf("%d: %s", i+1, t.Name),
+				IsTerminal: true,
+				PaneID:     t.PaneID,
+				IsActive:   m.drawerOpen && i == m.activeTermIdx,
+			})
+		}
 	}
 }
 

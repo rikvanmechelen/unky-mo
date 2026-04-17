@@ -149,6 +149,7 @@ func launchInTmux(sessionName string) error {
 			fmt.Printf("Attaching to existing session %q...\n", sessionName)
 		}
 		tc.EnableMouse()
+		tc.ConfigureStatusFormat()
 		argv := []string{"tmux", "attach-session", "-t", sessionName}
 		return syscall.Exec(tmuxBin, argv, os.Environ())
 	}
@@ -162,6 +163,7 @@ func launchInTmux(sessionName string) error {
 		return fmt.Errorf("creating tmux session: %w", err)
 	}
 	tc.EnableMouse()
+	tc.ConfigureStatusFormat()
 	argv := []string{"tmux", "attach-session", "-t", sessionName}
 	return syscall.Exec(tmuxBin, argv, os.Environ())
 }

@@ -46,4 +46,7 @@ var (
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)
+
+	termActiveStyle = lipgloss.NewStyle().
+			Foreground(colorSuccess)
 )

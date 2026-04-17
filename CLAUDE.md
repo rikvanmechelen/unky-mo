@@ -51,21 +51,25 @@ tmux session "mo"
 ├── window 1: "moma-apps-rails"
 │   ├── pane 0: Claude Code session
 │   ├── pane 1: sidebar (mo sidebar)
-│   └── pane 2+: terminal splits (optional, via `t`)
+│   └── pane 2: terminal drawer (optional, toggled via `t`)
 ├── window 2: "moma-go"
 │   ├── pane 0: Claude Code session
 │   └── pane 1: sidebar
 └── ...
 ```
 
+### Terminal Drawer
+
+The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.0`). Only one terminal tab is visible at a time — inactive tabs are stored in hidden tmux windows via `break-pane`/`join-pane` and swapped in on demand. The sidebar tracks terminal pane IDs (`%N` format, stable across moves) and prunes dead panes on each 1s refresh tick.
+
 ## TUI Key Handling
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
 - **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Handles `enter`, `esc`, `n`, `a`, `r`, `w`, `?`, `ctrl+r`, `q`.
-- **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Handles `up`/`down`, `enter` (switch window), `t` (terminal split), `` ` `` (popup), `ctrl+r` (restart).
+- **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Handles `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `ctrl+r` (restart).
 
-`t` and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
+`t`, `T`, `tab`, `x`, and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
 
 ## tmux Gotchas
 

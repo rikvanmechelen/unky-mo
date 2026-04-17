@@ -157,6 +157,72 @@ func (c *Client) SplitWindowHorizontal(target, cwd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// BreakPane moves a pane into its own hidden window without switching focus.
+func (c *Client) BreakPane(paneID string) error {
+	return runTmux("break-pane", "-d", "-s", paneID)
+}
+
+// GetPaneWindowID returns the tmux window ID (e.g. "@3") that contains the given pane.
+func (c *Client) GetPaneWindowID(paneID string) (string, error) {
+	cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{window_id}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("get window for pane %s: %s", paneID, msg)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// SetWindowOption sets a user option on a tmux window. The target can be a
+// window ID (@N), window name, or pane ID (%N) — tmux resolves pane targets
+// to the containing window.
+func (c *Client) SetWindowOption(target, option, value string) error {
+	return runTmux("set-window-option", "-t", target, option, value)
+}
+
+// ConfigureStatusFormat sets the global window-status-format to hide windows
+// marked with the @mo_hidden user option (used for terminal drawer tab storage).
+// Uses -g because session-level window options are not inherited by windows
+// created later (e.g. by break-pane).
+func (c *Client) ConfigureStatusFormat() {
+	runTmux("set-option", "-g",
+		"window-status-format", "#{?#{@mo_hidden},,#I:#W#{window_flags} }")
+	runTmux("set-option", "-g",
+		"window-status-current-format", "#{?#{@mo_hidden},,#I:#W#{window_flags}*}")
+}
+
+// JoinPaneVertical moves srcPaneID into dstTarget's window, splitting dstTarget
+// vertically (new pane below) at 30% height.
+func (c *Client) JoinPaneVertical(srcPaneID, dstTarget string) error {
+	return runTmux("join-pane", "-v", "-l", "30%", "-s", srcPaneID, "-t", dstTarget)
+}
+
+// JoinPaneConsolidate moves srcPaneID into dstPaneID's window for hidden storage.
+// Uses -d to prevent tmux from switching focus to the hidden window.
+func (c *Client) JoinPaneConsolidate(srcPaneID, dstPaneID string) error {
+	return runTmux("join-pane", "-d", "-s", srcPaneID, "-t", dstPaneID)
+}
+
+// KillPane kills a specific pane by its ID.
+func (c *Client) KillPane(paneID string) error {
+	return runTmux("kill-pane", "-t", paneID)
+}
+
+// IsPaneAlive checks if a pane exists and its process is still running.
+// Returns false for panes that don't exist or whose process has exited
+// (e.g. remain-on-exit keeps the pane around but the shell is dead).
+func (c *Client) IsPaneAlive(paneID string) bool {
+	cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_dead}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "0"
+}
+
 // Popup opens a floating popup terminal in the given directory.
 func (c *Client) Popup(cwd, title string) error {
 	return runTmux("display-popup", "-E", "-d", cwd, "-w", "80%", "-h", "80%", "-T", title)
