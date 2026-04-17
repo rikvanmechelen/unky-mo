@@ -60,21 +60,45 @@ Every Claude session window includes a narrow sidebar pane on the right that sho
 │  (your main work area)               │    ● rails-app       │
 │                                      │    ● go-svc    idle  │
 │  > working on feature...             │    ○ frontend        │
-│                                      │    ○ my-python       │
 │                                      │                      │
-│                                      │  ↑↓ navigate         │
-│                                      │  ⏎  switch           │
+├──────────────────────────────────────│ ── Terminals ─────── │
+│  Terminal drawer (one tab visible)   │    1: term-1 ◀       │
+│  $ npm run build                     │    2: term-2         │
+│                                      │                      │
+│                                      │  ↑↓ nav   ⏎ select  │
+│                                      │  t drawer T +term   │
+│                                      │  ⇥ next   x close   │
+│                                      │  ` popup  ^r redo   │
 └──────────────────────────────────────┴──────────────────────┘
 ```
 
+### Terminal drawer
+
+The sidebar manages a collapsible **terminal drawer** below the Claude pane. Press `t` to toggle it open or closed. Multiple terminal tabs can be created — only the active tab is visible at a time, while inactive terminals are stored in hidden tmux windows and swapped in on demand.
+
+- Press `t` to toggle the drawer (creates a terminal on first use)
+- Press `T` to create an additional terminal tab
+- Press `tab` / `shift+tab` to cycle between tabs
+- Press `x` to close the current terminal tab
+- The sidebar shows all terminal tabs with a `◀` marker on the active one
+
+If you close all terminals, the drawer closes automatically and the Claude pane reclaims the full height.
+
 ### Sidebar shortcuts
 
-| Key        | Action                              |
-|------------|-------------------------------------|
-| `↑` / `k`   | Move up                             |
-| `↓` / `j`   | Move down                           |
-| `enter`      | Switch to the selected project      |
-| `q`          | Close the sidebar pane              |
+| Key            | Action                                   |
+|----------------|------------------------------------------|
+| `↑` / `k`     | Move up                                  |
+| `↓` / `j`     | Move down                                |
+| `enter`        | Switch to selected session or terminal   |
+| `t`            | Toggle terminal drawer open/close        |
+| `T`            | Create a new terminal tab                |
+| `tab`          | Next terminal tab                        |
+| `shift+tab`    | Previous terminal tab                    |
+| `x`            | Close current terminal tab               |
+| `` ` ``        | Open floating popup terminal             |
+| `ctrl+r`       | Restart sidebar (reload binary)          |
+| `q`            | Close the sidebar pane                   |
 
 The first item, **Unky Mo Home**, switches back to the main TUI (window 0).
 
