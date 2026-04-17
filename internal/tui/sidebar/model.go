@@ -64,7 +64,9 @@ type Model struct {
 	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
 	syncStatus string
 	// Changed files tree (from git status)
-	changedFiles []string // raw file paths from git status --porcelain
+	changedFiles  []string // raw file paths from git status --porcelain
+	changedAdded  int      // total lines added
+	changedRemoved int     // total lines removed
 }
 
 func NewModel(sessionName, stateFile string) Model {
@@ -312,7 +314,15 @@ func (m Model) View() string {
 			tree := renderFileTree(m.changedFiles, m.width, maxTreeLines)
 			if tree != "" {
 				b.WriteString("\n")
-				b.WriteString(headerStyle.Render(fmt.Sprintf("Changed (%d)", len(m.changedFiles))) + "\n")
+				noun := "files"
+			if len(m.changedFiles) == 1 {
+				noun = "file"
+			}
+			stats := fmt.Sprintf("%d %s", len(m.changedFiles), noun)
+			if m.changedAdded > 0 || m.changedRemoved > 0 {
+				stats += " " + dotIdle.Render(fmt.Sprintf("+%d", m.changedAdded)) + " " + dotPermission.Render(fmt.Sprintf("-%d", m.changedRemoved))
+			}
+			b.WriteString(headerStyle.Render("Changed") + " " + stats + "\n")
 				treeLines := strings.Count(tree, "\n") + 1
 				b.WriteString(normalStyle.Render(tree) + "\n")
 				remaining -= treeLines + 2
@@ -485,6 +495,23 @@ func (m *Model) refreshChangedFiles() {
 		files = append(files, file)
 	}
 	m.changedFiles = files
+
+	// Get line-level stats
+	m.changedAdded = 0
+	m.changedRemoved = 0
+	numstat, err := exec.Command("git", "-C", m.windowPath, "diff", "--numstat").Output()
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(numstat)), "\n") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 && parts[0] != "-" {
+				var added, removed int
+				fmt.Sscan(parts[0], &added)
+				fmt.Sscan(parts[1], &removed)
+				m.changedAdded += added
+				m.changedRemoved += removed
+			}
+		}
+	}
 }
 
 // renderFileTree renders changed files as a compact tree.
