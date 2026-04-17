@@ -158,10 +158,13 @@ mo hooks install                # Install notification hooks
 mo hooks uninstall              # Remove notification hooks
 mo hooks status                 # Check if hooks are installed
 mo sync init <repo-url>         # Connect to a private GitHub repo for syncing
-mo sync push <project>          # Push a session to the sync repo
-mo sync pull                    # Pull all sessions (files only, no tmux windows)
+mo sync init-key                # Generate a shared encryption key (run once)
+mo sync show-key                # Print the key for copying to another machine
+mo sync push <project>          # Encrypt and push a session to the sync repo
+mo sync pull                    # Pull + decrypt all sessions (files only, no tmux windows)
 mo sync pull <project>          # Pull a session and resume it in a tmux window
 mo sync list                    # List available synced sessions
+mo sync migrate                 # Re-encrypt any legacy plaintext sessions
 mo version                      # Print version
 ```
 
@@ -248,10 +251,35 @@ mo hooks uninstall
 
 Sync individual Claude sessions between machines using a private GitHub repo. Useful when you want to pick up a session on another computer.
 
-### Setup (once per machine)
+Sessions are **encrypted client-side with AES-256-GCM** before anything is pushed. Project directory names on the remote are opaque HMAC hashes and commit messages are generic, so the repo contents and git log don't leak project names, hostnames, or conversation content. Everything is decrypted locally on pull.
 
-1. Create a private repo on GitHub (e.g. `coding-sessions`)
-2. Initialize on each machine:
+### Setup
+
+**1. Create a private repo** on GitHub (e.g. `coding-sessions`).
+
+**2. Generate a shared key on one machine:**
+
+```bash
+mo sync init-key
+```
+
+This writes a 32-byte random key to `~/.config/unky-mo/sync.key` (mode `0600`). Anyone holding this key can decrypt your synced sessions — treat it like a password.
+
+**3. Copy the key to every other machine** that should sync. Either copy the file directly (via 1Password, `scp`, a USB key, etc.) or print it and paste it in:
+
+```bash
+# On the source machine:
+mo sync show-key
+
+# On each other machine:
+mkdir -p ~/.config/unky-mo
+printf '%s\n' '<paste the base64 key>' > ~/.config/unky-mo/sync.key
+chmod 600 ~/.config/unky-mo/sync.key
+```
+
+Alternatively, keep the key out of the filesystem by exporting `UNKY_MO_SYNC_KEY=<base64>` in your shell — this takes precedence over the file.
+
+**4. Initialize the sync repo on each machine:**
 
 ```bash
 mo sync init git@github.com:youruser/coding-sessions.git
@@ -259,29 +287,27 @@ mo sync init git@github.com:youruser/coding-sessions.git
 
 ### Pushing a session
 
-When you're done on one machine and want to continue on another:
-
 ```bash
 mo sync push moma-apps-rails
 ```
 
-This exports the Claude conversation history and metadata to the repo.
+The session JSONL and metadata are encrypted and committed to the repo under an opaque directory name.
 
 ### Pulling sessions
 
-Pull every synced session's history down to this machine (no tmux windows opened):
+Pull every synced session's history down to this machine (decrypts into `~/.claude/projects/...`, no tmux windows opened):
 
 ```bash
 mo sync pull
 ```
 
-Or pull a single project and immediately resume it in a new tmux window:
+Pull a single project and immediately resume it in a new tmux window:
 
 ```bash
 mo sync pull moma-apps-rails
 ```
 
-Sessions for projects that aren't checked out on this machine are still downloaded so they show up in `mo sync list`; they're marked `(no local repo)`.
+Sessions for projects that aren't checked out on this machine are skipped with a warning — check the project out locally and re-run to pull.
 
 ### Listing available sessions
 
@@ -289,25 +315,34 @@ Sessions for projects that aren't checked out on this machine are still download
 mo sync list
 ```
 
-Shows all sessions in the repo with their title, source machine, and age:
+Shows all sessions in the repo with their title, source machine, and age (the metadata is decrypted on the fly):
 
 ```
   moma-apps-rails           generate-test-qr-tickets  from mac-office  2h ago
   unky-mo                   unky-mo-session-orchestrator  from mac-office  5m ago
-  legacy-importer           one-off cleanup  from mac-office  3d ago  (no local repo)
 ```
 
-### What gets synced
+### Migrating from an older plaintext repo
 
-Each push stores:
-- The Claude session JSONL file (full conversation history)
-- Metadata: session ID, title, project path, hostname, timestamp
+Early versions of the sync tooling pushed plaintext JSONL and metadata. If your sync repo still contains any of those, run:
 
-Only one session per project is kept — each push overwrites the previous.
+```bash
+mo sync migrate
+```
 
-### Privacy note
+This re-encrypts each plaintext project directory into the new hashed/encrypted layout, commits, and pushes.
 
-Session files contain your full Claude conversation, which may include file contents and command outputs from your projects. Only sync to a **private** repo you control.
+Important: git history still contains the original plaintext blobs. To fully purge them, either (1) delete and recreate the remote repo on GitHub and `mo sync init <new-url>` / push from each machine, or (2) rewrite history with `git-filter-repo` on the sync clone and force-push.
+
+### Lost or leaking keys
+
+If the shared key leaks (published to a public gist, included in a screenshot, committed by mistake), rotate immediately:
+
+1. Delete and recreate the sync repo on GitHub.
+2. `rm ~/.config/unky-mo/sync/` on each machine, then `mo sync init-key --force` once and redistribute the new key.
+3. `mo sync init <new-url>` and push fresh from each machine.
+
+Rotating the key does not re-encrypt old pushes, so the old remote must be destroyed.
 
 ## tmux Tips
 

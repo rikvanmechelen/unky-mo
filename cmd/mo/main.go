@@ -374,6 +374,62 @@ func syncCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Sync repo initialized at %s\n", syncDir)
+			if _, err := moSync.LoadKey(); err != nil {
+				fmt.Println("No sync key yet — run 'mo sync init-key' on one machine, then copy the key to any other machine that should sync.")
+			}
+			return nil
+		},
+	})
+
+	var initKeyForce bool
+	initKeyCmd := &cobra.Command{
+		Use:   "init-key",
+		Short: "Generate a shared encryption key for sync (run once, copy to other machines)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := moSync.InitKey(initKeyForce)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Wrote new sync key to %s\n", path)
+			fmt.Println("Copy this file (or the output of 'mo sync show-key') to every machine that should sync.")
+			fmt.Println("Anyone with this key can decrypt your synced sessions — treat it like a password.")
+			return nil
+		},
+	}
+	initKeyCmd.Flags().BoolVar(&initKeyForce, "force", false, "overwrite an existing key")
+	cmd.AddCommand(initKeyCmd)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show-key",
+		Short: "Print the current sync key (base64) for copying to another machine",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b64, err := moSync.ShowKey()
+			if err != nil {
+				return err
+			}
+			fmt.Println(b64)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "migrate",
+		Short: "Re-encrypt any legacy plaintext sessions in the sync repo",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := moSync.Migrate(syncDir)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				fmt.Println("Nothing to migrate — all projects already use the encrypted layout.")
+				return nil
+			}
+			fmt.Printf("Migrated %d project(s) to the encrypted layout and pushed.\n", n)
+			fmt.Println()
+			fmt.Println("WARNING: git history on the sync remote still contains the plaintext blobs.")
+			fmt.Println("To fully purge the plaintext, either:")
+			fmt.Println("  1. Delete the remote repo on GitHub, recreate it empty, then 'mo sync init <new-url>' and push again from each machine.")
+			fmt.Println("  2. Rewrite history with git-filter-repo on the sync clone and force-push (advanced).")
 			return nil
 		},
 	})
@@ -391,10 +447,6 @@ func syncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			fmt.Println("Note: Session files may contain file contents and command outputs from your projects.")
-			fmt.Println("Only sync to a private repo you control.")
-			fmt.Println()
 
 			if err := moSync.Push(args[0], projectPath, syncDir); err != nil {
 				return err
