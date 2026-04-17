@@ -82,6 +82,9 @@ type Model struct {
 	detailWorktrees      []project.Worktree
 	detailRecentSessions []claude.RecentSession
 	detailSessionCursor  int
+	// Resume-confirmation prompt: non-empty means we're asking the user whether
+	// to disconnect the currently-running session and resume this one instead.
+	pendingResumeSessionID string
 	// State file for sidebar instances
 	stateFilePath string
 	width         int
@@ -146,6 +149,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		// Resume-confirmation prompt captures all input while active.
+		if m.pendingResumeSessionID != "" && m.screen == ScreenProject {
+			switch msg.String() {
+			case "y", "Y", "enter":
+				sessionID := m.pendingResumeSessionID
+				m.pendingResumeSessionID = ""
+				return m, m.disconnectAndResumeSession(sessionID)
+			case "n", "N", "esc", "escape":
+				m.pendingResumeSessionID = ""
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, keys.Help):
 			if m.screen == ScreenHelp {
@@ -169,9 +186,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.screen == ScreenProject {
-				// Resume the selected recent session
+				// Resume the selected recent session. If a different session is
+				// already running in this project's window, prompt before killing it.
 				if len(m.detailRecentSessions) > 0 && m.detailSessionCursor < len(m.detailRecentSessions) {
-					return m, m.resumeSpecificSession(m.detailRecentSessions[m.detailSessionCursor].SessionID)
+					selectedID := m.detailRecentSessions[m.detailSessionCursor].SessionID
+					if m.tmux != nil && m.detailProject != nil && m.tmux.WindowExists(m.detailProject.Name) {
+						if m.detailSession == nil || m.detailSession.SessionID != selectedID {
+							m.pendingResumeSessionID = selectedID
+							return m, nil
+						}
+					}
+					return m, m.resumeSpecificSession(selectedID)
 				}
 				return m, nil
 			}
@@ -585,16 +610,25 @@ func (m Model) projectDetailView() string {
 		b.WriteString("\n" + notifBadgeStyle.Render(m.statusMsg) + "\n")
 	}
 
-	// Footer
-	footer := m.renderFooter([]footerBinding{
-		{"↑↓", "select session"},
-		{"enter", "resume selected"},
-		{"n", "new session"},
-		{"a", "attach"},
-		{"w", "worktrees"},
-		{"esc", "back"},
-		{"?", "help"},
-	})
+	// Footer — replaced with a confirmation prompt when a resume is pending.
+	var footer string
+	if m.pendingResumeSessionID != "" {
+		question := fmt.Sprintf("A session is already running for %s. Disconnect it and start the selected session?", p.Name)
+		footer = m.renderPrompt(question, []footerBinding{
+			{"y", "yes"},
+			{"n", "no"},
+		})
+	} else {
+		footer = m.renderFooter([]footerBinding{
+			{"↑↓", "select session"},
+			{"enter", "resume selected"},
+			{"n", "new session"},
+			{"a", "attach"},
+			{"w", "worktrees"},
+			{"esc", "back"},
+			{"?", "help"},
+		})
+	}
 
 	// Pad content to fill screen, then add footer
 	content := b.String()
@@ -605,6 +639,20 @@ func (m Model) projectDetailView() string {
 	}
 
 	return content + footer
+}
+
+// renderPrompt renders a two-row confirmation bar: the question on top, key
+// hints on the bottom. Uses the same styling as the normal footer.
+func (m Model) renderPrompt(question string, bindings []footerBinding) string {
+	var parts []string
+	for _, b := range bindings {
+		k := footerKeyStyle.Render(b.key)
+		d := footerDescStyle.Render(b.desc)
+		parts = append(parts, k+":"+d)
+	}
+	hints := strings.Join(parts, "  ")
+	body := footerKeyStyle.Render(question) + "\n" + footerDescStyle.Render(hints)
+	return footerStyle.Width(m.width).Render(body)
 }
 
 func (m Model) worktreeView() string {
@@ -823,7 +871,6 @@ func (m Model) resumeSpecificSession(sessionID string) tea.Cmd {
 		if p == nil {
 			return statusMsgEvent("No project selected")
 		}
-
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
@@ -835,25 +882,51 @@ func (m Model) resumeSpecificSession(sessionID string) tea.Cmd {
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
-
-		target, err := m.tmux.CreateWindow(windowName, p.Path)
-		if err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
-		}
-
-		cmd := fmt.Sprintf("claude --resume %s", sessionID)
-		if err := m.tmux.SendKeys(target, cmd); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
-		}
-
-		m.addSidebarPane(target)
-
-		if err := m.tmux.SwitchToWindow(target); err != nil {
-			return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
-		}
-
-		return statusMsgEvent("Resumed session in " + windowName)
+		return m.launchResumeInWindow(windowName, p.Path, sessionID)
 	}
+}
+
+// disconnectAndResumeSession kills the project's existing tmux window (along
+// with any Claude process and sidebar pane running in it) and starts the
+// selected session fresh.
+func (m Model) disconnectAndResumeSession(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+
+		windowName := p.Name
+		// Kill the existing window; ignore error if it's already gone.
+		_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + windowName)
+		return m.launchResumeInWindow(windowName, p.Path, sessionID)
+	}
+}
+
+// launchResumeInWindow creates a fresh tmux window for the project, runs
+// `claude --resume <id>` in it, attaches a sidebar pane, and switches focus.
+// Returns a statusMsgEvent describing the outcome.
+func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) tea.Msg {
+	target, err := m.tmux.CreateWindow(windowName, projectPath)
+	if err != nil {
+		return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
+	}
+
+	cmd := fmt.Sprintf("claude --resume %s", sessionID)
+	if err := m.tmux.SendKeys(target, cmd); err != nil {
+		return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
+	}
+
+	m.addSidebarPane(target)
+
+	if err := m.tmux.SwitchToWindow(target); err != nil {
+		return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
+	}
+
+	return statusMsgEvent("Resumed session in " + windowName)
 }
 
 func (m Model) openTerminal() tea.Cmd {
