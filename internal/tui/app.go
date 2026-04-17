@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rvanmech/unky-mo/internal/claude"
+	gh "github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
@@ -91,6 +92,11 @@ type Model struct {
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
+	// Pull requests panel (right side of project detail)
+	detailPRs       []gh.PullRequest
+	detailPRCursor  int
+	detailPRErr     string // error message if gh failed
+	detailFocusLeft bool   // true = left panel (sessions/worktrees), false = right (PRs)
 	// State file for sidebar instances
 	stateFilePath string
 	width         int
@@ -206,7 +212,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
 					m.detailRecentSessions = claude.RecentSessions(p.Path, 10)
 					m.detailCursor = 0
+					m.detailPRs = nil
+					m.detailPRCursor = 0
+					m.detailPRErr = ""
+					m.detailFocusLeft = true
 					m.screen = ScreenProject
+					return m, m.fetchPRs(p.Path)
 				}
 				return m, nil
 			}
@@ -254,6 +265,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Resume):
 			if m.screen == ScreenDashboard || m.screen == ScreenProject {
 				return m, m.resumeSession()
+			}
+
+		case key.Matches(msg, keys.Tab):
+			if m.screen == ScreenProject {
+				m.detailFocusLeft = !m.detailFocusLeft
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.OpenInBrowser):
+			if m.screen == ScreenProject && !m.detailFocusLeft && len(m.detailPRs) > 0 {
+				pr := m.detailPRs[m.detailPRCursor]
+				return m, func() tea.Msg {
+					gh.OpenPRInBrowser(m.detailProject.Path, pr.Number)
+					return statusMsgEvent(fmt.Sprintf("Opened PR #%d in browser", pr.Number))
+				}
 			}
 
 		case key.Matches(msg, keys.NewWorktree):
@@ -310,6 +336,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 		return m, nil
 
+	case prFetchMsg:
+		if msg.err != nil {
+			m.detailPRErr = msg.err.Error()
+		} else {
+			m.detailPRs = msg.prs
+		}
+		return m, nil
+
 	case worktreeCreatedMsg:
 		if m.detailProject != nil {
 			m.detailWorktrees, _ = project.ListWorktrees(m.detailProject.Path)
@@ -324,15 +358,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
 	case ScreenProject:
-		// Handle up/down across the unified [sessions..., worktrees...] list.
 		if msg, ok := msg.(tea.KeyMsg); ok {
-			n := m.detailCombinedLen()
-			if n > 0 {
-				switch msg.String() {
-				case "up", "k":
-					m.detailCursor = (m.detailCursor - 1 + n) % n
-				case "down", "j":
-					m.detailCursor = (m.detailCursor + 1) % n
+			switch msg.String() {
+			case "up", "k":
+				if m.detailFocusLeft {
+					n := m.detailCombinedLen()
+					if n > 0 {
+						m.detailCursor = (m.detailCursor - 1 + n) % n
+					}
+				} else {
+					n := len(m.detailPRs)
+					if n > 0 {
+						m.detailPRCursor = (m.detailPRCursor - 1 + n) % n
+					}
+				}
+			case "down", "j":
+				if m.detailFocusLeft {
+					n := m.detailCombinedLen()
+					if n > 0 {
+						m.detailCursor = (m.detailCursor + 1) % n
+					}
+				} else {
+					n := len(m.detailPRs)
+					if n > 0 {
+						m.detailPRCursor = (m.detailPRCursor + 1) % n
+					}
 				}
 			}
 		}
@@ -553,93 +603,88 @@ func (m Model) projectDetailView() string {
 	}
 	p := m.detailProject
 
-	var b strings.Builder
-
-	// Header
+	// Header (full width)
 	title := titleStyle.Render(" ← " + p.Name + " ")
 	lang := p.Language
 	if lang == "" {
 		lang = "unknown"
 	}
-	b.WriteString(title + "  " + langStyle.Render("["+lang+"]") + "\n\n")
+	header := title + "  " + langStyle.Render("["+lang+"]") + "  " + footerDescStyle.Render(p.Path) + "\n\n"
 
-	// Path
-	b.WriteString(headerStyle.Render("Path") + "\n")
-	b.WriteString("  " + footerDescStyle.Render(p.Path) + "\n\n")
-
-	// Description
-	if p.Description != "" {
-		b.WriteString(headerStyle.Render("Description") + "\n")
-		b.WriteString("  " + footerDescStyle.Render(p.Description) + "\n\n")
+	// Calculate panel widths
+	dividerWidth := 3 // " │ "
+	totalWidth := m.width
+	if totalWidth == 0 {
+		totalWidth = 80
 	}
+	rightWidth := totalWidth * 2 / 5
+	if rightWidth < 25 {
+		rightWidth = 25
+	}
+	leftWidth := totalWidth - rightWidth - dividerWidth
+
+	// === LEFT PANEL: Sessions + Worktrees ===
+	var left strings.Builder
+
+	focusIndicator := ""
+	if m.detailFocusLeft {
+		focusIndicator = " ◀"
+	}
+	left.WriteString(headerStyle.Render("Sessions"+focusIndicator) + "\n")
 
 	sessionN := len(m.detailRecentSessions)
 	worktrees := m.visibleWorktrees()
 
-	// Recent sessions
-	b.WriteString(headerStyle.Render("Sessions") + "\n")
 	if sessionN == 0 {
-		b.WriteString("  " + footerDescStyle.Render("No sessions found") + "\n")
+		left.WriteString("  " + footerDescStyle.Render("No sessions found") + "\n")
 	} else {
 		for i, rs := range m.detailRecentSessions {
-			selected := m.detailCursor == i
+			selected := m.detailFocusLeft && m.detailCursor == i
 			cursor := "  "
 			if selected {
 				cursor = "▸ "
 			}
 
-			// Status
 			var statusStr string
 			if rs.IsLive {
-				statusStr = statusActive.Render("● active")
+				statusStr = statusActive.Render("●")
 			} else {
 				statusStr = statusNone.Render("○")
 			}
 
-			// Age
 			age := formatAge(time.Since(rs.LastActive))
-
-			// Session name (customTitle from Claude, e.g. "unky-mo-session-orchestrator")
 			name := rs.DisplayName()
 
-			// Summary line underneath for context
-			summary := rs.Summary
-			if summary == "" {
-				summary = "(no prompt)"
+			// Truncate name to fit panel
+			maxName := leftWidth - 16
+			if maxName < 10 {
+				maxName = 10
+			}
+			if len(name) > maxName {
+				name = name[:maxName-3] + "..."
 			}
 
-			// Branch
 			branchStr := ""
 			if rs.GitBranch != "" {
 				branchStr = langStyle.Render(" [" + rs.GitBranch + "]")
 			}
 
 			line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, name, branchStr)
-			if summary != "" && summary != "(no prompt)" {
-				// Truncate summary for the second line
-				maxSummary := 60
-				if len(summary) > maxSummary {
-					summary = summary[:maxSummary-3] + "..."
-				}
-				line += "\n" + footerDescStyle.Render("      "+summary)
-			}
-
 			if selected {
-				b.WriteString(selectedItemStyle.Render(line) + "\n")
+				left.WriteString(selectedItemStyle.Render(line) + "\n")
 			} else {
-				b.WriteString(normalItemStyle.Render(line) + "\n")
+				left.WriteString(normalItemStyle.Render(line) + "\n")
 			}
 		}
 	}
-	b.WriteString("\n")
+	left.WriteString("\n")
 
-	// Worktrees (main checkout filtered out — it's the project itself)
-	b.WriteString(headerStyle.Render(fmt.Sprintf("Worktrees (%d)", len(worktrees))) + "\n")
+	left.WriteString(headerStyle.Render(fmt.Sprintf("Worktrees (%d)", len(worktrees))) + "\n")
 	if len(worktrees) == 0 {
-		b.WriteString("  " + footerDescStyle.Render("none") + "\n")
+		left.WriteString("  " + footerDescStyle.Render("none") + "\n")
 	} else {
 		for i, wt := range worktrees {
-			selected := m.detailCursor == sessionN+i
+			selected := m.detailFocusLeft && m.detailCursor == sessionN+i
 			cursor := "  "
 			if selected {
 				cursor = "▸ "
@@ -648,22 +693,85 @@ func (m Model) projectDetailView() string {
 			if branch == "" && len(wt.HEAD) >= 8 {
 				branch = "(detached " + wt.HEAD[:8] + ")"
 			}
-			line := fmt.Sprintf("%s%s  %s", cursor, branch, footerDescStyle.Render(wt.Path))
 			if selected {
-				b.WriteString(selectedItemStyle.Render(line) + "\n")
+				left.WriteString(selectedItemStyle.Render(cursor+branch) + "\n")
 			} else {
-				b.WriteString(normalItemStyle.Render(line) + "\n")
+				left.WriteString(normalItemStyle.Render(cursor+branch) + "\n")
 			}
 		}
 	}
 
-	// Status message
-	if m.statusMsg != "" {
-		b.WriteString("\n" + notifBadgeStyle.Render(m.statusMsg) + "\n")
+	// === RIGHT PANEL: Pull Requests ===
+	var right strings.Builder
+
+	prFocusIndicator := ""
+	if !m.detailFocusLeft {
+		prFocusIndicator = " ◀"
+	}
+	right.WriteString(headerStyle.Render("Pull Requests"+prFocusIndicator) + "\n")
+
+	if m.detailPRErr != "" {
+		right.WriteString("  " + footerDescStyle.Render(m.detailPRErr) + "\n")
+	} else if m.detailPRs == nil {
+		right.WriteString("  " + footerDescStyle.Render("Loading...") + "\n")
+	} else if len(m.detailPRs) == 0 {
+		right.WriteString("  " + footerDescStyle.Render("No open pull requests") + "\n")
+	} else {
+		for i, pr := range m.detailPRs {
+			selected := !m.detailFocusLeft && m.detailPRCursor == i
+			cursor := "  "
+			if selected {
+				cursor = "▸ "
+			}
+
+			num := fmt.Sprintf("#%d", pr.Number)
+			prTitle := pr.Title
+			maxTitle := rightWidth - len(num) - 5
+			if maxTitle < 10 {
+				maxTitle = 10
+			}
+			if len(prTitle) > maxTitle {
+				prTitle = prTitle[:maxTitle-3] + "..."
+			}
+
+			line := fmt.Sprintf("%s%s %s", cursor, langStyle.Render(num), prTitle)
+			if selected {
+				right.WriteString(selectedItemStyle.Render(line) + "\n")
+			} else {
+				right.WriteString(normalItemStyle.Render(line) + "\n")
+			}
+		}
 	}
 
-	// Footer — replaced by a prompt when a pending resume confirm or worktree
-	// input is active.
+	// === Combine panels ===
+	// Pad both panels to the same height
+	leftStr := left.String()
+	rightStr := right.String()
+	leftLines := strings.Count(leftStr, "\n")
+	rightLines := strings.Count(rightStr, "\n")
+	maxLines := leftLines
+	if rightLines > maxLines {
+		maxLines = rightLines
+	}
+	for i := leftLines; i < maxLines; i++ {
+		leftStr += "\n"
+	}
+	for i := rightLines; i < maxLines; i++ {
+		rightStr += "\n"
+	}
+
+	leftPanel := lipgloss.NewStyle().Width(leftWidth).Render(leftStr)
+	divider := lipgloss.NewStyle().Foreground(colorMuted).Render(" │ ")
+	rightPanel := lipgloss.NewStyle().Width(rightWidth).Render(rightStr)
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, divider, rightPanel)
+
+	// Status message
+	if m.statusMsg != "" {
+		body += "\n" + notifBadgeStyle.Render(m.statusMsg)
+	}
+
+	// Footer
 	var footer string
 	switch {
 	case m.worktreeInput != nil:
@@ -681,17 +789,17 @@ func (m Model) projectDetailView() string {
 	default:
 		footer = m.renderFooter([]footerBinding{
 			{"↑↓", "select"},
+			{"tab", "switch panel"},
 			{"enter", "open"},
+			{"o", "open PR in browser"},
 			{"n", "new session"},
-			{"a", "attach"},
 			{"w", "new worktree"},
 			{"esc", "back"},
-			{"?", "help"},
 		})
 	}
 
 	// Pad content to fill screen, then add footer
-	content := b.String()
+	content := header + body
 	contentLines := strings.Count(content, "\n")
 	footerLines := 3
 	if contentLines < m.height-footerLines {
@@ -820,6 +928,19 @@ type clearStatusMsg struct{}
 // worktreeCreatedMsg signals that a new worktree was created; Update refreshes
 // detailWorktrees and surfaces the carried status string.
 type worktreeCreatedMsg struct{ status string }
+
+// prFetchMsg carries the result of an async PR fetch.
+type prFetchMsg struct {
+	prs []gh.PullRequest
+	err error
+}
+
+func (m Model) fetchPRs(projectPath string) tea.Cmd {
+	return func() tea.Msg {
+		prs, err := gh.ListPRs(projectPath)
+		return prFetchMsg{prs: prs, err: err}
+	}
+}
 
 // currentProject returns the project for the current context —
 // detailProject on the project detail screen, list selection on the dashboard.

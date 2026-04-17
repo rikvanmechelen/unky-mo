@@ -8,10 +8,12 @@ type keyMap struct {
 	New         key.Binding
 	Attach      key.Binding
 	Resume      key.Binding
-	NewWorktree key.Binding
-	Help        key.Binding
-	Restart     key.Binding
-	Quit        key.Binding
+	NewWorktree   key.Binding
+	Tab           key.Binding
+	OpenInBrowser key.Binding
+	Help          key.Binding
+	Restart       key.Binding
+	Quit          key.Binding
 }
 
 var keys = keyMap{
@@ -38,6 +40,14 @@ var keys = keyMap{
 	NewWorktree: key.NewBinding(
 		key.WithKeys("w"),
 		key.WithHelp("w", "new worktree"),
+	),
+	Tab: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "switch panel"),
+	),
+	OpenInBrowser: key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open in browser"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),
