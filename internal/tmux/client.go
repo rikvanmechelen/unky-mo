@@ -116,10 +116,17 @@ func (c *Client) EnsureSession() error {
 }
 
 // SplitWindow creates a vertical split pane in the target window.
-// The new pane is created on the right with the specified width in columns.
-// If command is non-empty, it is run in the new pane.
+// The new pane is created on the right with the specified width in columns,
+// inheriting the target pane's cwd. If command is non-empty, it is run in
+// the new pane.
 func (c *Client) SplitWindow(target string, cols int, command string) (string, error) {
-	args := []string{"split-window", "-h", "-t", target, "-l", fmt.Sprintf("%d", cols), "-P", "-F", "#{pane_id}"}
+	args := []string{
+		"split-window", "-h",
+		"-t", target,
+		"-l", fmt.Sprintf("%d", cols),
+		"-c", "#{pane_current_path}",
+		"-P", "-F", "#{pane_id}",
+	}
 	if command != "" {
 		args = append(args, command)
 	}
