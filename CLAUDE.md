@@ -44,7 +44,7 @@ make install   # Build and install to ~/go/bin/mo
   - e.g. `/Users/rvanmech/workspace/mla_wrapper_app` → `-Users-rvanmech-workspace-mla-wrapper-app`
   - e.g. `/Users/.../unky-mo.worktrees/testing_worktrees` → `-Users-...-unky-mo-worktrees-testing-worktrees`
 - **Session title**: stored as `{"type":"custom-title","customTitle":"..."}` entries in JSONL (can appear anywhere in file, last one wins)
-- **Idle detection**: if JSONL not modified in >60s, session is stalled; also checks if last message type is `assistant` (Claude finished turn)
+- **Idle detection**: checks `stop_reason` on last assistant message — `end_turn` = idle, `tool_use` = still working. Falls back to JSONL staleness >120s for permission prompt edge cases. Do NOT use simple message type checks — `type=assistant` with `stop_reason=tool_use` means Claude is mid-turn.
 
 ## tmux Layout
 
@@ -72,10 +72,12 @@ The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
-- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Handles `enter`, `esc`, `n`, `a`, `r`, `w`, `?`, `ctrl+r`, `q`.
-- **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Handles `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `ctrl+r` (restart).
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard has side-by-side layout: project list (left) + active sessions panel (right). Project detail has sessions/worktrees (left) + PRs (right). `←`/`→` switch panels. Handles `enter`, `esc`, `n`, `a`, `r`, `w`, `o`, `c`, `?`, `ctrl+r`, `q`.
+- **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Has two focus sections:
+  - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
+  - **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).
 
-`t`, `T`, `tab`, `x`, and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
+`t`, `T`, `tab`, `x`, `s`, `d`, `v`, and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
 
 ## tmux Gotchas
 
@@ -114,6 +116,10 @@ Claude hooks → notify-hook.sh → Unix socket → Main TUI → state file → 
 - `ctrl+r` restarts TUI + all sidebars (for dev workflow — picks up new binary)
 - Mouse support enabled automatically on tmux session creation
 - `exec claude` used in panes so windows auto-close when Claude exits (pane-exited hook)
+- Error messages in TUI persist until keypress; success messages auto-clear after 4s
+- Left/right arrow keys switch between panels (dashboard sessions, project detail PRs)
+- Always use `make install` (not just `go build`) so `ctrl+r` picks up the new binary everywhere
+- `git diff --color=always` for colored diffs in popups (piped to `less -R`)
 
 ## Commit Messages
 
