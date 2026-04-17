@@ -70,8 +70,9 @@ type Model struct {
 	changedFiles   []string // raw file paths from git status --porcelain
 	changedAdded   int      // total lines added
 	changedRemoved int      // total lines removed
-	// Focus section: "sessions" or "files"
+	// Focus section: "sessions", "shells", or "files"
 	focusSection string
+	shellCursor  int
 	fileCursor   int
 }
 
@@ -160,8 +161,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focusSection == "files" {
 				if m.fileCursor > 0 {
 					m.fileCursor--
+				} else if len(m.activeShells) > 0 {
+					m.focusSection = "shells"
+					m.shellCursor = len(m.activeShells) - 1
 				} else {
-					// Move back to sessions section
+					m.focusSection = "sessions"
+					if len(m.items) > 0 {
+						m.cursor = len(m.items) - 1
+						m.ensureCursorVisible()
+					}
+				}
+			} else if m.focusSection == "shells" {
+				if m.shellCursor > 0 {
+					m.shellCursor--
+				} else {
 					m.focusSection = "sessions"
 					if len(m.items) > 0 {
 						m.cursor = len(m.items) - 1
@@ -180,7 +193,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.fileCursor < len(m.changedFiles)-1 {
 					m.fileCursor++
 				} else {
-					// Wrap to sessions
+					m.focusSection = "sessions"
+					m.cursor = 0
+					m.ensureCursorVisible()
+				}
+			} else if m.focusSection == "shells" {
+				if m.shellCursor < len(m.activeShells)-1 {
+					m.shellCursor++
+				} else if len(m.changedFiles) > 0 {
+					m.focusSection = "files"
+					m.fileCursor = 0
+				} else {
 					m.focusSection = "sessions"
 					m.cursor = 0
 					m.ensureCursorVisible()
@@ -190,16 +213,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.items[next].IsHeader {
 					next = (next + 1) % len(m.items)
 				}
-				// If we wrapped around and there are changed files, enter files section
-				if next <= m.cursor && len(m.changedFiles) > 0 {
-					m.focusSection = "files"
-					m.fileCursor = 0
+				// If we wrapped around, enter shells or files section
+				if next <= m.cursor {
+					if len(m.activeShells) > 0 {
+						m.focusSection = "shells"
+						m.shellCursor = 0
+					} else if len(m.changedFiles) > 0 {
+						m.focusSection = "files"
+						m.fileCursor = 0
+					}
 				} else {
 					m.cursor = next
 					m.ensureCursorVisible()
 				}
 			}
 		case "enter":
+			if m.focusSection == "shells" && m.shellCursor < len(m.activeShells) {
+				return m, m.showShellOutput(m.activeShells[m.shellCursor])
+			}
 			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
 				return m, m.showDiffPopup(m.changedFiles[m.fileCursor])
 			}
@@ -357,9 +388,18 @@ func (m Model) View() string {
 	if len(m.activeShells) > 0 && remaining > 3 {
 		b.WriteString("\n")
 		b.WriteString(headerStyle.Render(fmt.Sprintf("Shells (%d)", len(m.activeShells))) + "\n")
-		for _, sh := range m.activeShells {
-			display := claude.FormatShellCommand(sh.Command, m.width-4)
-			b.WriteString(" " + dotIdle.Render("●") + " " + normalStyle.Render(display) + "\n")
+		for i, sh := range m.activeShells {
+			isFocused := m.focusSection == "shells" && m.shellCursor == i
+			display := claude.FormatShellCommand(sh.Command, m.width-6)
+			cursor := " "
+			if isFocused {
+				cursor = "▸"
+			}
+			if isFocused {
+				b.WriteString(cursor + dotIdle.Render("●") + " " + selectedStyle.Render(display) + "\n")
+			} else {
+				b.WriteString(cursor + dotIdle.Render("●") + " " + normalStyle.Render(display) + "\n")
+			}
 		}
 		// Recalculate remaining
 		contentLines = strings.Count(b.String(), "\n")
@@ -422,7 +462,11 @@ func (m Model) View() string {
 	}
 
 	// Footer — context-sensitive
-	if m.focusSection == "files" && len(m.changedFiles) > 0 {
+	if m.focusSection == "shells" && len(m.activeShells) > 0 {
+		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ view output") + "\n")
+		b.WriteString(footerStyle.Render(" ` popup  s sync") + "\n")
+		b.WriteString(footerStyle.Render(" ^r refresh"))
+	} else if m.focusSection == "files" && len(m.changedFiles) > 0 {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/d diff") + "\n")
 		b.WriteString(footerStyle.Render(" v edit   o open") + "\n")
 		b.WriteString(footerStyle.Render(" ` popup  s sync") + "\n")
@@ -1103,6 +1147,31 @@ func (m *Model) refreshTerminals() {
 			})
 		}
 	}
+}
+
+func (m Model) showShellOutput(shell claude.ActiveShell) tea.Cmd {
+	if shell.OutputFile == "" {
+		return func() tea.Msg { return sidebarStatusMsg("no output file found") }
+	}
+
+	// Build a header script that shows status info then tails the output
+	displayCmd := claude.FormatShellCommand(shell.Command, 60)
+	script := fmt.Sprintf(
+		`echo "Shell details"; echo ""; echo "Status: running"; echo "Command: %s"; echo "Output:"; echo ""; tail -f %s`,
+		displayCmd, shell.OutputFile,
+	)
+
+	title := fmt.Sprintf(" Shell: %s ", claude.FormatShellCommand(shell.Command, 30))
+	c := exec.Command("tmux", "display-popup", "-E",
+		"-w", "95%", "-h", "95%",
+		"-T", title,
+		"sh", "-c", script)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return sidebarStatusMsg(fmt.Sprintf("shell view err: %v", err))
+		}
+		return nil
+	})
 }
 
 func (m Model) showDiffPopup(file string) tea.Cmd {

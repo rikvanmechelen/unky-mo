@@ -9,8 +9,10 @@ import (
 
 // ActiveShell represents a running Bash tool subprocess of a Claude session.
 type ActiveShell struct {
-	PID     int
-	Command string // the user-visible command (extracted from Claude's eval wrapper)
+	PID        int
+	Command    string // the user-visible command (extracted from Claude's eval wrapper)
+	OutputFile string // path to the output file (if found via lsof)
+	StartTime  string // approximate start time from ps
 }
 
 // ActiveShells returns the currently running shell subprocesses for the given
@@ -20,8 +22,8 @@ func ActiveShells(claudePID int) []ActiveShell {
 		return nil
 	}
 
-	// Get all processes with their PID, PPID, and full command
-	out, err := exec.Command("ps", "-eo", "pid,ppid,command").Output()
+	// Get all processes with their PID, PPID, start time, and full command
+	out, err := exec.Command("ps", "-eo", "pid,ppid,lstart,command").Output()
 	if err != nil {
 		return nil
 	}
@@ -29,7 +31,7 @@ func ActiveShells(claudePID int) []ActiveShell {
 	var shells []ActiveShell
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 3 {
+		if len(fields) < 8 {
 			continue
 		}
 		ppid, err := strconv.Atoi(fields[1])
@@ -37,24 +39,41 @@ func ActiveShells(claudePID int) []ActiveShell {
 			continue
 		}
 
-		// Reconstruct the full command string
-		cmd := strings.Join(fields[2:], " ")
+		// lstart has 5 fields: "Mon Apr 17 16:59:00 2026"
+		// Command starts at field index 7
+		cmd := strings.Join(fields[7:], " ")
+		startTime := strings.Join(fields[2:7], " ")
 
-		// Claude's Bash tool runs commands as:
-		//   /bin/zsh -c source .../.claude/shell-snapshots/... && eval 'COMMAND' ...
-		// Extract the actual command from the eval wrapper
 		if strings.Contains(cmd, ".claude/shell-snapshots") {
 			if extracted := extractEvalCommand(cmd); extracted != "" {
 				pid, _ := strconv.Atoi(fields[0])
-				shells = append(shells, ActiveShell{
-					PID:     pid,
-					Command: extracted,
-				})
+				shell := ActiveShell{
+					PID:       pid,
+					Command:   extracted,
+					StartTime: startTime,
+				}
+				// Find the output file via lsof
+				shell.OutputFile = findOutputFile(pid)
+				shells = append(shells, shell)
 			}
 		}
 	}
 
 	return shells
+}
+
+// findOutputFile looks up the .output file that a shell process is writing to.
+func findOutputFile(pid int) string {
+	out, err := exec.Command("lsof", "-p", fmt.Sprintf("%d", pid), "-Fn").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "n") && strings.Contains(line, ".output") {
+			return line[1:] // strip "n" prefix
+		}
+	}
+	return ""
 }
 
 // extractEvalCommand pulls the user command from Claude's shell wrapper.
