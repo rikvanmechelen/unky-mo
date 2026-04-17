@@ -97,7 +97,13 @@
       "Bash(nc --help)",
       "Bash(python3 -c \" import sys, json d = json.loads\\(sys.stdin.readline\\(\\)\\) print\\('type:', d.get\\('type', 'N/A'\\)\\) print\\('timestamp:', d.get\\('timestamp', 'N/A'\\)\\) \")",
       "Skill(commit-commands:commit)",
-      "Bash(tmux list-commands:*)"
+      "Bash(tmux list-commands:*)",
+      "Bash(pstree -p 97502)",
+      "Bash(ps -o pid,command --ppid 97502)",
+      "Bash(ps -ax -o pid,ppid,command)",
+      "Bash(awk '$2 == 97502')",
+      "Bash(ps:*)",
+      "Bash(git rebase:*)"
     ],
     "enabledMcpjsonServers": [
       "playwright"
