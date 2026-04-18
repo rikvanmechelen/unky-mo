@@ -72,8 +72,9 @@ Each project row shows: name, language, git branch, dirty/ahead/behind counts, a
 | `←`          | Focus project list                    |
 | `enter`      | Open project detail / switch to session |
 | `/`          | Filter projects (fuzzy search)        |
-| `n`          | Start a new Claude session            |
+| `n`          | Start a new Claude session (prompts switch/park/concurrent if one is already running) |
 | `a`          | Attach to session window              |
+| `s`          | Suspend (tmux detach-client; sessions keep running) |
 | `?`          | Toggle help overlay                   |
 | `ctrl+r`     | Restart TUI + all sidebars            |
 | `q`          | Quit                                  |
@@ -165,27 +166,27 @@ The `s sync` label in the footer shows sync status:
 
 ## Project Detail Screen
 
-Press `enter` on a project in the dashboard to see its detail view with a side-by-side layout:
+Press `enter` on a project in the dashboard to see its detail view with a side-by-side layout. The left panel is a **branches list** with sessions nested under each branch; the right panel shows open pull requests.
 
 ```
  ← moma-apps-rails  [ruby]  /Users/.../moma-apps-rails
 
- Sessions ◀                          │ Pull Requests
- ▸ ● generate-test-qr  2h ⇅         │   #42 fix auth flow
-   ○ fix-modal-back    3d           │   #41 add QR scanner
-                                     │   #39 update deps
- Last messages                       │
-   You: fix the failing test...      │
-   Claude: I found the issue...      │
-                                     │
- Worktrees                           │
-   testing-worktrees                 │
-     ○ worktree-session-1   1d      │
-   feature-branch                    │
-     (no sessions)                   │
+ Branches ◀                          │ Pull Requests
+ ● main                               │   #42 fix auth flow
+ ⎇ feature-auth                       │   #41 add QR scanner
+ ▸  ● unky-mo@feature-auth  2h ⇅    │   #39 update deps
+ · fix-modal-back                     │
+ ⎇ generate-test-qr                   │
+    ○ worktree-session-1     1d      │
+                                      │
 ```
 
-**Left panel** — Sessions (with recap preview), worktrees with nested sessions. Synced sessions marked with `⇅`. Sessions auto-pull from the sync repo when you open a project.
+Each branch row is marked:
+- **`●`** — branch is currently checked out in the main repo
+- **`⎇`** — branch has a worktree (under `<project>.worktrees/<branch>`)
+- **`·`** — branch exists in git but has neither
+
+Sessions appear indented under their branch. Synced sessions are marked with `⇅`; sessions auto-pull from the sync repo when you open a project.
 
 **Right panel** — Open pull requests from GitHub (requires `gh auth login`). Press `enter` to expand a PR inline showing description, stats, review status, and actions.
 
@@ -197,13 +198,30 @@ Press `enter` on a project in the dashboard to see its detail view with a side-b
 | `←/→`  | Switch between left and right panels            |
 | `enter` | Resume session / launch worktree / expand PR   |
 | `o`     | Open PR in browser                              |
-| `w`     | Create worktree (or worktree from expanded PR)  |
+| `w`     | Open selected branch as a worktree              |
+| `W`     | Prompt for a brand-new branch name              |
+| `m`     | Checkout selected branch in the main repo       |
+| `M`     | Stash, then checkout selected branch in main    |
 | `c`     | Checkout expanded PR's branch locally           |
-| `n`     | Start a new Claude session                      |
+| `n`     | New Claude session (prompts switch/park/concurrent if one exists) |
 | `a`     | Attach to existing session window               |
+| `r`     | Resume most recent session                      |
 | `esc`   | Back to dashboard                               |
 
 Sessions under worktrees resume in the **worktree's directory**, not the project root.
+
+## Running Multiple Sessions per Project
+
+A single project or worktree can host more than one Claude session at once. Press `n` when a session already exists and Mo prompts:
+
+- **`s` switch** — jump to the existing session
+- **`p` park + new** — send `SIGINT` to the current Claude, close the window, and launch a fresh session under the same name
+- **`c` concurrent** — add a sibling session alongside the existing one
+- **`esc`** — cancel
+
+The first session for a target keeps the bare window name (`project` or `project@branch`). Additional sessions get a bracket suffix (`project [2]`, `project@branch [2]`). When you run `/rename` inside a sibling, the bracket swaps to your custom title (`project@branch [debug-oauth]`) on the next tick. Primary windows are never renamed.
+
+> **Sync caveat**: session sync keys on project name, so pushing a second session for the same project overwrites the first. Multi-session sync isn't implemented yet.
 
 ## CLI Commands
 

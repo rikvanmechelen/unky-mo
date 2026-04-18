@@ -1688,7 +1688,10 @@ func (m *Model) writeStateFile() {
 // project/branch (windows whose parsed name has the same project+branch
 // but a non-empty suffix) and appends one state.ProjectState per sibling.
 // rowName + parent mirror the fields used by the primary entry so the
-// sidebar groups siblings under the same header.
+// sidebar groups siblings under the same header. The suffix is folded into
+// the display Name (e.g. "unky-mo [2]", "@feature [debug-oauth]") so the
+// sidebar can distinguish siblings from the primary without parsing window
+// names itself.
 func appendSiblingEntries(projects []state.ProjectState, windows []ttmux.Window, project, branch, path, rowName, parent string) []state.ProjectState {
 	for _, w := range windows {
 		p, b, suffix, ok := ttmux.ParseWindowName(w.Name)
@@ -1700,7 +1703,7 @@ func appendSiblingEntries(projects []state.ProjectState, windows []ttmux.Window,
 			idx = n
 		}
 		projects = append(projects, state.ProjectState{
-			Name:       rowName,
+			Name:       rowName + " [" + suffix + "]",
 			Path:       path,
 			WindowName: w.Name,
 			Status:     "active",
