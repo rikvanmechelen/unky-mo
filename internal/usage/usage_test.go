@@ -91,9 +91,8 @@ func TestFormatTokensShort(t *testing.T) {
 }
 
 func TestSessionTokensCachingAndSum(t *testing.T) {
-	// Write a synthetic JSONL fixture with two assistant turns and one user
-	// turn. Parser should sum the four usage fields across assistant turns
-	// and skip non-assistant entries.
+	// Parser should return the last assistant turn's input-side tokens
+	// (input + cache_read + cache_creation) — the current context footprint.
 	dir := t.TempDir()
 	path := dir + "/session.jsonl"
 	content := `{"type":"user","message":{"role":"user"}}
@@ -105,7 +104,7 @@ func TestSessionTokensCachingAndSum(t *testing.T) {
 	}
 
 	// First call parses and caches; second call must hit cache (same size).
-	want := 10 + 20 + 100 + 5 + 1 + 2 + 50 + 3
+	want := 1 + 50 + 3 // last assistant turn: input + cache_read + cache_creation
 	if got := SessionTokens(path); got != want {
 		t.Errorf("first call: got %d, want %d", got, want)
 	}
@@ -121,8 +120,9 @@ func TestSessionTokensCachingAndSum(t *testing.T) {
 		t.Errorf("second call should return cached value: got %d", got)
 	}
 
-	// Now append a new assistant turn. Size changes → cache invalidates → reparse.
-	more := `{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":7,"output_tokens":8,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+	// Append a new assistant turn. Size changes → cache invalidates → reparse,
+	// and the newer turn replaces the previous one as the footprint.
+	more := `{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":7,"output_tokens":8,"cache_read_input_tokens":40,"cache_creation_input_tokens":2}}}
 `
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -133,9 +133,42 @@ func TestSessionTokensCachingAndSum(t *testing.T) {
 	}
 	f.Close()
 
-	wantAfter := want + 7 + 8
+	wantAfter := 7 + 40 + 2
 	if got := SessionTokens(path); got != wantAfter {
 		t.Errorf("after append: got %d, want %d", got, wantAfter)
+	}
+}
+
+func TestSessionTokensCompactBoundary(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/session.jsonl"
+	// A fat pre-compact turn, then a compact_boundary. With no assistant turn
+	// after the boundary, the footprint should collapse to postTokens.
+	content := `{"type":"assistant","message":{"usage":{"input_tokens":5,"cache_read_input_tokens":60000,"cache_creation_input_tokens":200}}}
+{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":60205,"postTokens":4900}}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if got := SessionTokens(path); got != 4900 {
+		t.Errorf("post-boundary, no new turn: got %d, want 4900", got)
+	}
+
+	// First post-compact assistant turn replaces the boundary's postTokens.
+	more := `{"type":"assistant","message":{"usage":{"input_tokens":1,"cache_read_input_tokens":4900,"cache_creation_input_tokens":1200}}}
+`
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open append: %v", err)
+	}
+	if _, err := f.WriteString(more); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	f.Close()
+
+	want := 1 + 4900 + 1200
+	if got := SessionTokens(path); got != want {
+		t.Errorf("post-boundary with new turn: got %d, want %d", got, want)
 	}
 }
 
