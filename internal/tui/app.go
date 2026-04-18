@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -163,6 +164,17 @@ type Model struct {
 	pendingImportWindow    string
 	pendingImportProject   string // project display name, for the prompt text
 	pendingImportPID       int
+	// New-session menu: active when the user pressed `n` on a target that
+	// already has a live session. Presents s/p/c/esc options (switch /
+	// park+new / concurrent / cancel). Captured per-field so the menu
+	// survives cursor movement without re-querying.
+	pendingNewMenuActive bool
+	pendingNewProject    string
+	pendingNewBranch     string // "" for main checkout
+	pendingNewCwd        string
+	pendingNewPrimaryWin string // composed primary window name (no suffix)
+	pendingNewLivePID    int    // claude PID of the session to park on `p`
+	pendingNewLiveID     string // claude session ID of the current primary
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
 	// project path currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
@@ -308,6 +320,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// New-session menu captures all input while active.
+		if m.pendingNewMenuActive {
+			switch msg.String() {
+			case "s", "S":
+				primary := m.pendingNewPrimaryWin
+				m.clearPendingNewMenu()
+				return m, func() tea.Msg {
+					if existed, err := m.focusIfExists(primary); existed {
+						if err != nil {
+							return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+						}
+						return statusMsgEvent("Switched to " + primary)
+					}
+					return statusMsgEvent("No primary window to switch to")
+				}
+			case "p", "P":
+				pid := m.pendingNewLivePID
+				primary := m.pendingNewPrimaryWin
+				cwd := m.pendingNewCwd
+				m.clearPendingNewMenu()
+				return m, m.parkAndLaunchPrimary(pid, primary, cwd)
+			case "c", "C":
+				m.clearPendingNewMenu()
+				return m, m.launchSiblingSession()
+			case "esc", "escape":
+				m.clearPendingNewMenu()
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// Import-external-session prompt captures all input while active.
 		if m.pendingImportSessionID != "" {
 			switch msg.String() {
@@ -415,6 +458,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					selectedID := row.session.SessionID
+					// If this session is already live in a tmux window, switch
+					// straight to it — no prompt, nothing to disconnect.
+					if row.tmuxWindow != "" {
+						return m, m.resumeInDir(selectedID, row.path, row.tmuxWindow)
+					}
+					// Historical resume: spawn in the primary window, with a
+					// disconnect-confirm if the primary is running a different
+					// session.
 					windowName := m.detailProject.Name
 					if !row.branch.IsMain {
 						windowName = m.detailProject.Name + "@" + row.branch.Name
@@ -450,7 +501,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.New):
 			if m.screen == ScreenDashboard || m.screen == ScreenProject {
-				return m, m.launchSession()
+				// If a live session already exists at the target, open the
+				// s/p/c/esc menu. Otherwise launch directly.
+				project, branch, cwd, ok := m.detailLaunchTarget()
+				if !ok {
+					return m, m.launchSession()
+				}
+				existing := claude.SessionForPath(cwd)
+				if existing == nil {
+					return m, m.launchSession()
+				}
+				m.pendingNewMenuActive = true
+				m.pendingNewProject = project
+				m.pendingNewBranch = branch
+				m.pendingNewCwd = cwd
+				m.pendingNewPrimaryWin = ttmux.ComposeWindowName(project, branch, "")
+				m.pendingNewLivePID = existing.PID
+				m.pendingNewLiveID = existing.SessionID
+				return m, nil
 			}
 
 		case key.Matches(msg, keys.Attach):
@@ -805,6 +873,13 @@ type dashSessionItem struct {
 //   - "external": strays whose CWD isn't inside any git repo (e.g. ~ or /tmp).
 //     Shown separately so they don't clutter project-centric views.
 func (m *Model) refreshDashSessions() {
+	// Fetch tmux windows once so we can append sibling rows beneath each
+	// primary (matching the state-file writer).
+	var allWindows []ttmux.Window
+	if m.tmux != nil {
+		allWindows, _ = m.tmux.ListWindows()
+	}
+
 	var items []dashSessionItem
 	for _, item := range m.list.Items() {
 		pi, ok := item.(ProjectItem)
@@ -818,9 +893,17 @@ func (m *Model) refreshDashSessions() {
 			ProjectPath: pi.project.Path,
 			Section:     "projects",
 		})
+		items = appendSiblingDashItems(items, allWindows, pi.project.Name, "", pi.project.Path)
 	}
 	// Active worktree sessions belong in the projects section too.
-	for _, wtList := range m.activeWorktrees {
+	for parentPath, wtList := range m.activeWorktrees {
+		var projectName string
+		for _, it := range m.list.Items() {
+			if pi, ok := it.(ProjectItem); ok && pi.project.Path == parentPath {
+				projectName = pi.project.Name
+				break
+			}
+		}
 		for _, wt := range wtList {
 			items = append(items, dashSessionItem{
 				Name:        wt.WindowName,
@@ -829,6 +912,9 @@ func (m *Model) refreshDashSessions() {
 				ProjectPath: wt.Path,
 				Section:     "projects",
 			})
+			if projectName != "" {
+				items = appendSiblingDashItems(items, allWindows, projectName, wt.Branch, wt.Path)
+			}
 		}
 	}
 	// Strays: git-backed go into projects with git info, non-git into external.
@@ -867,6 +953,60 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// sessionToWindowMap returns a map from Claude session ID to the tmux window
+// name currently running that session, by walking tmux panes and matching
+// each live Claude PID via PPID chain. Used by buildDetailRows to attach
+// real window names to br-session rows.
+func (m *Model) sessionToWindowMap() map[string]string {
+	result := map[string]string{}
+	if m.tmux == nil {
+		return result
+	}
+	windows, err := m.tmux.ListWindows()
+	if err != nil || len(windows) == 0 {
+		return result
+	}
+	sessions, _ := claude.LiveSessions()
+	if len(sessions) == 0 {
+		return result
+	}
+	for _, w := range windows {
+		panePIDs, err := m.tmux.WindowPanePIDs(w.ID)
+		if err != nil || len(panePIDs) == 0 {
+			continue
+		}
+		for i := range sessions {
+			if _, already := result[sessions[i].SessionID]; already {
+				continue
+			}
+			if claude.IsDescendantOf(sessions[i].PID, panePIDs) {
+				result[sessions[i].SessionID] = w.Name
+			}
+		}
+	}
+	return result
+}
+
+// appendSiblingDashItems walks the tmux window list for siblings of a given
+// project/branch and appends a dashSessionItem per sibling. Sibling status
+// is "active" until a richer per-window status map is introduced.
+func appendSiblingDashItems(items []dashSessionItem, windows []ttmux.Window, project, branch, path string) []dashSessionItem {
+	for _, w := range windows {
+		p, b, suffix, ok := ttmux.ParseWindowName(w.Name)
+		if !ok || p != project || b != branch || suffix == "" {
+			continue
+		}
+		items = append(items, dashSessionItem{
+			Name:        w.Name,
+			WindowName:  w.Name,
+			Status:      StatusActive,
+			ProjectPath: path,
+			Section:     "projects",
+		})
+	}
+	return items
 }
 
 func (m Model) dashboardView() string {
@@ -1013,7 +1153,14 @@ func (m Model) dashboardView() string {
 	usageStrip := m.renderUsageStrip(totalWidth)
 
 	var footer string
-	if m.pendingImportSessionID != "" {
+	if m.pendingNewMenuActive {
+		footer = m.renderPrompt(m.newMenuPromptText(), []footerBinding{
+			{"s", "switch"},
+			{"p", "park+new"},
+			{"c", "concurrent"},
+			{"esc", "cancel"},
+		})
+	} else if m.pendingImportSessionID != "" {
 		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here)", m.pendingImportProject)
 		footer = m.renderPrompt(question, []footerBinding{
 			{"y", "yes"},
@@ -1108,7 +1255,7 @@ func (m Model) helpView() string {
 			{"/", "Filter projects"},
 		}},
 		{"Sessions", []footerBinding{
-			{"n", "Start new Claude session"},
+			{"n", "New session (prompts if one is already running: switch/park+new/concurrent)"},
 			{"a", "Attach to session (switch tmux window)"},
 			{"r", "Resume most recent session"},
 		}},
@@ -1353,12 +1500,77 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.attentionCount = attentionCount
 	m.list.SetItems(items)
 	m.refreshDashSessions()
+	m.syncSiblingTitles()
 	m.writeStateFile()
+}
+
+// syncSiblingTitles reads the latest custom-title entry for each live sibling
+// session (tmux windows whose parsed name has a non-empty suffix) and renames
+// the tmux window to match. Primary windows (no suffix) are never renamed so
+// existing code that looks windows up by "project" or "project@branch" keeps
+// working. Skips renames that would collide with another window's name.
+func (m *Model) syncSiblingTitles() {
+	if m.tmux == nil {
+		return
+	}
+	windows, err := m.tmux.ListWindows()
+	if err != nil {
+		return
+	}
+	sessions, _ := claude.LiveSessions()
+	if len(sessions) == 0 {
+		return
+	}
+	existingNames := make(map[string]bool, len(windows))
+	for _, w := range windows {
+		existingNames[w.Name] = true
+	}
+	for _, w := range windows {
+		project, branch, suffix, ok := ttmux.ParseWindowName(w.Name)
+		if !ok || suffix == "" {
+			continue
+		}
+		panePIDs, err := m.tmux.WindowPanePIDs(w.ID)
+		if err != nil || len(panePIDs) == 0 {
+			continue
+		}
+		var sess *claude.Session
+		for i := range sessions {
+			if claude.IsDescendantOf(sessions[i].PID, panePIDs) {
+				sess = &sessions[i]
+				break
+			}
+		}
+		if sess == nil {
+			continue
+		}
+		title := claude.CustomTitleFor(sess.CWD, sess.SessionID)
+		if title == "" || title == suffix {
+			continue
+		}
+		desired := ttmux.ComposeWindowName(project, branch, title)
+		if desired == w.Name || existingNames[desired] {
+			continue
+		}
+		if err := m.tmux.RenameWindow(w.ID, desired); err == nil {
+			delete(existingNames, w.Name)
+			existingNames[desired] = true
+		}
+	}
 }
 
 func (m *Model) writeStateFile() {
 	if m.stateFilePath == "" {
 		return
+	}
+
+	// Fetch all tmux windows once so we can append per-project/per-worktree
+	// sibling entries (windows whose parsed name has a non-empty suffix).
+	// In the single-session world this loop produces nothing and the output
+	// is identical to before.
+	var allWindows []ttmux.Window
+	if m.tmux != nil {
+		allWindows, _ = m.tmux.ListWindows()
 	}
 
 	var projects []state.ProjectState
@@ -1388,6 +1600,9 @@ func (m *Model) writeStateFile() {
 			Section:    "projects",
 		})
 
+		// Sibling sessions for this project's main checkout (no branch).
+		projects = appendSiblingEntries(projects, allWindows, pi.project.Name, "", pi.project.Path, pi.project.Name, "")
+
 		// Append worktree entries for this project
 		for _, wt := range m.activeWorktrees[pi.project.Path] {
 			wtStatus := "active"
@@ -1405,6 +1620,9 @@ func (m *Model) writeStateFile() {
 				Parent:     pi.project.Name,
 				Section:    "projects",
 			})
+
+			// Sibling sessions for this worktree's branch.
+			projects = appendSiblingEntries(projects, allWindows, pi.project.Name, wt.Branch, wt.Path, "@"+wt.Branch, pi.project.Name)
 		}
 	}
 
@@ -1464,6 +1682,34 @@ func (m *Model) writeStateFile() {
 		}
 	}
 	state.Write(m.stateFilePath, sf)
+}
+
+// appendSiblingEntries walks the tmux window list for siblings of a given
+// project/branch (windows whose parsed name has the same project+branch
+// but a non-empty suffix) and appends one state.ProjectState per sibling.
+// rowName + parent mirror the fields used by the primary entry so the
+// sidebar groups siblings under the same header.
+func appendSiblingEntries(projects []state.ProjectState, windows []ttmux.Window, project, branch, path, rowName, parent string) []state.ProjectState {
+	for _, w := range windows {
+		p, b, suffix, ok := ttmux.ParseWindowName(w.Name)
+		if !ok || p != project || b != branch || suffix == "" {
+			continue
+		}
+		idx := 0
+		if n, err := strconv.Atoi(suffix); err == nil {
+			idx = n
+		}
+		projects = append(projects, state.ProjectState{
+			Name:       rowName,
+			Path:       path,
+			WindowName: w.Name,
+			Status:     "active",
+			Parent:     parent,
+			Section:    "projects",
+			Index:      idx,
+		})
+	}
+	return projects
 }
 
 func (m Model) projectDetailView() string {
@@ -1672,6 +1918,13 @@ func (m Model) projectDetailView() string {
 			{"enter", "create"},
 			{"esc", "cancel"},
 		})
+	case m.pendingNewMenuActive:
+		footer = m.renderPrompt(m.newMenuPromptText(), []footerBinding{
+			{"s", "switch"},
+			{"p", "park+new"},
+			{"c", "concurrent"},
+			{"esc", "cancel"},
+		})
 	case m.pendingResumeSessionID != "":
 		question := fmt.Sprintf("A session is already running for %s. Disconnect it and start the selected session?", p.Name)
 		footer = m.renderPrompt(question, []footerBinding{
@@ -1786,6 +2039,12 @@ type detailRow struct {
 	branch     *project.Branch       // non-nil for all branch-scoped rows
 	path       string                // cwd to launch/resume in ("" if branch has no local checkout)
 	remoteMeta *moSync.SessionMeta   // non-nil for br-remote
+	// tmuxWindow is the real tmux window name currently running this row's
+	// session, if any. Populated by buildDetailRows from a live windows ×
+	// sessions cross-reference. Empty when the session has no live window
+	// (historical resume). Lets the `enter` handler switch directly to the
+	// correct sibling instead of recomputing project@branch.
+	tmuxWindow string
 }
 
 // buildDetailRows constructs the flat list of navigable rows for the project
@@ -1796,6 +2055,11 @@ func (m *Model) buildDetailRows() {
 		m.detailRows = nil
 		return
 	}
+
+	// Build sessionID → tmux window name so each br-session row points at
+	// the correct live window (primary or sibling). An empty result means
+	// the session is historical-only and `enter` will launch a fresh window.
+	windowBySession := m.sessionToWindowMap()
 
 	var rows []detailRow
 	for i := range m.detailBranches {
@@ -1841,10 +2105,11 @@ func (m *Model) buildDetailRows() {
 		}
 		for j := range sessions {
 			rows = append(rows, detailRow{
-				kind:    "br-session",
-				session: &sessions[j],
-				branch:  b,
-				path:    launchPath,
+				kind:       "br-session",
+				session:    &sessions[j],
+				branch:     b,
+				path:       launchPath,
+				tmuxWindow: windowBySession[sessions[j].SessionID],
 			})
 		}
 	}
@@ -2077,8 +2342,8 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 
 		windowName := p.Name + "@" + pr.Branch
 		var status string
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				status = fmt.Sprintf("Worktree ready but failed to switch: %v", err)
 			} else {
 				status = "Switched to " + windowName
@@ -2209,6 +2474,18 @@ func (m Model) currentProject() *project.Project {
 	return &item.project
 }
 
+// focusIfExists switches the client to windowName if a tmux window by that
+// name exists. Returns (existed, err): callers gate launch decisions on
+// existed, and report err as the "failed to switch" case when it is non-nil.
+// This is the single owner of the "switch if the target window exists" gate
+// shared by the launch/resume/attach paths.
+func (m Model) focusIfExists(windowName string) (bool, error) {
+	if !m.tmux.WindowExists(windowName) {
+		return false, nil
+	}
+	return true, m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName)
+}
+
 func (m Model) launchSession() tea.Cmd {
 	return func() tea.Msg {
 		if m.tmux == nil {
@@ -2218,13 +2495,104 @@ func (m Model) launchSession() tea.Cmd {
 		if !ok {
 			return statusMsgEvent("No project selected")
 		}
-
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
+		return m.launchClaudeInWindow(windowName, cwd, "claude")
+	}
+}
+
+// newMenuPromptText renders the question shown above the s/p/c/esc menu.
+// Names the primary target so the user knows what they're about to affect.
+func (m Model) newMenuPromptText() string {
+	target := m.pendingNewPrimaryWin
+	if target == "" {
+		target = "this target"
+	}
+	return fmt.Sprintf("A session is already running in %s — what would you like to do?", target)
+}
+
+// clearPendingNewMenu resets all pendingNew* fields so the menu is dismissed.
+func (m *Model) clearPendingNewMenu() {
+	m.pendingNewMenuActive = false
+	m.pendingNewProject = ""
+	m.pendingNewBranch = ""
+	m.pendingNewCwd = ""
+	m.pendingNewPrimaryWin = ""
+	m.pendingNewLivePID = 0
+	m.pendingNewLiveID = ""
+}
+
+// parkAndLaunchPrimary signals the given Claude PID to exit, waits briefly
+// for it to die, explicitly kills its tmux window so the sidebar and any
+// terminal-drawer panes go with it, and launches a fresh Claude session in
+// a new window with the same primary name.
+func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd string) tea.Cmd {
+	return func() tea.Msg {
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		if pid > 0 {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Signal(syscall.SIGINT)
+			}
+			// Wait up to ~2s for claude to flush its JSONL and exit.
+			for i := 0; i < 20; i++ {
+				if !claude.IsAlive(pid) {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			// Fall back to SIGTERM if claude is still alive — JSONL is
+			// append-only so the transcript stays readable either way.
+			if claude.IsAlive(pid) {
+				if proc, err := os.FindProcess(pid); err == nil {
+					_ = proc.Signal(syscall.SIGTERM)
+				}
+				for i := 0; i < 10; i++ {
+					if !claude.IsAlive(pid) {
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+		}
+		// Kill the window explicitly so the sidebar + any terminal-drawer
+		// panes are torn down alongside the claude pane. The pane-exited
+		// hook would usually handle this when claude exits, but we don't
+		// want to race the hook before creating the replacement window.
+		_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + primaryWindowName)
+		return m.launchClaudeInWindow(primaryWindowName, cwd, "claude")
+	}
+}
+
+// launchSiblingSession always creates a new concurrent sibling window for
+// the current target, even if a primary window already exists. The sibling
+// is named "project [N]" (or "project@branch [N]") where N is the lowest
+// unused ordinal. Used today via the temporary shift-N binding; step 6
+// folds this into the `n`-key menu.
+func (m Model) launchSiblingSession() tea.Cmd {
+	return func() tea.Msg {
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		project, branch, cwd, ok := m.detailLaunchTarget()
+		if !ok {
+			return statusMsgEvent("No project selected")
+		}
+		windows, err := m.tmux.ListWindows()
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Failed to list windows: %v", err))
+		}
+		names := make([]string, 0, len(windows))
+		for _, w := range windows {
+			names = append(names, w.Name)
+		}
+		ordinal := ttmux.NextAvailableOrdinal(names, project, branch)
+		windowName := ttmux.ComposeWindowName(project, branch, ordinal)
 		return m.launchClaudeInWindow(windowName, cwd, "claude")
 	}
 }
@@ -2272,8 +2640,8 @@ func (m Model) launchWorktreeSession(wt project.Worktree) tea.Cmd {
 			}
 		}
 		windowName := p.Name + "@" + branch
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
@@ -2304,8 +2672,8 @@ func (m Model) pullRemoteSessionAndLaunch(branch string, meta moSync.SessionMeta
 		}
 		windowName := p.Name + "@" + branch
 		var status string
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				status = fmt.Sprintf("Pulled but failed to switch: %v", err)
 			} else {
 				status = "Resumed " + windowName
@@ -2338,8 +2706,8 @@ func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
 		}
 		windowName := p.Name + "@" + branch
 		var status string
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
 			} else {
 				status = "Switched to " + windowName
@@ -2369,8 +2737,8 @@ func (m Model) resumeSession() tea.Cmd {
 			return statusMsgEvent("No session to resume for " + windowName)
 		}
 
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
@@ -2388,8 +2756,8 @@ func (m Model) resumeInDir(sessionID, cwd, windowName string) tea.Cmd {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-		if m.tmux.WindowExists(windowName) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
@@ -2484,17 +2852,30 @@ func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) t
 // path; otherwise returns the main project's. Returns (nil) if no project is
 // in context.
 func (m Model) detailContext() (windowName, cwd string, ok bool) {
+	project, branch, cwd, ok := m.detailLaunchTarget()
+	if !ok {
+		return "", "", false
+	}
+	return ttmux.ComposeWindowName(project, branch, ""), cwd, true
+}
+
+// detailLaunchTarget returns the (project, branch, cwd) tuple for the row
+// the detail cursor is currently on. Like detailContext but without
+// pre-composing the window name, so callers that need to build sibling
+// window names (e.g. "project [2]") can call ComposeWindowName themselves.
+// branch is "" when the target is the main checkout.
+func (m Model) detailLaunchTarget() (project, branch, cwd string, ok bool) {
 	p := m.currentProject()
 	if p == nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	if m.screen == ScreenProject && m.detailCursor >= 0 && m.detailCursor < len(m.detailRows) {
 		row := m.detailRows[m.detailCursor]
 		if row.branch != nil && !row.branch.IsMain && row.branch.WorktreePath != "" {
-			return p.Name + "@" + row.branch.Name, row.branch.WorktreePath, true
+			return p.Name, row.branch.Name, row.branch.WorktreePath, true
 		}
 	}
-	return p.Name, p.Path, true
+	return p.Name, "", p.Path, true
 }
 
 // currentBranchRow returns the Branch for the row under the detail cursor,
@@ -2557,8 +2938,8 @@ func (m Model) openBranchInMain(branch string, force bool) tea.Cmd {
 			return statusMsgEvent(fmt.Sprintf("checkout failed: %v", err))
 		}
 		status := "Switched main to " + branch
-		if m.tmux.WindowExists(p.Name) {
-			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + p.Name); err != nil {
+		if existed, err := m.focusIfExists(p.Name); existed {
+			if err != nil {
 				status = fmt.Sprintf("checked out %s but failed to switch window: %v", branch, err)
 			}
 		} else {
@@ -2579,15 +2960,13 @@ func (m Model) attachSession() tea.Cmd {
 		if !ok {
 			return statusMsgEvent("No project selected")
 		}
-
-		if !m.tmux.WindowExists(windowName) {
+		existed, err := m.focusIfExists(windowName)
+		if !existed {
 			return statusMsgEvent("No session for " + windowName)
 		}
-
-		if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+		if err != nil {
 			return statusMsgEvent(fmt.Sprintf("Failed to attach: %v", err))
 		}
-
 		return statusMsgEvent("Attached to " + windowName)
 	}
 }

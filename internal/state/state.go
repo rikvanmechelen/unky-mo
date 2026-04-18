@@ -7,15 +7,20 @@ import (
 )
 
 // ProjectState represents a project's status in the shared state file.
+// Each entry corresponds to a single tmux window. Multiple entries may
+// share Name/Parent when a project has concurrent sibling sessions — they
+// are distinguished by WindowName and SessionID.
 type ProjectState struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	WindowName string `json:"window_name"`
-	Status     string `json:"status"`            // "none", "active", "idle", "permission", "external"
-	Parent     string `json:"parent,omitempty"`  // non-empty for worktree entries
-	Section    string `json:"section,omitempty"` // "projects" (default) or "external" — for stray-session grouping
-	Branch     string `json:"branch,omitempty"`  // git branch (populated for git-backed strays)
-	Dirty      int    `json:"dirty,omitempty"`   // dirty file count (populated for git-backed strays)
+	Status     string `json:"status"`               // "none", "active", "idle", "permission", "external"
+	Parent     string `json:"parent,omitempty"`     // non-empty for worktree entries
+	Section    string `json:"section,omitempty"`    // "projects" (default) or "external" — for stray-session grouping
+	Branch     string `json:"branch,omitempty"`     // git branch (populated for git-backed strays)
+	Dirty      int    `json:"dirty,omitempty"`      // dirty file count (populated for git-backed strays)
+	SessionID  string `json:"session_id,omitempty"` // Claude session ID running in this window (empty if none)
+	Index      int    `json:"index,omitempty"`      // 0 = primary, 2+ = sibling ordinal; for stable sort
 }
 
 // StateFile is the shared state written by the main TUI and read by sidebar instances.

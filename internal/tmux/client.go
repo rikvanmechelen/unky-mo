@@ -71,8 +71,10 @@ func (c *Client) DetachClient() error {
 }
 
 // ListWindows returns the names of windows in the session.
+// window_id is placed first so SplitN(4) safely preserves any ':' characters
+// that happen to appear in pane_current_path.
 func (c *Client) ListWindows() ([]Window, error) {
-	cmd := exec.Command("tmux", "list-windows", "-t", c.SessionName, "-F", "#{window_index}:#{window_name}:#{pane_current_path}")
+	cmd := exec.Command("tmux", "list-windows", "-t", c.SessionName, "-F", "#{window_id}:#{window_index}:#{window_name}:#{pane_current_path}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
@@ -82,14 +84,15 @@ func (c *Client) ListWindows() ([]Window, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) < 3 {
+		parts := strings.SplitN(line, ":", 4)
+		if len(parts) < 4 {
 			continue
 		}
 		windows = append(windows, Window{
-			Index: parts[0],
-			Name:  parts[1],
-			CWD:   parts[2],
+			ID:    parts[0],
+			Index: parts[1],
+			Name:  parts[2],
+			CWD:   parts[3],
 		})
 	}
 	return windows, nil
@@ -100,11 +103,40 @@ func (c *Client) KillWindow(target string) error {
 	return runTmux("kill-window", "-t", target)
 }
 
+// RenameWindow renames an existing tmux window. Target can be any tmux
+// target (window id @N, session:name, etc.).
+func (c *Client) RenameWindow(target, newName string) error {
+	return runTmux("rename-window", "-t", target, newName)
+}
+
 // PanePIDs returns the set of shell PIDs running in this tmux session's panes.
 // Used to distinguish Claude processes spawned under mo (descendants of one of
 // these PIDs) from orphans running elsewhere on the host.
 func (c *Client) PanePIDs() (map[int]bool, error) {
 	cmd := exec.Command("tmux", "list-panes", "-s", "-t", c.SessionName, "-F", "#{pane_pid}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	pids := make(map[int]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(line, "%d", &pid); err != nil {
+			continue
+		}
+		pids[pid] = true
+	}
+	return pids, nil
+}
+
+// WindowPanePIDs returns the set of shell PIDs in the panes of a specific
+// window. Target can be any tmux window target (window id @N, name, etc.).
+// Used to attribute a Claude process (via PPID chain) to its tmux window.
+func (c *Client) WindowPanePIDs(target string) (map[int]bool, error) {
+	cmd := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_pid}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
@@ -318,6 +350,7 @@ func runTmux(args ...string) error {
 
 // Window represents a tmux window.
 type Window struct {
+	ID    string // stable tmux window id, e.g. "@3"
 	Index string
 	Name  string
 	CWD   string

@@ -55,14 +55,30 @@ tmux session "mo"
 │   ├── pane 0: Claude Code session
 │   ├── pane 1: sidebar (mo sidebar)
 │   └── pane 2+: terminal splits (optional, via `t`)
-├── window 2: "moma-go"
+├── window 2: "moma-apps-rails [2]"  (concurrent sibling — see Multi-session)
 │   ├── pane 0: Claude Code session
 │   └── pane 1: sidebar
-├── window 3: "unky-mo@feature-auth" (worktree session)
+├── window 3: "moma-go"
+│   ├── pane 0: Claude Code session
+│   └── pane 1: sidebar
+├── window 4: "unky-mo@feature-auth" (worktree session)
+│   ├── pane 0: Claude Code session
+│   └── pane 1: sidebar
+├── window 5: "unky-mo@feature-auth [debug-oauth]" (sibling renamed via /rename)
 │   ├── pane 0: Claude Code session
 │   └── pane 1: sidebar
 └── ...
 ```
+
+## Multi-session (concurrent / park)
+
+A single project or worktree can host more than one Claude session. The first session for a target keeps the bare window name (`project` or `project@branch`) so existing name-based lookups keep working; additional sessions get a bracket suffix (`project [2]`, `project@branch [2]`). When Claude's `/rename` sets a custom title, the bracket content is swapped for the title (`project@branch [debug-oauth]`) on the next 5s tick — **primary windows are never renamed**, only siblings.
+
+- **Key**: `n` in main TUI. If no live session exists at the target, launches immediately. If one exists, opens a `s`/`p`/`c`/`esc` prompt: `s` switch to existing, `p` park current (SIGINT claude + `kill-window` so the sidebar dies with it) then launch fresh in the same primary name, `c` add a concurrent sibling at the next free ordinal.
+- **Window composition**: `internal/tmux/naming.go` owns `ComposeWindowName` / `ParseWindowName` / `NextAvailableOrdinal`. Every launch site that could produce duplicates must go through these.
+- **Sibling attribution**: a sibling window's Claude session ID is recovered by walking tmux pane PIDs (`tmux.WindowPanePIDs`) and matching `claude.LiveSessions()` via `IsDescendantOf`. See `sessionToWindowMap` in `internal/tui/app.go`.
+- **Detail-view `enter`**: `detailRow.tmuxWindow` is populated from that map so selecting a live session lands in its real window instead of recomputing `project@branch`.
+- **Sync caveat (known gap)**: `internal/sync/sync.go` hashes the project name to a single directory — pushing a second session for the same project overwrites the first. Multi-session sync is not yet implemented.
 
 ### Terminal Drawer
 
@@ -72,7 +88,7 @@ The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
-- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard has side-by-side layout: project list (left) + active sessions panel (right). Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it. `←`/`→` switch panels. Keys: `enter` (smart resume), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session), `a`, `r`, `o`, `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard has side-by-side layout: project list (left) + active sessions panel (right). Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it. `←`/`→` switch panels. Keys: `enter` (smart resume), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session; prompts switch/park+new/concurrent when one is already running — see Multi-session), `a`, `r`, `o`, `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
 - **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Has two focus sections:
   - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
   - **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).

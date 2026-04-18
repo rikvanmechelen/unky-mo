@@ -140,6 +140,8 @@ func LiveSessions() ([]Session, error) {
 }
 
 // SessionForPath returns the active session for a given working directory, if any.
+// When multiple sessions share a CWD (concurrent siblings), returns the first
+// one encountered. Callers that need to enumerate should use SessionsForPath.
 func SessionForPath(path string) *Session {
 	sessions, _ := LiveSessions()
 	for _, s := range sessions {
@@ -148,6 +150,21 @@ func SessionForPath(path string) *Session {
 		}
 	}
 	return nil
+}
+
+// SessionsForPath returns every live session whose CWD matches path.
+// Used by guards that must account for all concurrent sessions at a
+// checkout (e.g. "refuse main-branch checkout if any session is running
+// in the main worktree").
+func SessionsForPath(path string) []Session {
+	sessions, _ := LiveSessions()
+	var matching []Session
+	for _, s := range sessions {
+		if s.CWD == path {
+			matching = append(matching, s)
+		}
+	}
+	return matching
 }
 
 // SessionMessage represents a single user or assistant message from a session.
@@ -399,6 +416,14 @@ func RecentSessions(projectPath string, maxResults int) []RecentSession {
 func SessionTitle(path string) string {
 	title, _, _ := parseSessionJSONL(path)
 	return title
+}
+
+// CustomTitleFor returns the most recent custom-title entry from the JSONL
+// for the given (projectPath, sessionID), or "" if none has been set.
+// Used to sync tmux window names with /rename calls inside Claude.
+func CustomTitleFor(projectPath, sessionID string) string {
+	path := filepath.Join(ProjectsDirForPath(projectPath), sessionID+".jsonl")
+	return SessionTitle(path)
 }
 
 // parseSessionJSONL reads the first user message and git branch from a session file.
