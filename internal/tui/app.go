@@ -157,8 +157,8 @@ type Model struct {
 	screen         Screen
 	list           list.Model
 	projects       []project.Project
-	tmux           TmuxClient
-	claude         ClaudeReader
+	tmux           ops.TmuxClient
+	claude         ops.ClaudeReader
 	ops            *ops.Context
 	notifServer    *notify.Server
 	notifState     sessionStateMap // status overrides from notification system
@@ -286,42 +286,21 @@ type Model struct {
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
 	opsCtx := ops.NewContext(tmuxClient)
-	return newModelWithOpsContext(projects, newTmuxClientAdapter(tmuxClient), NewDefaultClaudeReader(), opsCtx, notifServer, stateFilePath, ticketsCfg)
+	return NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, stateFilePath, ticketsCfg)
 }
 
-// NewModelWithDeps is the test-friendly constructor — accepts interface
-// implementations so tests can inject mocks. Production code calls NewModel,
-// which wraps the concrete *ttmux.Client and claude package.
-func NewModelWithDeps(projects []project.Project, tmuxClient TmuxClient, claudeReader ClaudeReader, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
-	// Synthesize a minimal ops.Context from the same interface impls so the
-	// test constructor can thread mocks through both the TUI and ops.
-	opsCtx := &ops.Context{
-		Tmux:         asOpsTmuxClient(tmuxClient),
-		Claude:       asOpsClaudeReader(claudeReader),
-		SidebarWidth: 42,
+// NewModelWithDeps is the test-friendly constructor — accepts ops interface
+// implementations so tests can inject mocks directly. Production code calls
+// NewModel, which wraps the concrete *ttmux.Client and claude package via
+// ops.NewContext.
+func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
+	if opsCtx == nil {
+		opsCtx = &ops.Context{
+			Tmux:         tmuxClient,
+			Claude:       claudeReader,
+			SidebarWidth: 42,
+		}
 	}
-	return newModelWithOpsContext(projects, tmuxClient, claudeReader, opsCtx, notifServer, stateFilePath, ticketsCfg)
-}
-
-// asOpsTmuxClient / asOpsClaudeReader let test-provided tui interface mocks
-// also satisfy the ops.* interfaces. The two interfaces have identical
-// method sets, so an implementer of one satisfies the other — but Go's
-// structural typing still requires the conversion be spelled out.
-func asOpsTmuxClient(t TmuxClient) ops.TmuxClient {
-	if t == nil {
-		return nil
-	}
-	return t.(ops.TmuxClient)
-}
-
-func asOpsClaudeReader(c ClaudeReader) ops.ClaudeReader {
-	if c == nil {
-		return nil
-	}
-	return c.(ops.ClaudeReader)
-}
-
-func newModelWithOpsContext(projects []project.Project, tmuxClient TmuxClient, claudeReader ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
 	items := make([]list.Item, len(projects))
 	for i, p := range projects {
 		items[i] = ProjectItem{project: p, status: StatusNone}
@@ -1832,7 +1811,7 @@ func (m Model) refreshSessions() tea.Cmd {
 	tmuxClient := m.tmux // safe for read off-goroutine
 	claudeClient := m.claude
 	if claudeClient == nil {
-		claudeClient = defaultClaudeReader{}
+		claudeClient = ops.NewDefaultClaudeReader()
 	}
 	return func() tea.Msg {
 		sessions, _ := claudeClient.LiveSessions()
@@ -1966,13 +1945,13 @@ func worktreeParent(cwd string, projectNames map[string]string) (string, string,
 
 // resolveSessionWindows mirrors sessionToWindowMap but takes the sessions as
 // a pre-fetched argument so it runs cleanly off-goroutine.
-func resolveSessionWindows(tc TmuxClient, cr ClaudeReader, sessions []claude.Session) map[string]string {
+func resolveSessionWindows(tc ops.TmuxClient, cr ops.ClaudeReader, sessions []claude.Session) map[string]string {
 	result := map[string]string{}
 	if tc == nil || len(sessions) == 0 {
 		return result
 	}
 	if cr == nil {
-		cr = defaultClaudeReader{}
+		cr = ops.NewDefaultClaudeReader()
 	}
 	windows, err := tc.ListWindows()
 	if err != nil || len(windows) == 0 {

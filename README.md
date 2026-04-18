@@ -414,6 +414,10 @@ mo start <project>              # Start a new Claude session
 mo start <project> -p "prompt"  # Start with an initial prompt
 mo resume <project>             # Resume the most recent session
 mo attach <project>             # Switch to a project's tmux window
+mo park <project> [-b branch]   # SIGINT current session + relaunch fresh in the same window
+mo concurrent <project> [-b]    # Launch a concurrent sibling at project [N]
+mo cleanup <project> -b <br>    # Remove worktree; add --delete-branch + --force-kill
+mo import <pid>                 # Adopt an external Claude session into mo's tmux
 mo scan                         # Re-scan workspace directories
 mo hooks install                # Install notification hooks
 mo hooks uninstall              # Remove notification hooks

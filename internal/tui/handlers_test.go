@@ -6,14 +6,14 @@ import (
 
 	"github.com/rvanmech/unky-mo/internal/claude"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
-	mock_tui "github.com/rvanmech/unky-mo/internal/tui/mocks"
+	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
 	"go.uber.org/mock/gomock"
 )
 
 func TestPrimaryWindowForTargetNoSessions(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 	cr.EXPECT().SessionsForPath("/ws/alpha").Return(nil)
 
 	m := Model{claude: cr, tmux: tc}
@@ -25,8 +25,8 @@ func TestPrimaryWindowForTargetNoSessions(t *testing.T) {
 
 func TestPrimaryWindowForTargetPicksOldest(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 
 	// Two sessions at same path, different StartedAt — oldest wins.
 	sessions := []claude.Session{
@@ -61,8 +61,8 @@ func TestPrimaryWindowForTargetPicksOldest(t *testing.T) {
 
 func TestPrimaryWindowForTargetFallsBackToComposedName(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 
 	sessions := []claude.Session{
 		{PID: 20, SessionID: "solo", CWD: "/ws/alpha/wt", StartedAt: 1000},
@@ -80,8 +80,8 @@ func TestPrimaryWindowForTargetFallsBackToComposedName(t *testing.T) {
 
 func TestSessionToWindowMapEmpty(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 	tc.EXPECT().ListWindows().Return(nil, nil)
 
 	m := Model{claude: cr, tmux: tc}
@@ -93,8 +93,8 @@ func TestSessionToWindowMapEmpty(t *testing.T) {
 
 func TestSessionToWindowMapAttributesByPPIDChain(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 
 	tc.EXPECT().ListWindows().Return([]ttmux.Window{
 		{ID: "@1", Name: "alpha"},
@@ -130,8 +130,8 @@ func TestSessionToWindowMapAttributesByPPIDChain(t *testing.T) {
 
 func TestSessionToWindowMapSkipsUnreachableWindow(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 
 	tc.EXPECT().ListWindows().Return([]ttmux.Window{
 		{ID: "@1", Name: "alpha"},
@@ -153,8 +153,8 @@ func TestSessionToWindowMapSkipsUnreachableWindow(t *testing.T) {
 
 func TestResolveSessionWindowsWithMocks(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 
 	tc.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@1", Name: "alpha"}}, nil)
 	tc.EXPECT().WindowPanePIDs("@1").Return(map[int]bool{42: true}, nil)
@@ -175,8 +175,8 @@ func TestResolveSessionWindowsNilTmux(t *testing.T) {
 
 func TestFocusPrimaryIfLiveNoSession(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	cr := mock_tui.NewMockClaudeReader(ctrl)
-	tc := mock_tui.NewMockTmuxClient(ctrl)
+	cr := mock_ops.NewMockClaudeReader(ctrl)
+	tc := mock_ops.NewMockTmuxClient(ctrl)
 	cr.EXPECT().SessionsForPath("/ws/alpha").Return(nil)
 
 	m := Model{claude: cr, tmux: tc}
