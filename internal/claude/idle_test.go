@@ -44,6 +44,23 @@ func TestIsSessionIdleToolUse(t *testing.T) {
 	}
 }
 
+// A tool_use entry older than 120s means the tool is almost certainly
+// blocked on the user (AskUserQuestion, permission prompt the hook missed) —
+// the session should light up idle instead of staying active.
+func TestIsSessionIdleToolUseStale(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := ProjectsDirForPath("/workspace/myproj")
+	path := writeJSONL(t, dir, "sess1", []string{
+		`{"type":"user","message":{"role":"user","content":"go"}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":"tool","stop_reason":"tool_use"}}`,
+	})
+	backdateFile(t, path, 130*time.Second)
+	if !IsSessionIdle("/workspace/myproj", "sess1") {
+		t.Errorf("stop_reason=tool_use with mtime > 120s should be idle (stuck on user input)")
+	}
+}
+
 func TestIsSessionIdleStaleFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

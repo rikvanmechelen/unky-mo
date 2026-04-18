@@ -309,9 +309,17 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 			"custom-title", "deferred_tools_delta", "":
 			continue
 		case "assistant":
-			// end_turn = Claude finished, waiting for input
-			// tool_use = Claude is mid-turn, running a tool
-			return msg.Message.StopReason == "end_turn"
+			// end_turn = Claude finished, waiting for input.
+			if msg.Message.StopReason == "end_turn" {
+				return true
+			}
+			// tool_use = Claude is mid-turn. Normally still working, but
+			// some tools block on the user (AskUserQuestion, permission
+			// prompts that the hook missed) and never write a follow-up
+			// tool_result on their own. If the JSONL hasn't advanced in
+			// >120s the tool is almost certainly waiting on input — treat
+			// as idle so the session lights up instead of staying orange.
+			return time.Since(info.ModTime()) > 120*time.Second
 		case "user":
 			// User sent something. Normally Claude would be mid-response —
 			// but /compact and other slash commands write synthetic user
