@@ -1229,6 +1229,13 @@ func (m Model) refreshSessions() tea.Cmd {
 			if repoRoot != "" {
 				name = filepath.Base(repoRoot)
 			}
+			// A user-chosen session label (via `claude --name` or `/name`)
+			// lives in the PID file's `name` field — prefer it over the
+			// directory-derived fallback so renames show up in the dashboard
+			// and sidebar.
+			if s.Name != "" {
+				name = s.Name
+			}
 			strays = append(strays, strayLive{
 				SessionID: s.SessionID,
 				PID:       s.PID,
