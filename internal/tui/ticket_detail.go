@@ -16,6 +16,37 @@ import (
 	"github.com/rvanmech/unky-mo/internal/tickets"
 )
 
+// ticketStartStrategy names the start-working path chosen for a ticket.
+type ticketStartStrategy string
+
+const (
+	strategyMissing     ticketStartStrategy = ""         // project missing on disk / unusable
+	strategyFocusExisting ticketStartStrategy = "focus"  // existing worktree for the branch
+	strategyWorktree    ticketStartStrategy = "worktree" // create a new worktree
+	strategyMainCheckout ticketStartStrategy = "main"    // checkout branch in main repo
+)
+
+// decideTicketStrategy is the pure decision function used by both the hint
+// renderer and the action handler. Keeping the inputs as plain bools (rather
+// than a Model) makes it trivially testable.
+//
+//   - projectOnDisk=false       → strategyMissing (stale mapping / deleted project)
+//   - existingWorktreePath!=""  → strategyFocusExisting (focus or launch in it)
+//   - hasSession || dirty       → strategyWorktree (main is busy or unsafe to touch)
+//   - otherwise                 → strategyMainCheckout (clean, empty slate)
+func decideTicketStrategy(projectOnDisk, hasSession, dirty bool, existingWorktreePath string) ticketStartStrategy {
+	if !projectOnDisk {
+		return strategyMissing
+	}
+	if existingWorktreePath != "" {
+		return strategyFocusExisting
+	}
+	if hasSession || dirty {
+		return strategyWorktree
+	}
+	return strategyMainCheckout
+}
+
 // ticketDetailMsg carries the result of a Provider.Detail call.
 type ticketDetailMsg struct {
 	detail *tickets.TicketDetail
@@ -229,16 +260,34 @@ func (m Model) renderStartHint(width int) string {
 	}
 	moProject := m.resolvedMoProjectForTicket(t)
 	branch := tickets.BranchNameForTicket(t.ID, t.Title)
+	if moProject == "" {
+		return "  " + footerDescStyle.Render(fmt.Sprintf("s → pick Mo project for %s, then start %s", t.ProjectKey, branch))
+	}
+
+	p := m.moProjectByName(moProject)
+	if p == nil {
+		return "  " + footerDescStyle.Render(fmt.Sprintf("s → project %q not configured", moProject))
+	}
+	existing := existingWorktreePath(p.Path, branch)
+	hasSession := claude.SessionForPath(p.Path) != nil
+	dirty, _ := project.IsDirty(p.Path)
+	onDisk := m.moProjectExistsOnDisk(moProject)
 
 	var msg string
-	switch {
-	case moProject == "":
-		msg = fmt.Sprintf("s → pick Mo project for %s, then start %s", t.ProjectKey, branch)
-	case !m.moProjectExistsOnDisk(moProject):
+	switch decideTicketStrategy(onDisk, hasSession, dirty, existing) {
+	case strategyMissing:
 		msg = fmt.Sprintf("s → project %q not found on disk — mapping may be stale", moProject)
-	case m.moProjectHasLiveSession(moProject):
-		msg = fmt.Sprintf("s → create worktree %s (session already running in %s)", branch, moProject)
-	default:
+	case strategyFocusExisting:
+		msg = fmt.Sprintf("s → switch to existing worktree %s", branch)
+	case strategyWorktree:
+		reason := "session already running"
+		if !hasSession && dirty {
+			reason = "main has uncommitted changes"
+		} else if hasSession && dirty {
+			reason = "session running; main also dirty"
+		}
+		msg = fmt.Sprintf("s → create worktree %s (%s)", branch, reason)
+	case strategyMainCheckout:
 		msg = fmt.Sprintf("s → checkout %s in main repo of %s", branch, moProject)
 	}
 	return "  " + footerDescStyle.Render(msg)
@@ -462,25 +511,9 @@ func (m Model) startWorkOnTicket(t *tickets.Ticket, moProjectName string) (Model
 		return m, func() tea.Msg { return statusMsgEvent("Could not derive branch name") }
 	}
 
-	// If the branch already exists as a worktree, focus its window instead
-	// of creating a new one.
-	if wtPath := existingWorktreePath(moProject.Path, branch); wtPath != "" {
-		windowName := moProject.Name + "@" + branch
-		existed, err := m.focusIfExists(windowName)
-		if existed && err == nil {
-			m.screen = ScreenDashboard
-			return m, func() tea.Msg {
-				return statusMsgEvent("Switched to existing worktree " + windowName)
-			}
-		}
-		// Window wasn't open yet — launch Claude in the existing worktree.
-		if m.tmux != nil {
-			if se, ok := m.launchClaudeInWindow(windowName, wtPath, "claude").(statusMsgEvent); ok {
-				m.screen = ScreenDashboard
-				return m, func() tea.Msg { return statusMsgEvent(string(se)) }
-			}
-		}
-	}
+	existing := existingWorktreePath(moProject.Path, branch)
+	hasSession := claude.SessionForPath(moProject.Path) != nil
+	dirty, _ := project.IsDirty(moProject.Path)
 
 	// Set detailProject so the existing createWorktreeAndLaunch /
 	// openBranchInMain helpers (which read it) can be reused unchanged.
@@ -489,12 +522,30 @@ func (m Model) startWorkOnTicket(t *tickets.Ticket, moProjectName string) (Model
 	projCopy := *moProject
 	m.detailProject = &projCopy
 
-	// Default: session at main → worktree; otherwise → main checkout.
-	m.screen = ScreenDashboard // flip back before the Cmd fires so the status msg lands on the dashboard
-	if claude.SessionForPath(moProject.Path) != nil {
+	switch decideTicketStrategy(true, hasSession, dirty, existing) {
+	case strategyFocusExisting:
+		windowName := moProject.Name + "@" + branch
+		if existed, err := m.focusIfExists(windowName); existed && err == nil {
+			m.screen = ScreenDashboard
+			return m, func() tea.Msg {
+				return statusMsgEvent("Switched to existing worktree " + windowName)
+			}
+		}
+		if m.tmux != nil {
+			if se, ok := m.launchClaudeInWindow(windowName, existing, "claude").(statusMsgEvent); ok {
+				m.screen = ScreenDashboard
+				return m, func() tea.Msg { return statusMsgEvent(string(se)) }
+			}
+		}
+		return m, nil
+	case strategyWorktree:
+		m.screen = ScreenDashboard
 		return m, m.createWorktreeAndLaunch(branch)
+	case strategyMainCheckout:
+		m.screen = ScreenDashboard
+		return m, m.openBranchInMain(branch, false)
 	}
-	return m, m.openBranchInMain(branch, false)
+	return m, nil
 }
 
 // existingWorktreePath returns the filesystem path to an existing worktree

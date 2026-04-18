@@ -164,17 +164,22 @@ func IsDirty(projectPath string) (bool, error) {
 	return len(bytes.TrimSpace(out)) > 0, nil
 }
 
-// CheckoutInMain runs `git checkout <branch>` in the main project repo.
-// On failure the returned error contains git's stderr verbatim so callers
-// can surface informative messages such as "'branch' is already checked out
-// at <path>".
+// CheckoutInMain switches the main project repo to `branch`, creating it
+// from HEAD when it does not yet exist (mirroring CreateWorktree's new-or-
+// existing behavior). On failure the returned error contains git's stderr
+// verbatim so callers can surface informative messages such as "'branch' is
+// already checked out at <path>".
 func CheckoutInMain(projectPath, branch string) error {
-	cmd := exec.Command("git", "-C", projectPath, "checkout", branch)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	out, err := exec.Command("git", "-C", projectPath, "checkout", branch).CombinedOutput()
+	if err == nil {
+		return nil
 	}
-	return nil
+	firstErr := strings.TrimSpace(string(out))
+	out2, err2 := exec.Command("git", "-C", projectPath, "checkout", "-b", branch).CombinedOutput()
+	if err2 == nil {
+		return nil
+	}
+	return fmt.Errorf("%s / %s", strings.TrimSpace(string(out2)), firstErr)
 }
 
 // StashMain runs `git stash push -u` in the main project repo. Returns nil

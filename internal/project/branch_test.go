@@ -95,6 +95,39 @@ func TestListBranches(t *testing.T) {
 	}
 }
 
+func TestCheckoutInMainExistingBranch(t *testing.T) {
+	repo := newGitRepo(t)
+	gitRun(t, repo, "branch", "feat")
+
+	if err := CheckoutInMain(repo, "feat"); err != nil {
+		t.Fatalf("CheckoutInMain existing: %v", err)
+	}
+	current, err := MainCheckoutBranch(repo)
+	if err != nil {
+		t.Fatalf("MainCheckoutBranch: %v", err)
+	}
+	if current != "feat" {
+		t.Errorf("want feat checked out, got %q", current)
+	}
+}
+
+// Regression: starting work on a Jira ticket (e.g. OP-175-fix-auth-flow)
+// derives a branch name that almost always does not exist yet. The main-
+// checkout path must be able to create it, not just switch to existing.
+func TestCheckoutInMainCreatesNewBranch(t *testing.T) {
+	repo := newGitRepo(t)
+	if err := CheckoutInMain(repo, "OP-175-fix-auth-flow"); err != nil {
+		t.Fatalf("CheckoutInMain new branch: %v", err)
+	}
+	current, err := MainCheckoutBranch(repo)
+	if err != nil {
+		t.Fatalf("MainCheckoutBranch: %v", err)
+	}
+	if current != "OP-175-fix-auth-flow" {
+		t.Errorf("want new branch checked out, got %q", current)
+	}
+}
+
 func TestListBranchesDetectsRemoteGone(t *testing.T) {
 	repo := newGitRepo(t)
 	gitRun(t, repo, "branch", "stale")
