@@ -691,6 +691,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case key.Matches(msg, keys.Refresh):
+			// Force-run the work that normally happens on the 5s poll. The
+			// sessionRefreshMsg handler cascades into updateProjectStatuses
+			// → writeStateFile (which re-reads tmux.ListWindows), so a single
+			// refreshSessions call covers the dashboard side. On the project
+			// detail screen we additionally emit branchesChangedMsg so branch
+			// info (Merged / RemoteGone / worktree attribution) is re-fetched.
+			cmds := []tea.Cmd{
+				m.refreshSessions(),
+				func() tea.Msg { return statusMsgEvent("Refreshed") },
+			}
+			if m.screen == ScreenProject && m.detailProject != nil {
+				cmds = append(cmds, func() tea.Msg { return branchesChangedMsg{} })
+			}
+			return m, tea.Batch(cmds...)
+
 		case key.Matches(msg, keys.Restart):
 			self, err := os.Executable()
 			if err == nil {
@@ -1336,7 +1352,8 @@ func (m Model) helpView() string {
 		{"Other", []footerBinding{
 			{"s", "Suspend (leaves tmux session running; re-launch mo to resume)"},
 			{"?", "Toggle this help"},
-			{"ctrl+r", "Restart (reload new binary)"},
+			{"ctrl+r", "Refresh (re-poll sessions, branches, state file)"},
+			{"ctrl+alt+r", "Restart (reload freshly-installed binary)"},
 			{"q", "Quit"},
 		}},
 	}
@@ -2306,8 +2323,10 @@ func (m *Model) handleNotification(n notify.Notification) {
 	}
 }
 
-// restartSidebars sends ctrl+r to all sidebar panes (pane .1 in each window)
-// so they reload the new binary.
+// restartSidebars sends ctrl+alt+r to all sidebar panes (pane .1 in each
+// window) so they reload the new binary. ctrl+r alone in a sidebar is now
+// a local refresh, not a restart — the restart binding moved to match the
+// main TUI.
 func (m Model) restartSidebars() {
 	if m.tmux == nil {
 		return
@@ -2321,8 +2340,8 @@ func (m Model) restartSidebars() {
 			continue // skip the TUI window itself
 		}
 		target := fmt.Sprintf("%s:%s.1", m.tmux.SessionName, w.Index)
-		// Send ctrl+r to the sidebar pane — its own handler will exec the new binary
-		m.tmux.SendRawKeys(target, "C-r")
+		// tmux key-name M-C-r = alt+ctrl+r; the sidebar's handler execs the new binary.
+		m.tmux.SendRawKeys(target, "M-C-r")
 	}
 }
 

@@ -208,7 +208,8 @@ Everything above updates on the same 1s `stateTick`.
 - Colors tuned for dark terminal backgrounds (~#14191E)
 - All keyboard shortcuts visible in persistent footer bars
 - Circular list navigation (wraps top↔bottom)
-- `ctrl+r` restarts TUI + all sidebars (for dev workflow — picks up new binary)
+- `ctrl+r` forces an in-process refresh (re-poll sessions, rebuild detail branches, rewrite state file — no network, no binary reload)
+- `ctrl+alt+r` restarts TUI + all sidebars (dev workflow — picks up freshly-installed binary)
 - Mouse support enabled automatically on tmux session creation
 - `exec claude` used in panes so windows auto-close when Claude exits (pane-exited hook)
 - Error messages in TUI persist until keypress; success messages auto-clear after 4s
