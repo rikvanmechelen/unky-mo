@@ -43,6 +43,11 @@ type JiraConfig struct {
 	Email         string             `toml:"email"`
 	SprintFieldID string             `toml:"sprint_field_id"`
 	StatusMap     JiraStatusMap      `toml:"status_map"`
+	// ProjectMap maps Jira project keys (e.g. "OP") to Mo project names
+	// (e.g. "moma-apps-rails"). Used by the ticket-detail "start working"
+	// flow. Picker-saved entries live in a companion file; this map is
+	// hand-authored and takes precedence on conflict.
+	ProjectMap map[string]string `toml:"project_map"`
 }
 
 // JiraStatusMap maps raw Jira statuses to Mo's four buckets. Empty slices

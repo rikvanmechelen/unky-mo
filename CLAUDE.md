@@ -101,7 +101,7 @@ The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
-- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard is a 50/50 split: project list (left) + sessions-on-top / tickets-below (right). Right-panel focus has two sub-sections (`dashRightFocus`: sessions vs. tickets) and up/down crosses the boundary at the ends. Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it, plus optional `[merged]` / `[gone]` hints. `←`/`→` switch panels. Keys: `enter` (smart resume / open ticket in browser when on tickets section), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session; prompts switch/park+new/concurrent when one is already running — see Multi-session), `x` (cleanup worktree/branch under cursor — see Cleanup), `a`, `r`, `o` (open PR or ticket in browser), `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Three screens: `ScreenDashboard` (50/50 split: project list left, sessions-on-top / tickets-below right; right-panel focus has two sub-sections via `dashRightFocus` and up/down crosses the boundary), `ScreenProject` (branches list left, PRs right; branch rows marked `●` main / `⎇` worktree / `·` neither with optional `[merged]`/`[gone]` tags), `ScreenTicket` (ticket detail popup — see Tickets section). `←`/`→` switch panels on dashboard / project detail. Dashboard/project-detail keys: `enter` (smart resume / open ticket detail popup when on tickets section), `w` (worktree), `m`/`M` (checkout in main; `M` stashes first), `W` (new branch prompt), `n` (new session; prompts switch/park+new/concurrent), `x` (cleanup — see Cleanup), `a`, `r`, `o` (open PR or ticket URL), `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client), `esc`, `q`. On `ScreenTicket`: `s` = start working, `o` = open URL, `y` = yank branch name, `esc` = back (unwinds remember-prompt → picker → screen).
 - **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Has two focus sections:
   - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
   - **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).
@@ -185,6 +185,57 @@ Provider-agnostic ticket panel rendered in the bottom half of the dashboard righ
 - **Rendering**: panel only appears when a token is present (file or env) OR `[[tickets.jira]]` is configured — controlled by `ticketsShouldRender()` in `internal/tui/tickets.go`. Explicit opt-out via `[tickets] disabled = true`. Overflow cap per bucket is `per_bucket_limit` (default 5); extra rows collapse to `… +N more`.
 - **Fetch cadence**: `ticketsTickMsg` in `internal/tui/app.go`, default 5min (config `refresh_seconds`). Initial fetch fires from `Init` so the panel populates on first paint.
 - **Multiple instances**: `[[tickets.jira]]` is an array; each instance gets its own `jira.Provider`. A single token is shared across instances today (the token file is per-user, not per-instance) — revisit if multi-org support becomes real.
+- **Provider interface**: `Provider{Name, MyTickets, Detail}` — `Detail(ctx, id)` added for the per-ticket popup. Jira's impl lives in `internal/tickets/jira/detail.go` and uses `GET /rest/api/3/issue/{key}?expand=renderedFields` so description comes back as HTML, stripped to plain text by `StripHTML` (paragraph tags → blank line, `<br>`/`</li>` → single newline, `<li>` → `- ` bullet, entities decoded).
+
+### Ticket detail screen (`ScreenTicket`)
+
+Pressing `enter` on a ticket in the dashboard transitions to `ScreenTicket` (full-screen, not a true overlay — matches the existing `ScreenProject`/`ScreenHelp` pattern). The view shows a metadata grid (status, priority, reporter, assignee, sprint, updated, project key, Mo-project mapping), the stripped description, a dynamic `s → …` hint line explaining what start-working will do, and a footer with `s`/`o`/`y`/`esc` bindings.
+
+- **`s` (start working)**: `handleTicketStartWorking` in `internal/tui/ticket_detail.go`. Resolves the project mapping via `resolvedMoProjectForTicket`; if unmapped, opens the picker; if mapped, calls `startWorkOnTicket`. Collides with the dashboard's `s` (suspend) — the handler in `app.go` short-circuits when `m.screen == ScreenTicket`.
+- **`o`**: opens `detailTicket.URL` (or the list-level `detailTicketList.URL` if the detail fetch hasn't completed yet) via `openInBrowser`.
+- **`y`**: copies `tickets.BranchNameForTicket(id, title)` to the system clipboard via `atotto/clipboard`. Useful for pasting into PR titles / commit messages.
+- **`esc`**: `Back` unwinds one layer at a time — remember-prompt → picker → screen → dashboard.
+
+### Project mapping (`internal/tickets/mapping.go`)
+
+Jira project keys (e.g. `OP`) must resolve to a Mo project name (e.g. `moma-apps-rails`) before start-working can do anything. Two sources:
+
+1. **Config map** — hand-authored `[tickets.jira.project_map]` under each `[[tickets.jira]]`. Wins on conflict.
+2. **Companion file** — `~/.config/unky-mo/jira-project-map.toml`, auto-managed by the picker (`LoadCompanionProjectMap` / `SaveProjectMapEntry`). Stored as `[[entry]]` rows with `provider` / `jira_key` / `mo_project` fields so future providers (Linear, GitHub Projects) can share the file.
+
+Separate companion file on purpose: round-tripping `config.toml` through BurntSushi/toml would lose comments and reorder blocks, so any UI-driven mutation goes to the companion file while the hand-authored config stays pristine. `MergeProjectMaps(cfgMap, companionMap)` is the auth function — config wins, companion supplements.
+
+### Start-working state machine (`startWorkOnTicket`)
+
+```
+resolve Mo project (config + companion)
+    │
+    ├── missing → startProjectPicker → user picks
+    │                → pickerRememberActive prompt
+    │                    → `r` SaveProjectMapEntry + reload map
+    │                    → `n` in-memory-only for this session
+    │                → fall through to branch flow
+    └── present → branch flow
+                    │
+                    ▼
+             derive `<id>-<slug>` (tickets.BranchNameForTicket)
+                    │
+                    ▼
+             project dir on disk? (os.Stat)  no → status msg, stay
+                    │ yes
+                    ▼
+             existing worktree for branch? (project.ListWorktrees)
+                yes → focusIfExists + launchClaudeInWindow if cold
+                no  → claude.SessionForPath(projectPath)?
+                         yes → m.createWorktreeAndLaunch(branch)
+                         no  → m.openBranchInMain(branch, false)
+```
+
+The branch-flow helpers read `m.detailProject`, so `startWorkOnTicket` sets it before returning the Cmd — copy-not-alias to avoid leaking mutations into `m.projects`.
+
+### Project picker (`internal/tui/project_picker.go`)
+
+A `bubbles/list` model with a custom `pickerItem` wrapper (separate from `ProjectItem` so it doesn't need session-status machinery). Fuzzy filter is on by default. Activated via `startProjectPicker(provider, jiraKey)` from the ticket screen. Key routing: while `pickerActive` is true, the main Update forwards keys to `updateProjectPicker` via `handleTicketPickerActive`, except `enter` which confirms the pick and flips to `pickerRememberActive`. `enter` inside an active filter falls through to the list so the filter can apply first.
 
 ## Config (`internal/config/`)
 
@@ -202,7 +253,7 @@ Loaded from `~/.config/unky-mo/config.toml` (or `$XDG_CONFIG_HOME/unky-mo/config
 | `tickets.disabled` | `bool` | `false` | Explicit opt-out — hide the panel even when credentials exist |
 | `tickets.refresh_seconds` | `int` | `300` | Background fetch cadence |
 | `tickets.per_bucket_limit` | `int` | `5` | Max rows per bucket before `… +N more` |
-| `tickets.jira` | `[]JiraConfig` | `nil` | One or more Jira instances; see `[[tickets.jira]]` block with `base_url`, `email`, `sprint_field_id`, `status_map.{in_progress,blocked,review,todo}` |
+| `tickets.jira` | `[]JiraConfig` | `nil` | One or more Jira instances; see `[[tickets.jira]]` block with `base_url`, `email`, `sprint_field_id`, `status_map.{in_progress,blocked,review,todo}`, `project_map.<JIRA_KEY> = <mo_project>` |
 
 ## Sidebar Responsibilities
 
@@ -267,6 +318,7 @@ mo sync pull [proj]   # Pull sessions from sync repo
 mo sync list          # List available synced sessions
 mo jira setup         # Interactive wizard: prompts URL/email, reads token without echo, verifies, writes token file + [[tickets.jira]] block
 mo jira fetch         # Run one fetch per configured instance (diagnostic; prints ticket count or extracted error)
+mo jira issue <KEY>   # Fetch one issue's detail and print metadata + stripped description (diagnostic; shares code path with the TUI popup)
 mo jira show-token    # Print the current token (for copying to another machine)
 mo debug <project>    # Dump session/worktree debug info for a project
 mo sidebar            # Run sidebar TUI (internal, launched in panes)

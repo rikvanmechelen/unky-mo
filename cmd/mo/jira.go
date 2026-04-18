@@ -30,7 +30,66 @@ func jiraCmd() *cobra.Command {
 	cmd.AddCommand(jiraSetupCmd())
 	cmd.AddCommand(jiraShowTokenCmd())
 	cmd.AddCommand(jiraFetchCmd())
+	cmd.AddCommand(jiraIssueCmd())
 	return cmd
+}
+
+// jiraIssueCmd fetches a single issue's detail and prints it — useful to
+// verify the /rest/api/3/issue endpoint, sprint extraction, and HTML
+// stripping without having to open the TUI. Symmetric with `mo jira fetch`.
+func jiraIssueCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "issue <KEY>",
+		Short: "Fetch and print a single Jira issue's detail (diagnostic)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			instances := make([]jira.Instance, 0, len(cfg.Tickets.Jira))
+			for _, j := range cfg.Tickets.Jira {
+				instances = append(instances, jira.Instance{
+					Name:          j.Name,
+					BaseURL:       j.BaseURL,
+					Email:         j.Email,
+					SprintFieldID: j.SprintFieldID,
+				})
+			}
+			providers := jira.BuildProviders(instances)
+			if len(providers) == 0 {
+				return fmt.Errorf("no providers built — run 'mo jira setup' first")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			key := args[0]
+			for _, p := range providers {
+				detail, err := p.Detail(ctx, key)
+				if err != nil {
+					fmt.Printf("%s: ERROR — %s\n", p.Name(), err)
+					continue
+				}
+				fmt.Printf("%s  %s\n", detail.ID, detail.Title)
+				fmt.Printf("  Status:   %s\n", detail.RawStatus)
+				fmt.Printf("  Priority: %d\n", detail.Priority)
+				fmt.Printf("  Reporter: %s\n", detail.Reporter)
+				fmt.Printf("  Assignee: %s\n", detail.AssigneeDisplay)
+				if detail.InSprint {
+					fmt.Printf("  Sprint:   %s (active)\n", detail.SprintName)
+				}
+				fmt.Printf("  URL:      %s\n", detail.URL)
+				fmt.Println()
+				fmt.Println("Description:")
+				if detail.DescriptionText == "" {
+					fmt.Println("(none)")
+				} else {
+					fmt.Println(detail.DescriptionText)
+				}
+				return nil
+			}
+			return fmt.Errorf("issue %q not found in any configured instance", key)
+		},
+	}
 }
 
 // jiraFetchCmd runs a single MyTickets call against each configured provider

@@ -80,7 +80,7 @@ The Tickets panel only appears once you've set up Jira (`mo jira setup`) — see
 | `↓` / `j`   | Move down                             |
 | `→`          | Focus right panel (sessions / tickets) |
 | `←`          | Focus project list                    |
-| `enter`      | Open project detail / switch to session / open ticket in browser |
+| `enter`      | Open project detail / switch to session / open ticket detail popup |
 | `/`          | Filter projects (fuzzy search)        |
 | `n`          | Start a new Claude session (prompts switch/park/concurrent if one is already running) |
 | `a`          | Attach to session window              |
@@ -286,14 +286,81 @@ Arrow down past the sessions list to focus tickets.
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Navigate tickets (crosses back into Sessions at the top) |
-| `enter` | Open selected ticket in your browser |
+| `enter` | Open ticket detail popup (see below) |
 | `o` | Open selected ticket in your browser |
+
+### Ticket detail popup
+
+Pressing `enter` on a ticket opens a full-screen detail view with its metadata (status, priority, reporter, assignee, sprint, last updated, Mo-project mapping) and the description — converted from Jira's rendered HTML to plain text.
+
+```
+ ← OP-175  fix auth flow
+
+   Status:   In Development          Priority:  High
+   Reporter: Jane Q.                  Assignee:  Rik Vanmechelen
+   Sprint:   ⚡ Sprint 23             Updated:   2h ago
+   Project:  OP                       Maps to:   moma-apps-rails
+
+ Description
+ ──────────────────────────────────────────────────────
+ Users occasionally see a 500 after logging in when their
+ session token is missing the `aud` claim. Reproduce by …
+
+   s → create worktree OP-175-fix-auth-flow (session already
+       running in moma-apps-rails)
+
+ [s] start working  [o] open in browser  [y] copy branch  [esc] back
+```
+
+The hint line above the footer tells you exactly what `s` will do right now — it depends on whether a Claude session is already running in the target project.
+
+| Key | Action |
+|---|---|
+| `s` | Start working — see below |
+| `o` | Open ticket in browser |
+| `y` | Copy the derived branch name (e.g. `OP-175-fix-auth-flow`) to clipboard |
+| `esc` | Back to dashboard |
+
+### Start working
+
+Hit `s` in the popup and Mo resolves the ticket's Jira project key to a Mo project, then:
+
+- **Session already running in that project** → creates a new **worktree** at `<project>.worktrees/<ID>-<slug>` and launches Claude in it (so the existing session isn't disturbed).
+- **No session** → checks out the branch in the **main checkout** and launches Claude there. Refuses if the working tree is dirty — press `m` in the project detail view with the stash variant if you want to force it.
+- **Worktree already exists** for the branch → switches to that window instead of creating a new one.
+
+If the Jira project key has no mapping yet, Mo opens a **picker** of your Mo projects (fuzzy filter with `/`). After picking, it asks:
+
+```
+Remember OP → moma-apps-rails for future tickets?
+[r] remember  [n] just this once  [esc] cancel
+```
+
+- `r` writes the mapping to `~/.config/unky-mo/jira-project-map.toml` so future OP tickets skip the picker automatically.
+- `n` uses the mapping only for this session.
+
+### Project mapping
+
+Each `[[tickets.jira]]` instance can define an explicit map:
+
+```toml
+[[tickets.jira]]
+base_url = "https://moma.atlassian.net"
+email = "you@moma.org"
+
+[tickets.jira.project_map]
+OP   = "moma-apps-rails"
+MOMA = "moma-go"
+```
+
+Picker-saved mappings live in a separate file — `~/.config/unky-mo/jira-project-map.toml` — to keep `config.toml` pristine. Hand-edit either file freely; the config map wins on conflict.
 
 ### CLI
 
 ```bash
 mo jira setup          # interactive wizard (URL + email + token, verifies before writing)
 mo jira fetch          # run one fetch per instance, print ticket count or extracted error (diagnostic)
+mo jira issue <KEY>    # fetch one issue and print metadata + stripped description (diagnostic)
 mo jira show-token     # print the current token for copying to another machine
 ```
 
@@ -318,6 +385,13 @@ email = "you@your-org.com"
 # blocked     = ["Blocked", "On Hold"]
 # review      = ["Code Review", "In PR", "Ready for Review"]
 # todo        = ["To Do", "Backlog", "Selected for Development"]
+
+# Jira project key → Mo project name. Drives "start working" from the
+# ticket popup. Picker-saved entries additionally live in
+# ~/.config/unky-mo/jira-project-map.toml.
+# [tickets.jira.project_map]
+# OP   = "moma-apps-rails"
+# MOMA = "moma-go"
 ```
 
 Multiple `[[tickets.jira]]` blocks are supported for people with more than one Atlassian org. All instances share a single token file; export `UNKY_MO_JIRA_TOKEN` if you need per-instance credentials (it wins for the duration of the shell).
@@ -352,6 +426,7 @@ mo sync list                    # List available synced sessions
 mo sync migrate                 # Re-encrypt any legacy plaintext sessions
 mo jira setup                   # Interactive Jira integration setup (URL + email + token)
 mo jira fetch                   # Run one Jira fetch and print result (diagnostic)
+mo jira issue <KEY>             # Print one issue's metadata + description (diagnostic)
 mo jira show-token              # Print current Jira API token
 mo debug <project>              # Dump session/worktree debug info
 mo version                      # Print version

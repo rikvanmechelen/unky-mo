@@ -60,6 +60,7 @@ const (
 	ScreenDashboard Screen = iota
 	ScreenProject
 	ScreenHelp
+	ScreenTicket
 )
 
 // sessionTickMsg triggers a session status refresh.
@@ -180,6 +181,25 @@ type Model struct {
 	// Tickets state (populated by background ticketsFetch).
 	ticketsDisabled  bool             // explicit opt-out via [tickets] enabled = false
 	ticketsProviders []tickets.Provider
+	// Ticket detail screen state (ScreenTicket).
+	detailTicket        *tickets.TicketDetail
+	detailTicketLoading bool
+	detailTicketErr     string
+	// detailTicketList holds the Ticket struct the user selected on the
+	// dashboard — used for render (bucket, priority, sprint) while the
+	// detail fetch is in flight.
+	detailTicketList *tickets.Ticket
+	// Project picker overlay (sub-state of ScreenTicket). Drives both the
+	// first-time "which project does OP map to?" flow and the override
+	// flow. When active, key events route to the picker list.
+	pickerActive         bool
+	pickerList           list.Model
+	pickerForProvider    string // "jira"
+	pickerForJiraKey     string // e.g. "OP"
+	pickerRememberActive bool   // true while we're asking r/n to persist the pick
+	pickerPendingMo      string // mo project name user just selected
+	// Project map companion-file overlay (loaded once, refreshed after save).
+	ticketProjectMap map[string]map[string]string
 	ticketsInstances []jira.Instance  // retained for NeedsConfig re-check on token env changes
 	ticketsGroups    []tickets.BucketGroup
 	ticketsErrors    []tickets.FetchResult
@@ -292,6 +312,11 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 		refresh = 5 * time.Minute
 	}
 
+	projectMap, _ := tickets.LoadCompanionProjectMap()
+	if projectMap == nil {
+		projectMap = map[string]map[string]string{}
+	}
+
 	return Model{
 		screen:             ScreenDashboard,
 		list:               l,
@@ -303,6 +328,7 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 		stateFilePath:      stateFilePath,
 		ticketsDisabled:    ticketsCfg.Disabled,
 		ticketsProviders:   providers,
+		ticketProjectMap:   projectMap,
 		ticketsInstances:   instances,
 		ticketsPerBucket:   perBucket,
 		ticketsRefreshPeriod: refresh,
@@ -310,7 +336,8 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 }
 
 // ticketsInstancesFromConfig bridges the config shape to the jira package's
-// flat Instance type, converting the TOML status map to tickets.StatusMap.
+// flat Instance type, converting the TOML status map to tickets.StatusMap
+// and carrying over the hand-authored project_map.
 func ticketsInstancesFromConfig(cfg config.TicketsConfig) []jira.Instance {
 	out := make([]jira.Instance, 0, len(cfg.Jira))
 	for _, j := range cfg.Jira {
@@ -325,6 +352,7 @@ func ticketsInstancesFromConfig(cfg config.TicketsConfig) []jira.Instance {
 				Review:     j.StatusMap.Review,
 				Todo:       j.StatusMap.Todo,
 			},
+			ProjectMap: j.ProjectMap,
 		})
 	}
 	return out
@@ -386,6 +414,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't intercept keys when filtering
 		if m.list.FilterState() == list.Filtering {
 			break
+		}
+
+		// Ticket-screen picker + remember-prompt capture all input while active
+		// so normal key bindings don't fire.
+		if m.screen == ScreenTicket && m.pickerRememberActive {
+			newModel, cmd := m.handleTicketPickerRemember(msg)
+			return newModel, cmd
+		}
+		if m.screen == ScreenTicket && m.pickerActive {
+			newModel, cmd := m.handleTicketPickerActive(msg)
+			return newModel, cmd
+		}
+		// `y` on ticket detail yanks the derived branch name.
+		if m.screen == ScreenTicket && msg.String() == "y" {
+			return m.handleTicketYank()
 		}
 
 		// New-worktree input captures all input while active.
@@ -517,16 +560,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Enter):
 			if m.screen == ScreenDashboard && !m.dashFocusLeft && m.dashRightFocus == dashRightTickets {
-				// Tickets panel: enter opens the selected ticket in browser.
-				if t := m.ticketAtCursor(); t != nil && t.URL != "" {
-					url := t.URL
-					id := t.ID
-					return m, func() tea.Msg {
-						if err := openInBrowser(url); err != nil {
-							return statusMsgEvent(fmt.Sprintf("Open failed: %v", err))
-						}
-						return statusMsgEvent(fmt.Sprintf("Opened %s in browser", id))
-					}
+				// Tickets panel: enter opens the ticket detail screen.
+				if t := m.ticketAtCursor(); t != nil {
+					selected := *t // copy so the list can safely change
+					m.screen = ScreenTicket
+					m.detailTicket = nil
+					m.detailTicketErr = ""
+					m.detailTicketLoading = true
+					m.detailTicketList = &selected
+					return m, m.fetchTicketDetail(selected.ID, selected.Provider)
 				}
 				return m, nil
 			}
@@ -647,8 +689,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.Back):
+			// On ScreenTicket, esc unwinds one layer at a time: close the
+			// remember-prompt first, then the picker, then the screen itself.
+			if m.screen == ScreenTicket && m.pickerRememberActive {
+				m.pickerRememberActive = false
+				m.pickerPendingMo = ""
+				return m, nil
+			}
+			if m.screen == ScreenTicket && m.pickerActive {
+				m.pickerActive = false
+				return m, nil
+			}
 			if m.screen != ScreenDashboard {
 				m.screen = ScreenDashboard
+				// Reset ticket detail state so a stale ticket doesn't flash
+				// next time the screen opens.
+				m.detailTicket = nil
+				m.detailTicketList = nil
+				m.detailTicketErr = ""
 				return m, nil
 			}
 
@@ -739,6 +797,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if t := m.ticketAtCursor(); t != nil && t.URL != "" {
 					url := t.URL
 					id := t.ID
+					return m, func() tea.Msg {
+						if err := openInBrowser(url); err != nil {
+							return statusMsgEvent(fmt.Sprintf("Open failed: %v", err))
+						}
+						return statusMsgEvent(fmt.Sprintf("Opened %s in browser", id))
+					}
+				}
+			}
+			if m.screen == ScreenTicket {
+				var url, id string
+				if m.detailTicket != nil {
+					url, id = m.detailTicket.URL, m.detailTicket.ID
+				} else if m.detailTicketList != nil {
+					url, id = m.detailTicketList.URL, m.detailTicketList.ID
+				}
+				if url != "" {
 					return m, func() tea.Msg {
 						if err := openInBrowser(url); err != nil {
 							return statusMsgEvent(fmt.Sprintf("Open failed: %v", err))
@@ -847,6 +921,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.Suspend):
+			// On the ticket detail screen, `s` means "start working" instead
+			// of suspend — resolves the project mapping, opens the picker if
+			// missing, or kicks off the branch/worktree flow otherwise.
+			if m.screen == ScreenTicket && !m.pickerActive && !m.pickerRememberActive {
+				return m.handleTicketStartWorking()
+			}
 			if m.tmux == nil {
 				return m, func() tea.Msg { return statusMsgEvent("tmux not available") }
 			}
@@ -903,6 +983,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ticketsCursor >= m.ticketsVisibleLen() {
 			m.ticketsCursor = max(0, m.ticketsVisibleLen()-1)
 		}
+		return m, nil
+
+	case ticketDetailMsg:
+		m.detailTicketLoading = false
+		if msg.err != nil {
+			m.detailTicketErr = msg.err.Error()
+			return m, nil
+		}
+		m.detailTicket = msg.detail
 		return m, nil
 
 	case gitStatusMsg:
@@ -1124,6 +1213,8 @@ func (m Model) View() string {
 		return m.projectDetailView()
 	case ScreenHelp:
 		return m.helpView()
+	case ScreenTicket:
+		return m.renderTicketDetailScreen()
 	default:
 		return m.dashboardView()
 	}

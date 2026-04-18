@@ -74,6 +74,10 @@ type Instance struct {
 	Email         string
 	SprintFieldID string
 	StatusMap     tickets.StatusMap
+	// ProjectMap maps Jira project keys (e.g. "OP") to Mo project names.
+	// Hand-authored in config.toml; UI-saved overrides live in a separate
+	// companion file and are merged in at the TUI layer.
+	ProjectMap map[string]string
 }
 
 // BuildProviders constructs a Provider per configured instance, reading the

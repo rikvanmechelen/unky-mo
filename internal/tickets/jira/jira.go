@@ -167,31 +167,22 @@ func (t *jiraTime) UnmarshalJSON(b []byte) error {
 	return fmt.Errorf("jira: unrecognized time format %q", s)
 }
 
-func (p *Provider) search(ctx context.Context, jql string) (*searchResp, error) {
-	// New Jira Cloud search endpoint (POST, JSON body) — /rest/api/2/search
-	// was removed in 2025; see Atlassian changelog CHANGE-2046.
-	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/rest/api/3/search/jql"
-
-	reqBody := struct {
-		JQL        string   `json:"jql"`
-		Fields     []string `json:"fields"`
-		MaxResults int      `json:"maxResults"`
-	}{
-		JQL:        jql,
-		Fields:     append(append([]string{}, baseFields...), p.cfg.SprintFieldID),
-		MaxResults: maxResults,
+// doRequest wraps the common auth + status-code handling for any Jira HTTP
+// call. method is "GET" or "POST"; reqBody is nil for GETs, pre-marshalled
+// JSON for POSTs. Shared by search() and detail.go's GetIssueDetail().
+func (p *Provider) doRequest(ctx context.Context, method, endpoint string, reqBody []byte) ([]byte, error) {
+	var bodyReader io.Reader
+	if reqBody != nil {
+		bodyReader = bytes.NewReader(reqBody)
 	}
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Authorization", "Basic "+basicAuth(p.cfg.Email, p.cfg.Token))
 
 	resp, err := p.client.Do(req)
@@ -212,6 +203,32 @@ func (p *Provider) search(ctx context.Context, jql string) (*searchResp, error) 
 		return nil, fmt.Errorf("jira: rate-limited (HTTP 429) — try again shortly")
 	case resp.StatusCode >= 400:
 		return nil, fmt.Errorf("jira: HTTP %d — %s", resp.StatusCode, extractJiraError(body))
+	}
+	return body, nil
+}
+
+func (p *Provider) search(ctx context.Context, jql string) (*searchResp, error) {
+	// New Jira Cloud search endpoint (POST, JSON body) — /rest/api/2/search
+	// was removed in 2025; see Atlassian changelog CHANGE-2046.
+	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/rest/api/3/search/jql"
+
+	reqBody := struct {
+		JQL        string   `json:"jql"`
+		Fields     []string `json:"fields"`
+		MaxResults int      `json:"maxResults"`
+	}{
+		JQL:        jql,
+		Fields:     append(append([]string{}, baseFields...), p.cfg.SprintFieldID),
+		MaxResults: maxResults,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := p.doRequest(ctx, http.MethodPost, endpoint, bodyBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse once as a loose map so we can extract the dynamic sprint field,

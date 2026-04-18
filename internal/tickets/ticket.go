@@ -81,10 +81,21 @@ type Ticket struct {
 	ProjectKey string
 }
 
+// TicketDetail extends Ticket with fields only fetched on demand (description,
+// reporter, assignee). Kept separate from Ticket so the list endpoint stays
+// lean — detail is only fetched when the user opens the popup.
+type TicketDetail struct {
+	Ticket
+	DescriptionText  string // rendered from provider HTML to plain text
+	Reporter         string
+	AssigneeDisplay  string
+}
+
 // Provider is implemented by each ticket source.
 type Provider interface {
 	Name() string
 	MyTickets(ctx context.Context) ([]Ticket, error)
+	Detail(ctx context.Context, id string) (*TicketDetail, error)
 }
 
 // SortByRelevance orders tickets within a bucket:
