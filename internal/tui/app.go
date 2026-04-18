@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -181,6 +182,10 @@ type Model struct {
 	detailPRDetail   *gh.PRDetail   // fetched detail for expanded PR
 	detailFocusLeft  bool           // true = left panel (sessions/worktrees), false = right (PRs)
 	syncedSessions map[string]moSync.SessionMeta // sync metadata keyed by session ID for the current detail project
+	// remoteSynced holds synced sessions whose worktree does not exist on
+	// this machine. Keyed by branch name (empty for main scope, unused here
+	// since the main project always has a local path).
+	remoteSynced map[string]moSync.SessionMeta
 	// activeWorktrees tracks worktree sessions grouped by parent project path.
 	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
@@ -374,6 +379,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailPRExpanded = -1
 					m.detailPRDetail = nil
 					m.syncedSessions = nil
+					m.remoteSynced = nil
 					m.detailFocusLeft = true
 					m.screen = ScreenProject
 					return m, tea.Batch(
@@ -427,6 +433,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					return m, m.resumeBranchSmart(*row.branch)
+				case "br-remote":
+					if row.branch == nil || row.remoteMeta == nil {
+						return m, nil
+					}
+					return m, m.pullRemoteSessionAndLaunch(row.branch.Name, *row.remoteMeta)
 				}
 				return m, nil
 			}
@@ -668,8 +679,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncPullMsg:
 		m.syncedSessions = msg.synced
-		if msg.pulled && m.detailProject != nil {
-			// Rebuild rows to include the newly pulled session
+		m.remoteSynced = msg.remoteOnly
+		if m.detailProject != nil {
+			// Rebuild rows to reflect newly-pulled sessions AND remote-only
+			// entries that the detail view surfaces as "pull + create worktree"
+			// rows under their matching branch.
 			m.buildDetailRows()
 			m.loadRecap()
 		}
@@ -1522,6 +1536,30 @@ func (m Model) projectDetailView() string {
 
 		case "br-empty":
 			left.WriteString("    " + footerDescStyle.Render("(no sessions)") + "\n")
+
+		case "br-remote":
+			cursor := "  "
+			if selected {
+				cursor = "▸ "
+			}
+			title := row.remoteMeta.Title
+			if title == "" {
+				title = "(untitled)"
+			}
+			age := formatAge(time.Since(row.remoteMeta.PushedAt))
+			host := row.remoteMeta.Hostname
+			if host == "" {
+				host = "?"
+			}
+			line := fmt.Sprintf("%s⇅ %s %s  %s%s  %s",
+				cursor, statusNone.Render("○"), age, title,
+				"  "+footerDescStyle.Render(host),
+				footerDescStyle.Render("(remote only)"))
+			if selected {
+				left.WriteString("  " + selectedItemStyle.Render(line) + "\n")
+			} else {
+				left.WriteString("  " + normalItemStyle.Render(line) + "\n")
+			}
 		}
 
 		lastKind = row.kind
@@ -1710,15 +1748,17 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, launchPath string, sel
 		name = name[:maxName-3] + "..."
 	}
 
-	// Sync indicator — include source host + push age when metadata is available.
-	syncMark := ""
+	// Sync indicator lives as a leading column so synced and non-synced rows
+	// align. Host + push age hang off the end as secondary metadata.
+	syncPrefix := "  "
+	syncTrailer := ""
 	if meta, ok := m.syncedSessions[rs.SessionID]; ok {
-		syncMark = " ⇅"
+		syncPrefix = "⇅ "
 		if meta.Hostname != "" {
-			syncMark += " " + meta.Hostname
+			syncTrailer = "  " + footerDescStyle.Render(meta.Hostname)
 		}
 		if !meta.PushedAt.IsZero() {
-			syncMark += " " + formatAge(time.Since(meta.PushedAt))
+			syncTrailer += "  " + footerDescStyle.Render(formatAge(time.Since(meta.PushedAt)))
 		}
 	}
 
@@ -1727,7 +1767,7 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, launchPath string, sel
 		tokCol = "  " + footerDescStyle.Render(tokStr)
 	}
 
-	line := fmt.Sprintf("%s%s %s  %s%s%s", cursor, statusStr, age, name, tokCol, syncMark)
+	line := fmt.Sprintf("%s%s%s %s  %s%s%s", cursor, syncPrefix, statusStr, age, name, tokCol, syncTrailer)
 	if selected {
 		return selectedItemStyle.Render(line)
 	}
@@ -1738,12 +1778,14 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, launchPath string, sel
 // are organized as: one "branch" header per local branch, followed by
 // "br-session" rows for each session discovered at that branch's checkout
 // location. Branches that are neither the main checkout nor a worktree show
-// a single "br-empty" row.
+// a single "br-empty" row, or — when a synced session exists for the branch
+// on another machine — a "br-remote" row.
 type detailRow struct {
-	kind    string                // "branch", "br-session", "br-empty"
-	session *claude.RecentSession // non-nil for br-session
-	branch  *project.Branch       // non-nil for all branch-scoped rows
-	path    string                // cwd to launch/resume in ("" if branch has no local checkout)
+	kind       string                // "branch", "br-session", "br-empty", "br-remote"
+	session    *claude.RecentSession // non-nil for br-session
+	branch     *project.Branch       // non-nil for all branch-scoped rows
+	path       string                // cwd to launch/resume in ("" if branch has no local checkout)
+	remoteMeta *moSync.SessionMeta   // non-nil for br-remote
 }
 
 // buildDetailRows constructs the flat list of navigable rows for the project
@@ -1772,10 +1814,19 @@ func (m *Model) buildDetailRows() {
 		})
 
 		if launchPath == "" {
-			rows = append(rows, detailRow{
-				kind:   "br-empty",
-				branch: b,
-			})
+			if meta, ok := m.remoteSynced[b.Name]; ok {
+				metaCopy := meta
+				rows = append(rows, detailRow{
+					kind:       "br-remote",
+					branch:     b,
+					remoteMeta: &metaCopy,
+				})
+			} else {
+				rows = append(rows, detailRow{
+					kind:   "br-empty",
+					branch: b,
+				})
+			}
 			continue
 		}
 
@@ -1794,6 +1845,38 @@ func (m *Model) buildDetailRows() {
 				session: &sessions[j],
 				branch:  b,
 				path:    launchPath,
+			})
+		}
+	}
+
+	// Surface remote-only entries whose branch isn't in the local branch
+	// list at all (e.g. the branch was never fetched). Group them under a
+	// synthetic "Remote branches" header so the user can still pull them.
+	known := map[string]bool{}
+	for _, b := range m.detailBranches {
+		known[b.Name] = true
+	}
+	var orphanBranches []string
+	for branch := range m.remoteSynced {
+		if branch == "" || known[branch] {
+			continue
+		}
+		orphanBranches = append(orphanBranches, branch)
+	}
+	if len(orphanBranches) > 0 {
+		sort.Strings(orphanBranches)
+		for _, branch := range orphanBranches {
+			meta := m.remoteSynced[branch]
+			metaCopy := meta
+			b := &project.Branch{Name: branch}
+			rows = append(rows, detailRow{
+				kind:   "branch",
+				branch: b,
+			})
+			rows = append(rows, detailRow{
+				kind:       "br-remote",
+				branch:     b,
+				remoteMeta: &metaCopy,
 			})
 		}
 	}
@@ -2041,15 +2124,19 @@ func (m Model) fetchPRDetail(number int) tea.Cmd {
 
 // syncPullMsg carries the result of an auto-sync-pull when opening a project.
 type syncPullMsg struct {
-	synced map[string]moSync.SessionMeta // sync metadata keyed by session ID
-	pulled bool                          // true if a new session was pulled
-	err    error                         // non-nil when sync is configured but failed
+	synced     map[string]moSync.SessionMeta // sync metadata for sessions pulled into a local path, keyed by session ID
+	remoteOnly map[string]moSync.SessionMeta // sessions for branches with no local worktree, keyed by branch name
+	pulled     bool                          // true if a new session was pulled
+	err        error                         // non-nil when sync is configured but failed
 }
 
 func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 	return func() tea.Msg {
 		syncDir := moSync.DefaultSyncDir()
-		result := syncPullMsg{synced: make(map[string]moSync.SessionMeta)}
+		result := syncPullMsg{
+			synced:     make(map[string]moSync.SessionMeta),
+			remoteOnly: make(map[string]moSync.SessionMeta),
+		}
 
 		// Stay quiet when the user hasn't set up sync on this machine.
 		if !moSync.IsConfigured(syncDir) {
@@ -2076,8 +2163,17 @@ func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 		}
 
 		for _, s := range sessions {
+			// Only care about entries belonging to this project (main + worktrees).
+			if s.ProjectName != projectName && !strings.HasPrefix(s.ProjectName, prefix) {
+				continue
+			}
+
 			localPath, ok := pathFor[s.ProjectName]
 			if !ok {
+				// Worktree doesn't exist locally — remember it so the detail
+				// view can surface a "pull + create worktree" action.
+				branch := strings.TrimPrefix(s.ProjectName, prefix)
+				result.remoteOnly[branch] = s
 				continue
 			}
 			result.synced[s.SessionID] = s
@@ -2183,6 +2279,44 @@ func (m Model) launchWorktreeSession(wt project.Worktree) tea.Cmd {
 			return statusMsgEvent("Switched to " + windowName)
 		}
 		return m.launchClaudeInWindow(windowName, wt.Path, "claude")
+	}
+}
+
+// pullRemoteSessionAndLaunch handles a "br-remote" row: create the worktree
+// for the branch (if needed), decrypt the synced JSONL into that worktree's
+// Claude projects dir, and launch a resumed Claude session there.
+func (m Model) pullRemoteSessionAndLaunch(branch string, meta moSync.SessionMeta) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		wtPath, err := project.CreateWorktree(p.Path, branch)
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
+		}
+		syncDir := moSync.DefaultSyncDir()
+		if _, err := moSync.Pull(meta.ProjectName, wtPath, syncDir); err != nil {
+			return statusMsgEvent(fmt.Sprintf("Pull failed: %v", err))
+		}
+		windowName := p.Name + "@" + branch
+		var status string
+		if m.tmux.WindowExists(windowName) {
+			if err := m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName); err != nil {
+				status = fmt.Sprintf("Pulled but failed to switch: %v", err)
+			} else {
+				status = "Resumed " + windowName
+			}
+		} else {
+			launch := m.launchResumeInWindow(windowName, wtPath, meta.SessionID)
+			if se, ok := launch.(statusMsgEvent); ok {
+				status = string(se)
+			}
+		}
+		return worktreeCreatedMsg{status: status}
 	}
 }
 
