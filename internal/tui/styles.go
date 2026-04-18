@@ -69,4 +69,33 @@ var (
 	notifBadgeStyle = lipgloss.NewStyle().
 			Foreground(colorWarning).
 			Bold(true)
+
+	// Claude usage strip (dashboard footer)
+	usageStripStyle = lipgloss.NewStyle().
+			Foreground(colorSecondary).
+			Border(lipgloss.NormalBorder(), true, false, false, false).
+			BorderForeground(colorMuted).
+			Padding(0, 1)
+
+	usageLabelStyle = lipgloss.NewStyle().
+			Foreground(colorWhite).
+			Bold(true)
+
+	barFilledStyle = lipgloss.NewStyle().Foreground(colorPrimary)
+	barEmptyStyle  = lipgloss.NewStyle().Foreground(colorMuted)
+	barWarnStyle   = lipgloss.NewStyle().Foreground(colorWarning)
+	barDangerStyle = lipgloss.NewStyle().Foreground(colorDanger)
 )
+
+// pickBarStyle returns the appropriate filled-segment color for a utilization
+// percentage: primary below 70%, warning at 70-89%, danger at 90+%.
+func pickBarStyle(pct int) lipgloss.Style {
+	switch {
+	case pct >= 90:
+		return barDangerStyle
+	case pct >= 70:
+		return barWarnStyle
+	default:
+		return barFilledStyle
+	}
+}

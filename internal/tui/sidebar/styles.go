@@ -49,4 +49,30 @@ var (
 
 	termActiveStyle = lipgloss.NewStyle().
 			Foreground(colorSuccess)
+
+	// Claude usage line (above footer)
+	usageLineStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	// White horizontal rules bracketing the usage line
+	usageRuleStyle = lipgloss.NewStyle().
+			Foreground(colorWhite)
+
+	usageBarFilled = lipgloss.NewStyle().Foreground(colorPrimary)
+	usageBarEmpty  = lipgloss.NewStyle().Foreground(colorMuted)
+	usageBarWarn   = lipgloss.NewStyle().Foreground(colorWarning)
+	usageBarDanger = lipgloss.NewStyle().Foreground(colorDanger)
 )
+
+// pickBarStyle returns the appropriate filled-segment color for a utilization
+// percentage: primary below 70%, warning at 70-89%, danger at 90+%.
+func pickBarStyle(pct int) lipgloss.Style {
+	switch {
+	case pct >= 90:
+		return usageBarDanger
+	case pct >= 70:
+		return usageBarWarn
+	default:
+		return usageBarFilled
+	}
+}

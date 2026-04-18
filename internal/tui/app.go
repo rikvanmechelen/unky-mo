@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +22,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
+	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
 // SessionStatus represents the state of a Claude session for a project.
@@ -59,6 +62,35 @@ func sessionTick() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg(t)
 	})
+}
+
+// usageTickMsg triggers a Claude usage refresh. 60s is well below the cache
+// TTL of the endpoint but keeps the reset countdown in the dashboard fresh
+// across the longer sessionTick cadence.
+type usageTickMsg time.Time
+
+func usageTick() tea.Cmd {
+	return tea.Tick(60*time.Second, func(t time.Time) tea.Msg {
+		return usageTickMsg(t)
+	})
+}
+
+// usageRefreshMsg carries the result of a usage.Fetch call.
+type usageRefreshMsg struct {
+	snap    usage.Snapshot
+	authErr bool
+}
+
+func (m Model) fetchUsage() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		snap, err := usage.Fetch(ctx)
+		if errors.Is(err, usage.ErrAuthExpired) {
+			return usageRefreshMsg{authErr: true}
+		}
+		return usageRefreshMsg{snap: snap}
+	}
 }
 
 // gitStatusMsg carries refreshed git statuses for all projects.
@@ -136,9 +168,13 @@ type Model struct {
 	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
 	stateFilePath string
-	width         int
-	height        int
-	ready         bool
+	// Claude usage snapshot (5h + weekly rate-limit windows)
+	usage      usage.Snapshot
+	usageReady bool // false until the first fetch completes (success or cache hit)
+	usageAuth  bool // true once a 401 is seen — surfaces an auth-expired banner
+	width      int
+	height     int
+	ready      bool
 }
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string) Model {
@@ -168,7 +204,11 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{sessionTick(), m.refreshSessions(), m.refreshGitStatuses()}
+	cmds := []tea.Cmd{
+		sessionTick(), usageTick(),
+		m.refreshSessions(), m.refreshGitStatuses(),
+		m.fetchUsage(),
+	}
 	if m.notifServer != nil {
 		cmds = append(cmds, m.waitForNotification())
 	}
@@ -492,6 +532,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateProjectStatuses(msg)
 		return m, nil
 
+	case usageTickMsg:
+		return m, tea.Batch(usageTick(), m.fetchUsage())
+
+	case usageRefreshMsg:
+		if msg.authErr {
+			m.usageAuth = true
+		} else {
+			m.usage = msg.snap
+			m.usageAuth = false
+		}
+		m.usageReady = true
+		m.writeStateFile()
+		return m, nil
+
 	case gitStatusMsg:
 		m.gitStatuses = map[string]project.GitStatus(msg)
 		// Update ProjectItems with git info
@@ -810,6 +864,8 @@ func (m Model) dashboardView() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, divider, rightPanel)
 
+	usageStrip := m.renderUsageStrip(totalWidth)
+
 	footer := m.renderFooter([]footerBinding{
 		{"↑↓", "navigate"},
 		{"←→", "switch panel"},
@@ -824,8 +880,62 @@ func (m Model) dashboardView() string {
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		body,
+		usageStrip,
 		footer,
 	)
+}
+
+// renderUsageStrip renders the dashboard footer line showing 5h + weekly
+// Claude rate-limit-window utilization. Width is clamped so bars never
+// underflow on very narrow terminals.
+func (m Model) renderUsageStrip(width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	if !m.usageReady {
+		return usageStripStyle.Width(width).Render("usage: computing…")
+	}
+	if m.usageAuth {
+		return usageStripStyle.Width(width).Render("usage: auth expired — run `claude`")
+	}
+
+	fivePct := usage.PctFromUtil(m.usage.FiveHour.Utilization)
+	sevenPct := usage.PctFromUtil(m.usage.SevenDay.Utilization)
+	now := time.Now()
+	fiveResets := usage.FormatResetIn(now, m.usage.FiveHour.ResetsAt)
+
+	// Reserve non-bar characters: "5h  NN% (NhNNm)  ·  Week  NN%" ≈ 36 chars
+	// plus borders/padding (~4). Leave the rest for two equal bars.
+	fixed := 40
+	barWidth := (width - fixed) / 2
+	if barWidth < 6 {
+		barWidth = 6
+	}
+	if barWidth > 24 {
+		barWidth = 24
+	}
+
+	fiveBar := colorBar(m.usage.FiveHour.Utilization, barWidth, fivePct)
+	sevenBar := colorBar(m.usage.SevenDay.Utilization, barWidth, sevenPct)
+
+	left := fmt.Sprintf("%s %s %d%% (%s)",
+		usageLabelStyle.Render("5h"), fiveBar, fivePct, fiveResets)
+	right := fmt.Sprintf("%s %s %d%%",
+		usageLabelStyle.Render("Week"), sevenBar, sevenPct)
+
+	line := left + "  ·  " + right
+	if m.usage.Source == "stale" {
+		line += "  " + barEmptyStyle.Render("(stale)")
+	}
+	return usageStripStyle.Width(width).Render(line)
+}
+
+// colorBar splits the bar into filled/empty segments and colors them
+// independently so the filled portion can switch to warn/danger styles
+// at high utilization without tinting the empty portion.
+func colorBar(util float64, width, pct int) string {
+	filled, empty := usage.SplitBar(util, width)
+	return pickBarStyle(pct).Render(filled) + barEmptyStyle.Render(empty)
 }
 
 func (m Model) helpView() string {
@@ -1043,6 +1153,17 @@ func (m *Model) writeStateFile() {
 	sf := &state.StateFile{
 		TmuxSession: sessionName,
 		Projects:    projects,
+	}
+	if m.usageReady {
+		sf.Usage = &state.UsageState{
+			FiveHourPct:      usage.PctFromUtil(m.usage.FiveHour.Utilization),
+			FiveHourResetsAt: m.usage.FiveHour.ResetsAt,
+			SevenDayPct:      usage.PctFromUtil(m.usage.SevenDay.Utilization),
+			SevenDayResetsAt: m.usage.SevenDay.ResetsAt,
+			FetchedAt:        m.usage.FetchedAt,
+			Stale:            m.usage.Source == "stale",
+			AuthError:        m.usageAuth,
+		}
 	}
 	state.Write(m.stateFilePath, sf)
 }

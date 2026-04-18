@@ -13,6 +13,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/state"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
+	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
 type SidebarItem struct {
@@ -74,6 +75,9 @@ type Model struct {
 	focusSection string
 	shellCursor  int
 	fileCursor   int
+	// Claude usage snapshot (populated from state file; nil until main TUI
+	// has fetched at least once).
+	usage *state.UsageState
 }
 
 func NewModel(sessionName, stateFile string) Model {
@@ -288,6 +292,9 @@ func (m Model) View() string {
 	// Calculate visible range
 	headerLines := 1
 	footerLines := 5
+	if m.usage != nil {
+		footerLines += 3 // rule + usage line + rule
+	}
 	maxVisible := m.height - headerLines - footerLines
 	if maxVisible < 1 {
 		maxVisible = 1
@@ -461,6 +468,17 @@ func (m Model) View() string {
 		b.WriteString(dotIdle.Render(m.statusMsg) + "\n")
 	}
 
+	// Claude usage line — 5h bar with reset countdown. Rendered just above the
+	// keybinding footer so the footer stays anchored at the bottom edge.
+	// Wrapped in white horizontal rules to visually separate it from the
+	// changed-files tree above and the keybinding footer below.
+	if line := m.renderUsageLine(); line != "" {
+		rule := usageRuleStyle.Render(strings.Repeat("─", m.width))
+		b.WriteString(rule + "\n")
+		b.WriteString(line + "\n")
+		b.WriteString(rule + "\n")
+	}
+
 	// Footer — context-sensitive
 	if m.focusSection == "shells" && len(m.activeShells) > 0 {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ view output") + "\n")
@@ -515,6 +533,9 @@ func truncateName(name string, maxLen int) string {
 func (m *Model) ensureCursorVisible() {
 	headerLines := 1
 	footerLines := 5
+	if m.usage != nil {
+		footerLines += 3
+	}
 	maxVisible := m.height - headerLines - footerLines
 	if maxVisible < 1 {
 		maxVisible = 1
@@ -526,6 +547,42 @@ func (m *Model) ensureCursorVisible() {
 	if m.cursor >= m.viewportStart+maxVisible {
 		m.viewportStart = m.cursor - maxVisible + 1
 	}
+}
+
+// renderUsageLine returns the sidebar's 5h rate-limit bar + reset countdown,
+// or "" when usage data isn't yet available or the sidebar is too narrow.
+// Returns the string already styled — caller writes it as-is.
+func (m Model) renderUsageLine() string {
+	if m.usage == nil {
+		return ""
+	}
+	if m.usage.AuthError {
+		return usageLineStyle.Render("usage: run `claude`")
+	}
+	// Minimum useful width: "5h ▓▓▓▓▓▓ 52% (2h15m)" ≈ 22 chars.
+	if m.width < 22 {
+		return ""
+	}
+
+	// Fixed chars consumed by labels/numbers/countdown: "5h  NN% (HhMMm)" ≈ 15.
+	// Give the bar whatever's left, clamped.
+	barW := m.width - 16
+	if barW < 6 {
+		barW = 6
+	}
+	if barW > 18 {
+		barW = 18
+	}
+
+	filled, empty := usage.SplitBar(float64(m.usage.FiveHourPct), barW)
+	filledColored := pickBarStyle(m.usage.FiveHourPct).Render(filled) + usageBarEmpty.Render(empty)
+
+	resets := usage.FormatResetIn(time.Now(), m.usage.FiveHourResetsAt)
+	out := fmt.Sprintf("5h %s %d%% (%s)", filledColored, m.usage.FiveHourPct, resets)
+	if m.usage.Stale {
+		out += " *"
+	}
+	return usageLineStyle.Render(out)
 }
 
 func (m *Model) refreshState() {
@@ -560,6 +617,7 @@ func (m *Model) refreshState() {
 	}
 
 	m.items = items
+	m.usage = sf.Usage
 	m.refreshTerminals()
 	m.refreshChangedFiles()
 	m.activeShells = claude.ActiveShellsForSession(m.windowPath)

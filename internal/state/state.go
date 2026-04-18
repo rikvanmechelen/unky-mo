@@ -20,6 +20,23 @@ type StateFile struct {
 	TmuxSession string         `json:"tmux_session"`
 	Projects    []ProjectState `json:"projects"`
 	UpdatedAt   time.Time      `json:"updated_at"`
+
+	Usage *UsageState `json:"usage,omitempty"`
+}
+
+// UsageState is the Claude Code rate-limit-window view the main TUI writes
+// into the shared state file. Sidebars consume it at their normal 1s tick
+// (no JSONL parsing / API calls from the sidebar itself).
+type UsageState struct {
+	FiveHourPct      int       `json:"five_hour_pct"`
+	FiveHourResetsAt time.Time `json:"five_hour_resets_at"`
+
+	SevenDayPct      int       `json:"seven_day_pct"`
+	SevenDayResetsAt time.Time `json:"seven_day_resets_at"`
+
+	FetchedAt time.Time `json:"fetched_at"`
+	Stale     bool      `json:"stale,omitempty"`
+	AuthError bool      `json:"auth_error,omitempty"`
 }
 
 // Write atomically writes the state file (write to temp, then rename).
