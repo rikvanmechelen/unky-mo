@@ -78,6 +78,9 @@ type Model struct {
 	// Claude usage snapshot (populated from state file; nil until main TUI
 	// has fetched at least once).
 	usage *state.UsageState
+	// Cumulative tokens for the live Claude session in this window; 0 when
+	// no session is currently running here.
+	sessionTokens int
 }
 
 func NewModel(sessionName, stateFile string) Model {
@@ -492,12 +495,12 @@ func (m Model) View() string {
 	} else {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
 		b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
-		syncLabel := " s sync"
+		syncLabel := "  s sync"
 		switch m.syncStatus {
 		case "synced":
-			syncLabel = " s " + dotIdle.Render("synced")
+			syncLabel = "  s " + dotIdle.Render("synced")
 		case "stale":
-			syncLabel = " s " + dotActive.Render("sync ↑")
+			syncLabel = "  s " + dotActive.Render("sync ↑")
 		}
 		b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
 		b.WriteString(footerStyle.Render(" ` popup") + syncLabel + "\n")
@@ -550,8 +553,9 @@ func (m *Model) ensureCursorVisible() {
 }
 
 // renderUsageLine returns the sidebar's 5h rate-limit bar + reset countdown,
-// or "" when usage data isn't yet available or the sidebar is too narrow.
-// Returns the string already styled — caller writes it as-is.
+// optionally followed by the current session's token count when a Claude
+// session is running in this window and the sidebar has room for it.
+// Returns "" when usage data isn't yet available or the sidebar is too narrow.
 func (m Model) renderUsageLine() string {
 	if m.usage == nil {
 		return ""
@@ -564,14 +568,29 @@ func (m Model) renderUsageLine() string {
 		return ""
 	}
 
-	// Fixed chars consumed by labels/numbers/countdown: "5h  NN% (HhMMm)" ≈ 15.
-	// Give the bar whatever's left, clamped.
-	barW := m.width - 16
-	if barW < 6 {
-		barW = 6
-	}
-	if barW > 18 {
-		barW = 18
+	// Width budget:
+	//   bar-only layout:  "5h  NN% (HhMMm)"         ≈ 15 fixed chars
+	//   with tokens:      "5h  NN% (HhMMm) · X.XM tok" ≈ 26 fixed chars
+	// Fall back to bar-only when the sidebar is too narrow for both.
+	showTokens := m.sessionTokens > 0 && m.width >= 32
+
+	var barW int
+	if showTokens {
+		barW = m.width - 27
+		if barW < 5 {
+			barW = 5
+		}
+		if barW > 14 {
+			barW = 14
+		}
+	} else {
+		barW = m.width - 16
+		if barW < 6 {
+			barW = 6
+		}
+		if barW > 18 {
+			barW = 18
+		}
 	}
 
 	filled, empty := usage.SplitBar(float64(m.usage.FiveHourPct), barW)
@@ -579,6 +598,9 @@ func (m Model) renderUsageLine() string {
 
 	resets := usage.FormatResetIn(time.Now(), m.usage.FiveHourResetsAt)
 	out := fmt.Sprintf("5h %s %d%% (%s)", filledColored, m.usage.FiveHourPct, resets)
+	if showTokens {
+		out += " · " + usage.FormatTokensShort(m.sessionTokens) + " tok"
+	}
 	if m.usage.Stale {
 		out += " *"
 	}
@@ -618,6 +640,11 @@ func (m *Model) refreshState() {
 
 	m.items = items
 	m.usage = sf.Usage
+	m.sessionTokens = 0
+	if live := claude.SessionForPath(m.windowPath); live != nil {
+		jsonl := filepath.Join(claude.ProjectsDirForPath(m.windowPath), live.SessionID+".jsonl")
+		m.sessionTokens = usage.SessionTokens(jsonl)
+	}
 	m.refreshTerminals()
 	m.refreshChangedFiles()
 	m.activeShells = claude.ActiveShellsForSession(m.windowPath)

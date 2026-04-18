@@ -1234,7 +1234,7 @@ func (m Model) projectDetailView() string {
 			}
 
 		case "br-session":
-			left.WriteString("  " + m.renderSessionRow(row.session, selected, leftWidth-2) + "\n")
+			left.WriteString("  " + m.renderSessionRow(row.session, row.path, selected, leftWidth-2) + "\n")
 
 		case "br-empty":
 			left.WriteString("    " + footerDescStyle.Render("(no sessions)") + "\n")
@@ -1396,7 +1396,7 @@ func (m Model) projectDetailView() string {
 	return content + footer
 }
 
-func (m Model) renderSessionRow(rs *claude.RecentSession, selected bool, maxWidth int) string {
+func (m Model) renderSessionRow(rs *claude.RecentSession, launchPath string, selected bool, maxWidth int) string {
 	cursor := "  "
 	if selected {
 		cursor = "▸ "
@@ -1412,7 +1412,13 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, selected bool, maxWidt
 	age := formatAge(time.Since(rs.LastActive))
 	name := rs.DisplayName()
 
-	maxName := maxWidth - 16
+	tokStr := ""
+	if launchPath != "" && rs.SessionID != "" {
+		jsonl := filepath.Join(claude.ProjectsDirForPath(launchPath), rs.SessionID+".jsonl")
+		tokStr = usage.FormatTokensShort(usage.SessionTokens(jsonl))
+	}
+
+	maxName := maxWidth - 24
 	if maxName < 10 {
 		maxName = 10
 	}
@@ -1432,7 +1438,12 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, selected bool, maxWidt
 		}
 	}
 
-	line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, name, syncMark)
+	tokCol := ""
+	if tokStr != "" {
+		tokCol = "  " + footerDescStyle.Render(tokStr)
+	}
+
+	line := fmt.Sprintf("%s%s %s  %s%s%s", cursor, statusStr, age, name, tokCol, syncMark)
 	if selected {
 		return selectedItemStyle.Render(line)
 	}

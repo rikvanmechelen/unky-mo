@@ -3,6 +3,7 @@ package usage
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,6 +63,24 @@ func FormatResetIn(now, resetsAt time.Time) string {
 		return fmt.Sprintf("%dm", int(d/time.Minute))
 	default:
 		return fmt.Sprintf("%ds", int(d/time.Second))
+	}
+}
+
+// FormatTokensShort formats a token count compactly: 1234567 -> "1.2M",
+// 12345 -> "12.3k", 567 -> "567". Negative values are clamped to 0.
+func FormatTokensShort(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.1fB", float64(n)/1e9)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return strconv.Itoa(n)
 	}
 }
 
