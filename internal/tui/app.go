@@ -469,10 +469,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tmux == nil {
 				return m, func() tea.Msg { return statusMsgEvent("tmux not available") }
 			}
-			if err := m.tmux.DetachClient(); err != nil {
-				return m, func() tea.Msg { return statusMsgEvent(fmt.Sprintf("suspend failed: %v", err)) }
+			tc := m.tmux
+			return m, func() tea.Msg {
+				if err := tc.DetachClient(); err != nil {
+					return statusMsgEvent(fmt.Sprintf("suspend failed: %v", err))
+				}
+				return nil
 			}
-			return m, nil
 
 		case key.Matches(msg, keys.Quit):
 			if m.screen != ScreenDashboard {
