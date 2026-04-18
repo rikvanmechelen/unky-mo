@@ -622,6 +622,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case sessionImportedMsg:
+		m.statusMsg = msg.status
+		m.list.NewStatusMessage(m.statusMsg)
+		// Refresh immediately so the newly-imported session appears in the
+		// dashboard / sidebar without waiting for the next 5s tick, and so the
+		// state file the sidebar polls is up to date within a cycle.
+		return m, tea.Batch(
+			m.refreshSessions(),
+			tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
+				return clearStatusMsg{}
+			}),
+		)
+
 	case statusMsgEvent:
 		m.statusMsg = string(msg)
 		m.list.NewStatusMessage(m.statusMsg)
@@ -2244,6 +2257,13 @@ func (m Model) resumeInDir(sessionID, cwd, windowName string) tea.Cmd {
 	}
 }
 
+// sessionImportedMsg signals that an external claude was successfully pulled
+// into mo's tmux. Update handles it by reporting the status *and* kicking
+// off an immediate sessionRefresh so the main TUI + state file (and the
+// sidebar that polls it) pick the new window up without waiting for the
+// next 5s tick.
+type sessionImportedMsg struct{ status string }
+
 // importExternalSession terminates an orphan claude running outside mo's tmux
 // session (e.g. started from a VS Code terminal) and resumes its conversation
 // in a fresh tmux window. The SIGTERM gives claude a moment to flush its
@@ -2251,7 +2271,7 @@ func (m Model) resumeInDir(sessionID, cwd, windowName string) tea.Cmd {
 func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string) tea.Cmd {
 	return func() tea.Msg {
 		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
+			return sessionImportedMsg{status: "tmux not available"}
 		}
 		if pid > 0 {
 			if proc, err := os.FindProcess(pid); err == nil {
@@ -2265,7 +2285,20 @@ func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string)
 				time.Sleep(100 * time.Millisecond)
 			}
 		}
-		return m.launchResumeInWindow(windowName, cwd, sessionID)
+		// Give the newly-spawned claude a moment to write its PID file so
+		// the refresh that follows actually sees it.
+		msg := m.launchResumeInWindow(windowName, cwd, sessionID)
+		for i := 0; i < 30; i++ {
+			if claude.SessionForPath(cwd) != nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		status := ""
+		if se, ok := msg.(statusMsgEvent); ok {
+			status = string(se)
+		}
+		return sessionImportedMsg{status: status}
 	}
 }
 
