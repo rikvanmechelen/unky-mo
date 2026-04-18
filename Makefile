@@ -9,7 +9,7 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 
-.PHONY: build install clean test test-race test-expectfail mocks mocks-check
+.PHONY: build install clean test test-race test-expectfail test-integration mocks mocks-check
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/mo
@@ -34,6 +34,12 @@ test-race:
 
 test-expectfail:
 	@go test -tags expectfail ./... || true
+
+# Integration tests that spin up a real (isolated) tmux server and exercise
+# the claude session-detection + tmux-pane attribution code end-to-end.
+# Requires tmux.
+test-integration:
+	go test -tags integration ./internal/tmux/... ./internal/integration/...
 
 # Regenerate all gomock mocks. Requires mockgen — `go install go.uber.org/mock/mockgen@latest`.
 mocks:
