@@ -660,7 +660,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, m.launchSession()
 				}
-				existing := claude.SessionForPath(cwd)
+				primaryWin, existing := m.primaryWindowForTarget(project, branch, cwd)
 				if existing == nil {
 					return m, m.launchSession()
 				}
@@ -668,7 +668,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingNewProject = project
 				m.pendingNewBranch = branch
 				m.pendingNewCwd = cwd
-				m.pendingNewPrimaryWin = ttmux.ComposeWindowName(project, branch, "")
+				m.pendingNewPrimaryWin = primaryWin
 				m.pendingNewLivePID = existing.PID
 				m.pendingNewLiveID = existing.SessionID
 				return m, nil
@@ -1160,13 +1160,19 @@ func (m *Model) refreshDashSessions() {
 		if !ok || pi.status == StatusNone {
 			continue
 		}
-		items = append(items, dashSessionItem{
-			Name:        pi.project.Name,
-			WindowName:  pi.project.Name,
-			Status:      pi.status,
-			ProjectPath: pi.project.Path,
-			Section:     "projects",
-		})
+		// Skip the bare primary row when the tmux window with that name
+		// doesn't actually exist — happens when every session at this
+		// target has been renamed (primary + all siblings carry titles).
+		// The sibling loop below emits the real windows.
+		if windowNameExists(allWindows, pi.project.Name) {
+			items = append(items, dashSessionItem{
+				Name:        pi.project.Name,
+				WindowName:  pi.project.Name,
+				Status:      pi.status,
+				ProjectPath: pi.project.Path,
+				Section:     "projects",
+			})
+		}
 		items = appendSiblingDashItems(items, allWindows, pi.project.Name, "", pi.project.Path)
 	}
 	// Active worktree sessions belong in the projects section too.
@@ -1179,13 +1185,16 @@ func (m *Model) refreshDashSessions() {
 			}
 		}
 		for _, wt := range wtList {
-			items = append(items, dashSessionItem{
-				Name:        wt.WindowName,
-				WindowName:  wt.WindowName,
-				Status:      wt.Status,
-				ProjectPath: wt.Path,
-				Section:     "projects",
-			})
+			// Same skip as above: worktree primary can also be renamed away.
+			if windowNameExists(allWindows, wt.WindowName) {
+				items = append(items, dashSessionItem{
+					Name:        wt.WindowName,
+					WindowName:  wt.WindowName,
+					Status:      wt.Status,
+					ProjectPath: wt.Path,
+					Section:     "projects",
+				})
+			}
 			if projectName != "" {
 				items = appendSiblingDashItems(items, allWindows, projectName, wt.Branch, wt.Path)
 			}
@@ -1261,6 +1270,61 @@ func (m *Model) sessionToWindowMap() map[string]string {
 		}
 	}
 	return result
+}
+
+// windowNameExists reports whether any tmux window in the list has the
+// given name. Used by the state writer + dashboard to decide whether an
+// unsuffixed "primary" row still corresponds to a real tmux window (if
+// every session at the target has been renamed, the bare window is gone).
+func windowNameExists(windows []ttmux.Window, name string) bool {
+	for _, w := range windows {
+		if w.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// focusPrimaryIfLive tries to switch to the tmux window currently hosting a
+// live primary session at (project, branch, cwd). Returns (attempted, realWin,
+// err): `attempted=true` when a live session was found and a switch was
+// attempted (err is set iff tmux switch failed), `attempted=false` when no
+// live session exists at the target so callers should fall through to their
+// normal launch path. Used by the launch gates to handle renamed primaries
+// whose bare composed name no longer matches a tmux window.
+func (m *Model) focusPrimaryIfLive(project, branch, cwd string) (bool, string, error) {
+	realWin, session := m.primaryWindowForTarget(project, branch, cwd)
+	if session == nil || realWin == "" {
+		return false, "", nil
+	}
+	existed, err := m.focusIfExists(realWin)
+	if !existed {
+		return false, "", nil
+	}
+	return true, realWin, err
+}
+
+// primaryWindowForTarget returns the actual tmux window name currently
+// hosting the "primary" (oldest) live Claude session at the given cwd,
+// along with a pointer to that session. Returns ("", nil) when no live
+// session exists there. Callers use this so renamed primaries — whose
+// window name no longer matches the bare composed form — can still be
+// switched to, killed, or resumed correctly.
+func (m *Model) primaryWindowForTarget(project, branch, cwd string) (string, *claude.Session) {
+	sessions := claude.SessionsForPath(cwd)
+	if len(sessions) == 0 {
+		return "", nil
+	}
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].StartedAt < sessions[j].StartedAt
+	})
+	primary := sessions[0] // copy so the returned pointer stays valid
+	windowBySession := m.sessionToWindowMap()
+	name, ok := windowBySession[primary.SessionID]
+	if !ok {
+		name = ttmux.ComposeWindowName(project, branch, "")
+	}
+	return name, &primary
 }
 
 // appendSiblingDashItems walks the tmux window list for siblings of a given
@@ -1791,16 +1855,17 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.attentionCount = attentionCount
 	m.list.SetItems(items)
 	m.refreshDashSessions()
-	m.syncSiblingTitles()
+	m.syncWindowTitles()
 	m.writeStateFile()
 }
 
-// syncSiblingTitles reads the latest custom-title entry for each live sibling
-// session (tmux windows whose parsed name has a non-empty suffix) and renames
-// the tmux window to match. Primary windows (no suffix) are never renamed so
-// existing code that looks windows up by "project" or "project@branch" keeps
-// working. Skips renames that would collide with another window's name.
-func (m *Model) syncSiblingTitles() {
+// syncWindowTitles reads the latest custom-title entry for each live Claude
+// session and renames the tmux window to match. Works for both primary
+// (unsuffixed) and sibling windows. When a session's title is cleared, the
+// window reverts to the bare project/branch name if free, or to the next
+// available ordinal suffix. Skips renames that would collide with another
+// existing window name.
+func (m *Model) syncWindowTitles() {
 	if m.tmux == nil {
 		return
 	}
@@ -1816,9 +1881,16 @@ func (m *Model) syncSiblingTitles() {
 	for _, w := range windows {
 		existingNames[w.Name] = true
 	}
+	namesSlice := func() []string {
+		out := make([]string, 0, len(existingNames))
+		for n := range existingNames {
+			out = append(out, n)
+		}
+		return out
+	}
 	for _, w := range windows {
 		project, branch, suffix, ok := ttmux.ParseWindowName(w.Name)
-		if !ok || suffix == "" {
+		if !ok {
 			continue
 		}
 		panePIDs, err := m.tmux.WindowPanePIDs(w.ID)
@@ -1836,10 +1908,29 @@ func (m *Model) syncSiblingTitles() {
 			continue
 		}
 		title := claude.CustomTitleFor(sess.CWD, sess.SessionID)
-		if title == "" || title == suffix {
+		// Decide desired suffix:
+		//   title != ""  → use the title
+		//   title == ""  → revert to bare if free, else next free ordinal
+		//                  (only meaningful when current suffix is non-empty)
+		var desiredSuffix string
+		switch {
+		case title != "":
+			desiredSuffix = title
+		case suffix != "":
+			bareName := ttmux.ComposeWindowName(project, branch, "")
+			if !existingNames[bareName] {
+				desiredSuffix = ""
+			} else {
+				desiredSuffix = ttmux.NextAvailableOrdinal(namesSlice(), project, branch)
+			}
+		default:
+			// Title empty, already bare — nothing to do.
 			continue
 		}
-		desired := ttmux.ComposeWindowName(project, branch, title)
+		if desiredSuffix == suffix {
+			continue
+		}
+		desired := ttmux.ComposeWindowName(project, branch, desiredSuffix)
 		if desired == w.Name || existingNames[desired] {
 			continue
 		}
@@ -1883,13 +1974,20 @@ func (m *Model) writeStateFile() {
 		default:
 			statusStr = "none"
 		}
-		projects = append(projects, state.ProjectState{
-			Name:       pi.project.Name,
-			Path:       pi.project.Path,
-			WindowName: pi.project.Name,
-			Status:     statusStr,
-			Section:    "projects",
-		})
+		// Emit the bare primary row only when a tmux window by that name
+		// exists — or when the project has no sessions at all (StatusNone,
+		// placeholder row so the sidebar shows the project). Skipping in
+		// the "all sessions renamed away from bare" case avoids emitting a
+		// state entry that points at a non-existent window.
+		if pi.status == StatusNone || windowNameExists(allWindows, pi.project.Name) {
+			projects = append(projects, state.ProjectState{
+				Name:       pi.project.Name,
+				Path:       pi.project.Path,
+				WindowName: pi.project.Name,
+				Status:     statusStr,
+				Section:    "projects",
+			})
+		}
 
 		// Sibling sessions for this project's main checkout (no branch).
 		projects = appendSiblingEntries(projects, allWindows, pi.project.Name, "", pi.project.Path, pi.project.Name, "")
@@ -1903,14 +2001,17 @@ func (m *Model) writeStateFile() {
 			case StatusPermission:
 				wtStatus = "permission"
 			}
-			projects = append(projects, state.ProjectState{
-				Name:       "@" + wt.Branch,
-				Path:       wt.Path,
-				WindowName: wt.WindowName,
-				Status:     wtStatus,
-				Parent:     pi.project.Name,
-				Section:    "projects",
-			})
+			// Same skip for worktree primaries whose bare window was renamed.
+			if windowNameExists(allWindows, wt.WindowName) {
+				projects = append(projects, state.ProjectState{
+					Name:       "@" + wt.Branch,
+					Path:       wt.Path,
+					WindowName: wt.WindowName,
+					Status:     wtStatus,
+					Parent:     pi.project.Name,
+					Section:    "projects",
+				})
+			}
 
 			// Sibling sessions for this worktree's branch.
 			projects = appendSiblingEntries(projects, allWindows, pi.project.Name, wt.Branch, wt.Path, "@"+wt.Branch, pi.project.Name)
@@ -2651,7 +2752,14 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 
 		windowName := p.Name + "@" + pr.Branch
 		var status string
-		if existed, err := m.focusIfExists(windowName); existed {
+		// Prefer focusing a live (possibly renamed) session at this target.
+		if attempted, realWin, err := m.focusPrimaryIfLive(p.Name, pr.Branch, wtPath); attempted {
+			if err != nil {
+				status = fmt.Sprintf("Worktree ready but failed to switch: %v", err)
+			} else {
+				status = "Switched to " + realWin
+			}
+		} else if existed, err := m.focusIfExists(windowName); existed {
 			if err != nil {
 				status = fmt.Sprintf("Worktree ready but failed to switch: %v", err)
 			} else {
@@ -3075,6 +3183,15 @@ func (m Model) launchWorktreeSession(wt project.Worktree) tea.Cmd {
 				branch = "detached"
 			}
 		}
+		// Prefer focusing a live (possibly renamed) primary session at this
+		// target. Only fall back to the composed bare name for leftover
+		// dead-window edge cases.
+		if attempted, realWin, err := m.focusPrimaryIfLive(p.Name, branch, wt.Path); attempted {
+			if err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + realWin)
+		}
 		windowName := p.Name + "@" + branch
 		if existed, err := m.focusIfExists(windowName); existed {
 			if err != nil {
@@ -3108,7 +3225,14 @@ func (m Model) pullRemoteSessionAndLaunch(branch string, meta moSync.SessionMeta
 		}
 		windowName := p.Name + "@" + branch
 		var status string
-		if existed, err := m.focusIfExists(windowName); existed {
+		// Prefer focusing a live (possibly renamed) session at this target.
+		if attempted, realWin, err := m.focusPrimaryIfLive(p.Name, branch, wtPath); attempted {
+			if err != nil {
+				status = fmt.Sprintf("Pulled but failed to switch: %v", err)
+			} else {
+				status = "Resumed " + realWin
+			}
+		} else if existed, err := m.focusIfExists(windowName); existed {
 			if err != nil {
 				status = fmt.Sprintf("Pulled but failed to switch: %v", err)
 			} else {
@@ -3142,7 +3266,14 @@ func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
 		}
 		windowName := p.Name + "@" + branch
 		var status string
-		if existed, err := m.focusIfExists(windowName); existed {
+		// Prefer focusing a live (possibly renamed) session at this target.
+		if attempted, realWin, err := m.focusPrimaryIfLive(p.Name, branch, wtPath); attempted {
+			if err != nil {
+				status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
+			} else {
+				status = "Switched to " + realWin
+			}
+		} else if existed, err := m.focusIfExists(windowName); existed {
 			if err != nil {
 				status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
 			} else {
@@ -3163,23 +3294,27 @@ func (m Model) resumeSession() tea.Cmd {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-		windowName, cwd, ok := m.detailContext()
+		project, branch, cwd, ok := m.detailLaunchTarget()
 		if !ok {
 			return statusMsgEvent("No project selected")
 		}
-
-		session := claude.SessionForPath(cwd)
+		bareName := ttmux.ComposeWindowName(project, branch, "")
+		// Resolve the real window for the current primary — it may have
+		// been renamed to carry a custom title, in which case the bare
+		// name doesn't exist and we must switch to the real one.
+		realWin, session := m.primaryWindowForTarget(project, branch, cwd)
 		if session == nil {
-			return statusMsgEvent("No session to resume for " + windowName)
+			return statusMsgEvent("No session to resume for " + bareName)
 		}
-
-		if existed, err := m.focusIfExists(windowName); existed {
+		if existed, err := m.focusIfExists(realWin); existed {
 			if err != nil {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
-			return statusMsgEvent("Switched to " + windowName)
+			return statusMsgEvent("Switched to " + realWin)
 		}
-		return m.launchClaudeInWindow(windowName, cwd, fmt.Sprintf("claude --resume %s", session.SessionID))
+		// Live session reports existence but no tmux window (shouldn't
+		// normally happen) — launch a fresh window that resumes it.
+		return m.launchClaudeInWindow(bareName, cwd, fmt.Sprintf("claude --resume %s", session.SessionID))
 	}
 }
 
@@ -3191,6 +3326,14 @@ func (m Model) resumeInDir(sessionID, cwd, windowName string) tea.Cmd {
 	return func() tea.Msg {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
+		}
+		// If the session is live, its current window may differ from the
+		// caller's windowName (e.g. detail rows built before a rename tick).
+		// Prefer the live lookup to avoid spawning a duplicate.
+		if sessionID != "" {
+			if realName := m.sessionToWindowMap()[sessionID]; realName != "" {
+				windowName = realName
+			}
 		}
 		if existed, err := m.focusIfExists(windowName); existed {
 			if err != nil {
@@ -3380,18 +3523,26 @@ func (m Model) attachSession() tea.Cmd {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-		windowName, _, ok := m.detailContext()
+		project, branch, cwd, ok := m.detailLaunchTarget()
 		if !ok {
 			return statusMsgEvent("No project selected")
 		}
-		existed, err := m.focusIfExists(windowName)
+		bareName := ttmux.ComposeWindowName(project, branch, "")
+		// Prefer the real window name for the current primary (handles
+		// renamed primaries). If no live session exists, fall back to the
+		// composed bare name so the "no session" error stays stable.
+		targetWin, session := m.primaryWindowForTarget(project, branch, cwd)
+		if session == nil {
+			return statusMsgEvent("No session for " + bareName)
+		}
+		existed, err := m.focusIfExists(targetWin)
 		if !existed {
-			return statusMsgEvent("No session for " + windowName)
+			return statusMsgEvent("No session for " + bareName)
 		}
 		if err != nil {
 			return statusMsgEvent(fmt.Sprintf("Failed to attach: %v", err))
 		}
-		return statusMsgEvent("Attached to " + windowName)
+		return statusMsgEvent("Attached to " + targetWin)
 	}
 }
 

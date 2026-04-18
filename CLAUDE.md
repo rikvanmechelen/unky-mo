@@ -75,11 +75,12 @@ tmux session "mo"
 
 ## Multi-session (concurrent / park)
 
-A single project or worktree can host more than one Claude session. The first session for a target keeps the bare window name (`project` or `project@branch`) so existing name-based lookups keep working; additional sessions get a bracket suffix (`project [2]`, `project@branch [2]`). When Claude's `/rename` sets a custom title, the bracket content is swapped for the title (`project@branch [debug-oauth]`) on the next 5s tick — **primary windows are never renamed**, only siblings.
+A single project or worktree can host more than one Claude session. The first session for a target starts with the bare window name (`project` or `project@branch`); additional sessions get a bracket suffix (`project [2]`, `project@branch [2]`). Any window — primary or sibling — picks up its session's custom title on the next 5s tick: `/rename foo` turns `project` into `project [foo]` and `project [2]` into `project [foo]`. Clearing the title with `/rename ""` reverts the window to the bare slot if free, otherwise to the next available ordinal.
 
 - **Key**: `n` in main TUI. If no live session exists at the target, launches immediately. If one exists, opens a `s`/`p`/`c`/`esc` prompt: `s` switch to existing, `p` park current (SIGINT claude + `kill-window` so the sidebar dies with it) then launch fresh in the same primary name, `c` add a concurrent sibling at the next free ordinal.
 - **Window composition**: `internal/tmux/naming.go` owns `ComposeWindowName` / `ParseWindowName` / `NextAvailableOrdinal`. Every launch site that could produce duplicates must go through these.
 - **Sibling attribution**: a sibling window's Claude session ID is recovered by walking tmux pane PIDs (`tmux.WindowPanePIDs`) and matching `claude.LiveSessions()` via `IsDescendantOf`. See `sessionToWindowMap` in `internal/tui/app.go`.
+- **Primary window resolver**: since primaries can now be renamed too, flows that need to act on "the current primary" (`n` menu, `a` attach, `r` resume) call `primaryWindowForTarget(project, branch, cwd)` — it picks the oldest live session at the target and looks up its real window name via `sessionToWindowMap`. Never compose a primary window name from `(project, branch)` alone without this check, or renamed windows won't be found.
 - **Detail-view `enter`**: `detailRow.tmuxWindow` is populated from that map so selecting a live session lands in its real window instead of recomputing `project@branch`.
 - **Sync caveat (known gap)**: `internal/sync/sync.go` hashes the project name to a single directory — pushing a second session for the same project overwrites the first. Multi-session sync is not yet implemented.
 
