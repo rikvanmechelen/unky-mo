@@ -95,3 +95,50 @@ func CreateWorktree(projectPath, branch string) (string, error) {
 	}
 	return "", fmt.Errorf("git worktree add: %s / %s", strings.TrimSpace(string(out2)), firstErr)
 }
+
+// RemoveWorktree removes the worktree for the given branch under projectPath.
+// Uses --force so untracked files or local modifications do not block removal;
+// callers are expected to confirm with the user first.
+func RemoveWorktree(projectPath, branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return fmt.Errorf("branch name is required")
+	}
+	worktrees, err := ListWorktrees(projectPath)
+	if err != nil {
+		return fmt.Errorf("list worktrees: %w", err)
+	}
+	var wtPath string
+	for _, wt := range worktrees {
+		if wt.Branch == branch && wt.Path != projectPath {
+			wtPath = wt.Path
+			break
+		}
+	}
+	if wtPath == "" {
+		return fmt.Errorf("no worktree found for branch %q", branch)
+	}
+	out, err := exec.Command("git", "-C", projectPath, "worktree", "remove", "--force", wtPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DeleteBranch removes a local branch from projectPath using -D (force delete,
+// allows unmerged branches). Refuses to delete the current main-checkout branch.
+func DeleteBranch(projectPath, branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return fmt.Errorf("branch name is required")
+	}
+	mainBranch, _ := MainCheckoutBranch(projectPath)
+	if mainBranch != "" && branch == mainBranch {
+		return fmt.Errorf("cannot delete the branch currently checked out in main")
+	}
+	out, err := exec.Command("git", "-C", projectPath, "branch", "-D", branch).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}

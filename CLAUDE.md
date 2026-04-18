@@ -80,6 +80,15 @@ A single project or worktree can host more than one Claude session. The first se
 - **Detail-view `enter`**: `detailRow.tmuxWindow` is populated from that map so selecting a live session lands in its real window instead of recomputing `project@branch`.
 - **Sync caveat (known gap)**: `internal/sync/sync.go` hashes the project name to a single directory — pushing a second session for the same project overwrites the first. Multi-session sync is not yet implemented.
 
+## Cleanup (worktree + branch removal)
+
+The `x` key on a branch row in the project detail view removes the worktree and/or the local branch. Refuses on the main-checkout branch. The popup is a two-stage state machine (see `pendingCleanup*` fields in `internal/tui/app.go`):
+
+1. **Kill stage** — only reached when the branch's worktree has live Claude session(s). Shows `⚠ N live session(s) — [k] kill + continue / [esc]`. `k` SIGINTs each session, waits for exit (SIGTERM fallback), and `tmux kill-window`s each enclosing window.
+2. **Action stage** — `[w] worktree only / [b] worktree + branch / [esc]` when a worktree exists; `[b] delete branch / [esc]` when the row is a plain branch with no worktree.
+
+Plumbing: `project.RemoveWorktree` (runs `git worktree remove --force`) + `project.DeleteBranch` (runs `git branch -D`, refuses on main). Branch rows carry `Merged` / `RemoteGone` flags populated by `ListBranches` via batched `git branch --merged` + `git for-each-ref` (upstream track), shown as dim `[merged]` / `[gone]` tags next to the branch name. The SIGINT-and-wait loop is shared with `parkAndLaunchPrimary` via the `signalAndWaitExit` helper.
+
 ### Terminal Drawer
 
 The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.0`). Only one terminal tab is visible at a time — inactive tabs are stored in hidden tmux windows via `break-pane`/`join-pane` and swapped in on demand. The sidebar tracks terminal pane IDs (`%N` format, stable across moves) and prunes dead panes on each 1s refresh tick.
@@ -88,7 +97,7 @@ The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
-- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard has side-by-side layout: project list (left) + active sessions panel (right). Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it. `←`/`→` switch panels. Keys: `enter` (smart resume), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session; prompts switch/park+new/concurrent when one is already running — see Multi-session), `a`, `r`, `o`, `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard has side-by-side layout: project list (left) + active sessions panel (right). Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it, plus optional `[merged]` / `[gone]` hints. `←`/`→` switch panels. Keys: `enter` (smart resume), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session; prompts switch/park+new/concurrent when one is already running — see Multi-session), `x` (cleanup worktree/branch under cursor — see Cleanup), `a`, `r`, `o`, `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
 - **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Has two focus sections:
   - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
   - **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).

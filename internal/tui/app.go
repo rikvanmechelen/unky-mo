@@ -175,6 +175,17 @@ type Model struct {
 	pendingNewPrimaryWin string // composed primary window name (no suffix)
 	pendingNewLivePID    int    // claude PID of the session to park on `p`
 	pendingNewLiveID     string // claude session ID of the current primary
+	// Cleanup menu: active when the user pressed `x` on a branch row.
+	// Two stages: "kill" (one or more sessions live in the target; user
+	// must confirm SIGINT) then "action" (choose [w] worktree only / [b]
+	// worktree + branch / [esc]). Entry skips "kill" when no sessions.
+	pendingCleanupActive       bool
+	pendingCleanupStage        string // "kill" | "action"
+	pendingCleanupProjectPath  string
+	pendingCleanupProjectName  string
+	pendingCleanupBranch       string
+	pendingCleanupWorktreePath string            // "" for plain-branch rows
+	pendingCleanupSessions     []claude.Session  // live sessions to kill, captured at entry
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
 	// project path currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
@@ -346,6 +357,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.launchSiblingSession()
 			case "esc", "escape":
 				m.clearPendingNewMenu()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Cleanup menu captures all input while active.
+		if m.pendingCleanupActive {
+			switch m.pendingCleanupStage {
+			case "kill":
+				switch msg.String() {
+				case "k", "K":
+					sessions := m.pendingCleanupSessions
+					m.pendingCleanupStage = "action"
+					return m, m.killCleanupSessions(sessions)
+				case "esc", "escape":
+					m.clearPendingCleanupMenu()
+					return m, nil
+				}
+				return m, nil
+			case "action":
+				switch msg.String() {
+				case "w", "W":
+					if m.pendingCleanupWorktreePath == "" {
+						return m, nil
+					}
+					projectPath := m.pendingCleanupProjectPath
+					branch := m.pendingCleanupBranch
+					m.clearPendingCleanupMenu()
+					return m, m.runCleanup(projectPath, branch, false)
+				case "b", "B":
+					projectPath := m.pendingCleanupProjectPath
+					branch := m.pendingCleanupBranch
+					m.clearPendingCleanupMenu()
+					return m, m.runCleanup(projectPath, branch, true)
+				case "esc", "escape":
+					m.clearPendingCleanupMenu()
+					return m, nil
+				}
 				return m, nil
 			}
 			return m, nil
@@ -625,6 +674,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if b := m.currentBranchRow(); b != nil {
 					return m, m.openBranchInMain(b.Name, true)
 				}
+			}
+
+		case key.Matches(msg, keys.Cleanup):
+			if m.screen == ScreenProject && m.detailFocusLeft && m.detailProject != nil {
+				b := m.currentBranchRow()
+				if b == nil {
+					return m, nil
+				}
+				if b.IsMain && b.WorktreePath == "" {
+					return m, func() tea.Msg { return statusMsgEvent("Cannot delete the main branch") }
+				}
+				sessions := claude.SessionsForPath(b.WorktreePath)
+				m.pendingCleanupActive = true
+				m.pendingCleanupProjectPath = m.detailProject.Path
+				m.pendingCleanupProjectName = m.detailProject.Name
+				m.pendingCleanupBranch = b.Name
+				m.pendingCleanupWorktreePath = b.WorktreePath
+				m.pendingCleanupSessions = sessions
+				if len(sessions) > 0 {
+					m.pendingCleanupStage = "kill"
+				} else {
+					m.pendingCleanupStage = "action"
+				}
+				return m, nil
 			}
 
 		case key.Matches(msg, keys.Restart):
@@ -1153,7 +1226,10 @@ func (m Model) dashboardView() string {
 	usageStrip := m.renderUsageStrip(totalWidth)
 
 	var footer string
-	if m.pendingNewMenuActive {
+	if m.pendingCleanupActive {
+		q, binds := m.cleanupPrompt()
+		footer = m.renderPrompt(q, binds)
+	} else if m.pendingNewMenuActive {
 		footer = m.renderPrompt(m.newMenuPromptText(), []footerBinding{
 			{"s", "switch"},
 			{"p", "park+new"},
@@ -1264,6 +1340,7 @@ func (m Model) helpView() string {
 			{"W", "Prompt for a new branch name + worktree"},
 			{"m", "Check out branch in main repo (refuse if dirty)"},
 			{"M", "Stash first, then check out in main"},
+			{"x", "Remove worktree / delete branch (prompts; refuses on main)"},
 		}},
 		{"Other", []footerBinding{
 			{"s", "Suspend (leaves tmux session running; re-launch mo to resume)"},
@@ -1774,10 +1851,25 @@ func (m Model) projectDetailView() string {
 			}
 			age := formatAge(time.Since(row.branch.LastCommit))
 			label := fmt.Sprintf("%s%s %s  %s", cursor, marker, row.branch.Name, age)
+			var tags []string
+			if row.branch.Merged {
+				tags = append(tags, "merged")
+			}
+			if row.branch.RemoteGone {
+				tags = append(tags, "gone")
+			}
 			if selected {
-				left.WriteString(selectedItemStyle.Render(label) + "\n")
+				line := label
+				if len(tags) > 0 {
+					line = label + "  " + footerDescStyle.Render("["+strings.Join(tags, ", ")+"]")
+				}
+				left.WriteString(selectedItemStyle.Render(line) + "\n")
 			} else {
-				left.WriteString(headerStyle.Render(label) + "\n")
+				line := headerStyle.Render(label)
+				if len(tags) > 0 {
+					line += "  " + footerDescStyle.Render("["+strings.Join(tags, ", ")+"]")
+				}
+				left.WriteString(line + "\n")
 			}
 
 		case "br-session":
@@ -1921,6 +2013,9 @@ func (m Model) projectDetailView() string {
 			{"enter", "create"},
 			{"esc", "cancel"},
 		})
+	case m.pendingCleanupActive:
+		q, binds := m.cleanupPrompt()
+		footer = m.renderPrompt(q, binds)
 	case m.pendingNewMenuActive:
 		footer = m.renderPrompt(m.newMenuPromptText(), []footerBinding{
 			{"s", "switch"},
@@ -1955,6 +2050,7 @@ func (m Model) projectDetailView() string {
 				{"M", "stash+main"},
 				{"W", "new branch"},
 				{"n", "session"},
+				{"x", "remove"},
 				{"o", "PR"},
 				{"s", "suspend"},
 				{"esc", "back"},
@@ -2508,6 +2604,35 @@ func (m Model) launchSession() tea.Cmd {
 	}
 }
 
+// cleanupPrompt returns the stage-appropriate question + bindings for the
+// `x` cleanup menu (kill-sessions confirmation first, then action menu).
+func (m Model) cleanupPrompt() (string, []footerBinding) {
+	switch m.pendingCleanupStage {
+	case "kill":
+		n := len(m.pendingCleanupSessions)
+		q := fmt.Sprintf("⚠ %d live session(s) in %s — kill them?", n, m.pendingCleanupBranch)
+		return q, []footerBinding{
+			{"k", "kill + continue"},
+			{"esc", "cancel"},
+		}
+	case "action":
+		if m.pendingCleanupWorktreePath != "" {
+			q := fmt.Sprintf("Remove worktree %s?", m.pendingCleanupBranch)
+			return q, []footerBinding{
+				{"w", "worktree only"},
+				{"b", "worktree + branch"},
+				{"esc", "cancel"},
+			}
+		}
+		q := fmt.Sprintf("Delete branch %s?", m.pendingCleanupBranch)
+		return q, []footerBinding{
+			{"b", "delete branch"},
+			{"esc", "cancel"},
+		}
+	}
+	return "", nil
+}
+
 // newMenuPromptText renders the question shown above the s/p/c/esc menu.
 // Names the primary target so the user knows what they're about to affect.
 func (m Model) newMenuPromptText() string {
@@ -2529,6 +2654,33 @@ func (m *Model) clearPendingNewMenu() {
 	m.pendingNewLiveID = ""
 }
 
+// signalAndWaitExit sends SIGINT to pid (so Claude flushes its JSONL cleanly),
+// waits up to ~2s for it to exit, then falls back to SIGTERM for another ~1s.
+// Silently no-ops on pid <= 0. Used by park-and-launch and cleanup flows.
+func signalAndWaitExit(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if proc, err := os.FindProcess(pid); err == nil {
+		_ = proc.Signal(syscall.SIGINT)
+	}
+	for i := 0; i < 20; i++ {
+		if !claude.IsAlive(pid) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if proc, err := os.FindProcess(pid); err == nil {
+		_ = proc.Signal(syscall.SIGTERM)
+	}
+	for i := 0; i < 10; i++ {
+		if !claude.IsAlive(pid) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // parkAndLaunchPrimary signals the given Claude PID to exit, waits briefly
 // for it to die, explicitly kills its tmux window so the sidebar and any
 // terminal-drawer panes go with it, and launches a fresh Claude session in
@@ -2538,37 +2690,89 @@ func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd string) tea.
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-		if pid > 0 {
-			if proc, err := os.FindProcess(pid); err == nil {
-				_ = proc.Signal(syscall.SIGINT)
-			}
-			// Wait up to ~2s for claude to flush its JSONL and exit.
-			for i := 0; i < 20; i++ {
-				if !claude.IsAlive(pid) {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			// Fall back to SIGTERM if claude is still alive — JSONL is
-			// append-only so the transcript stays readable either way.
-			if claude.IsAlive(pid) {
-				if proc, err := os.FindProcess(pid); err == nil {
-					_ = proc.Signal(syscall.SIGTERM)
-				}
-				for i := 0; i < 10; i++ {
-					if !claude.IsAlive(pid) {
-						break
-					}
-					time.Sleep(100 * time.Millisecond)
-				}
-			}
-		}
+		signalAndWaitExit(pid)
 		// Kill the window explicitly so the sidebar + any terminal-drawer
 		// panes are torn down alongside the claude pane. The pane-exited
 		// hook would usually handle this when claude exits, but we don't
 		// want to race the hook before creating the replacement window.
 		_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + primaryWindowName)
 		return m.launchClaudeInWindow(primaryWindowName, cwd, "claude")
+	}
+}
+
+// clearPendingCleanupMenu resets all pendingCleanup* fields so the menu closes.
+func (m *Model) clearPendingCleanupMenu() {
+	m.pendingCleanupActive = false
+	m.pendingCleanupStage = ""
+	m.pendingCleanupProjectPath = ""
+	m.pendingCleanupProjectName = ""
+	m.pendingCleanupBranch = ""
+	m.pendingCleanupWorktreePath = ""
+	m.pendingCleanupSessions = nil
+}
+
+// killCleanupSessions SIGINTs every session in the list, waits for each to
+// exit, then explicitly kills its tmux window. Emits a statusMsgEvent so the
+// dashboard shows how many sessions were cleared before the action menu
+// advances.
+func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
+	return func() tea.Msg {
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		// Resolve each session's window via PID-chain match so we can kill
+		// the whole window (not just the claude pane).
+		windowBySession := map[string]string{}
+		if windows, err := m.tmux.ListWindows(); err == nil {
+			for _, w := range windows {
+				panePIDs, err := m.tmux.WindowPanePIDs(w.ID)
+				if err != nil {
+					continue
+				}
+				for _, s := range sessions {
+					if _, already := windowBySession[s.SessionID]; already {
+						continue
+					}
+					if claude.IsDescendantOf(s.PID, panePIDs) {
+						windowBySession[s.SessionID] = w.Name
+					}
+				}
+			}
+		}
+		for _, s := range sessions {
+			signalAndWaitExit(s.PID)
+			if name, ok := windowBySession[s.SessionID]; ok {
+				_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + name)
+			}
+		}
+		return statusMsgEvent(fmt.Sprintf("Killed %d session(s)", len(sessions)))
+	}
+}
+
+// runCleanup removes the worktree for the given branch (if one exists) and
+// optionally deletes the local branch. Emits branchesChangedMsg so the
+// detail view rebuilds.
+func (m Model) runCleanup(projectPath, branch string, alsoDeleteBranch bool) tea.Cmd {
+	return func() tea.Msg {
+		var parts []string
+		// Remove worktree if one exists. Ignore "no worktree for branch" —
+		// plain branch rows legitimately have none.
+		if err := project.RemoveWorktree(projectPath, branch); err == nil {
+			parts = append(parts, "worktree removed")
+		} else if !strings.Contains(err.Error(), "no worktree found") {
+			return branchesChangedMsg{status: fmt.Sprintf("Remove worktree failed: %v", err)}
+		}
+		if alsoDeleteBranch {
+			if err := project.DeleteBranch(projectPath, branch); err != nil {
+				return branchesChangedMsg{status: fmt.Sprintf("Delete branch failed: %v", err)}
+			}
+			parts = append(parts, "branch deleted")
+		}
+		status := "Cleanup: " + branch
+		if len(parts) > 0 {
+			status += " (" + strings.Join(parts, ", ") + ")"
+		}
+		return branchesChangedMsg{status: status}
 	}
 }
 

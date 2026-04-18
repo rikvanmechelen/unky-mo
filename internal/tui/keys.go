@@ -18,6 +18,7 @@ type keyMap struct {
 	Help             key.Binding
 	Restart          key.Binding
 	Suspend          key.Binding // "s" — suspend (tmux detach-client); session keeps running
+	Cleanup          key.Binding // "x" — remove the worktree / branch under cursor
 	Quit             key.Binding
 }
 
@@ -81,6 +82,10 @@ var keys = keyMap{
 	Suspend: key.NewBinding(
 		key.WithKeys("s"),
 		key.WithHelp("s", "suspend"),
+	),
+	Cleanup: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "remove"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),

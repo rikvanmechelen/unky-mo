@@ -17,6 +17,8 @@ type Branch struct {
 	IsMain       bool      // checked out in the main project path
 	WorktreePath string    // non-empty iff branch is checked out in a worktree other than main
 	LastCommit   time.Time // committer date of branch tip
+	Merged       bool      // merged into the repo's main-checkout branch
+	RemoteGone   bool      // branch had a configured upstream which is now gone
 }
 
 // ListBranches returns all local branches for the project, annotated with
@@ -71,6 +73,20 @@ func ListBranches(projectPath string) ([]Branch, error) {
 		}
 	}
 
+	mergedSet := mergedBranchSet(projectPath, mainBranch)
+	goneSet := remoteGoneBranchSet(projectPath)
+	for i := range branches {
+		if branches[i].IsMain {
+			continue
+		}
+		if mergedSet[branches[i].Name] {
+			branches[i].Merged = true
+		}
+		if goneSet[branches[i].Name] {
+			branches[i].RemoteGone = true
+		}
+	}
+
 	sort.SliceStable(branches, func(i, j int) bool {
 		if branches[i].IsMain != branches[j].IsMain {
 			return branches[i].IsMain
@@ -79,6 +95,50 @@ func ListBranches(projectPath string) ([]Branch, error) {
 	})
 
 	return branches, nil
+}
+
+// mergedBranchSet returns branches merged into mainBranch, per
+// `git branch --merged`. Silent on error (e.g. detached HEAD, no main).
+func mergedBranchSet(projectPath, mainBranch string) map[string]bool {
+	set := map[string]bool{}
+	if mainBranch == "" {
+		return set
+	}
+	cmd := exec.Command("git", "-C", projectPath, "branch", "--merged", mainBranch)
+	out, err := cmd.Output()
+	if err != nil {
+		return set
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name := strings.TrimSpace(strings.TrimPrefix(line, "*"))
+		if name == "" || name == mainBranch {
+			continue
+		}
+		set[name] = true
+	}
+	return set
+}
+
+// remoteGoneBranchSet returns branches whose configured upstream is gone,
+// detected by the `[gone]` marker from `for-each-ref`'s upstream:track column.
+func remoteGoneBranchSet(projectPath string) map[string]bool {
+	set := map[string]bool{}
+	cmd := exec.Command("git", "-C", projectPath, "for-each-ref",
+		"--format=%(refname:short)%09%(upstream:track)", "refs/heads/")
+	out, err := cmd.Output()
+	if err != nil {
+		return set
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name, track, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		if strings.Contains(track, "gone") {
+			set[name] = true
+		}
+	}
+	return set
 }
 
 // MainCheckoutBranch returns the branch currently checked out at projectPath.
