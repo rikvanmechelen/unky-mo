@@ -3,11 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,45 +265,11 @@ func ensureJiraConfigBlock(baseURL, email string) (bool, error) {
 	return true, nil
 }
 
-// verifyJiraCreds hits /rest/api/2/myself with the provided credentials and
-// returns the user's display name on success. Catches the three common
-// misconfigurations (wrong URL, wrong email, wrong token) at once before
-// anything lands on disk.
+// verifyJiraCreds is a thin wrapper over jira.VerifyCreds kept for backward
+// compatibility with the existing cmd/mo tests. New callers should use the
+// jira package directly.
 func verifyJiraCreds(ctx context.Context, baseURL, email, token string) (string, error) {
-	u := strings.TrimRight(baseURL, "/") + "/rest/api/2/myself"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(email+":"+token)))
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
-		return "", fmt.Errorf("HTTP %d — email/token rejected", resp.StatusCode)
-	case resp.StatusCode == http.StatusNotFound:
-		return "", fmt.Errorf("HTTP 404 — is %s the right URL?", baseURL)
-	case resp.StatusCode >= 400:
-		return "", fmt.Errorf("HTTP %d — %s", resp.StatusCode, extractJiraMessage(body))
-	}
-	var me struct {
-		DisplayName string `json:"displayName"`
-		EmailAddr   string `json:"emailAddress"`
-	}
-	if err := json.Unmarshal(body, &me); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
-	}
-	if me.DisplayName == "" {
-		return me.EmailAddr, nil
-	}
-	return me.DisplayName, nil
+	return jira.VerifyCreds(ctx, baseURL, email, token)
 }
 
 // promptLine reads a single trimmed line from stdin, re-prompting on empty

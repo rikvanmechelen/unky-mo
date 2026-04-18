@@ -1,10 +1,16 @@
 package jira
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rvanmech/unky-mo/internal/tickets"
 )
@@ -149,4 +155,47 @@ func WriteToken(token string, force bool) (string, error) {
 func isEmptyStatusMap(sm tickets.StatusMap) bool {
 	return len(sm.InProgress) == 0 && len(sm.Blocked) == 0 &&
 		len(sm.Review) == 0 && len(sm.Todo) == 0
+}
+
+// VerifyCreds hits /rest/api/2/myself with the given credentials and returns
+// the user's display name on success. Catches the three common setup
+// misconfigurations (wrong URL, wrong email, wrong token) at once before
+// anything lands on disk. Pure HTTP — safe to call from any CLI or TUI
+// dialog.
+func VerifyCreds(ctx context.Context, baseURL, email, token string) (string, error) {
+	u := strings.TrimRight(baseURL, "/") + "/rest/api/2/myself"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(email+":"+token)))
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		return "", fmt.Errorf("HTTP %d — email/token rejected", resp.StatusCode)
+	case resp.StatusCode == http.StatusNotFound:
+		return "", fmt.Errorf("HTTP 404 — is %s the right URL?", baseURL)
+	case resp.StatusCode >= 400:
+		return "", fmt.Errorf("HTTP %d — %s", resp.StatusCode, extractJiraError(body))
+	}
+	var me struct {
+		DisplayName string `json:"displayName"`
+		EmailAddr   string `json:"emailAddress"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+	if me.DisplayName == "" {
+		return me.EmailAddr, nil
+	}
+	return me.DisplayName, nil
 }
