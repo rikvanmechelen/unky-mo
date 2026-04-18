@@ -1,5 +1,7 @@
 # Unky Mo
 
+[![tests](https://github.com/rikvanmechelen/unky-mo/actions/workflows/test.yml/badge.svg)](https://github.com/rikvanmechelen/unky-mo/actions/workflows/test.yml)
+
 A terminal UI for orchestrating multiple Claude Code sessions across your projects. See which sessions are running, which need your attention, and switch between them — all from one place.
 
 ## Prerequisites
@@ -611,12 +613,19 @@ make install
 go build -o mo ./cmd/mo
 
 # Run tests (always do this before committing)
-go test ./...
-go test -race ./...              # data-race detector
-go vet ./...                     # static checks
+make test                # go test ./...
+make test-race           # go test -race ./...
+go vet ./...             # static checks
+
+# Integration tests (spawns an isolated tmux server + fake claude binary)
+make test-integration    # requires tmux on $PATH
 
 # Surface documented-but-drifted behavior (some failures are expected here)
-go test -tags expectfail ./...
+make test-expectfail
+
+# Regenerate gomock mocks (run after changing an interface with a
+# //go:generate mockgen directive)
+make mocks
 
 # Dev workflow: edit code → make install → ctrl+r in Mo to reload
 ```
