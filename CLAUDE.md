@@ -35,6 +35,7 @@ make install   # Build and install to ~/go/bin/mo
 - `internal/sync/` — Encrypted session sync between machines via private git repo
 - `internal/config/` — TOML config loading
 - `internal/project/` — Project model, workspace scanner, worktree support
+- `internal/usage/` — Claude rate-limit-window fetcher + per-session token counter
 
 ## Claude Session Data
 
@@ -129,6 +130,75 @@ Claude hooks → notify-hook.sh → Unix socket → Main TUI → state file → 
 - Hooks installed in `~/.claude/settings.json` with `# unky-mo` marker comment
 - Notification types: `idle_prompt`, `permission_prompt` (from Claude), `session_stop` (from Stop hook)
 - State file written atomically (temp + rename) on every 5s poll and on notification events
+
+## State File Schema
+
+`internal/state/state.go` defines the shared JSON state written by the main TUI (atomic temp+rename) and polled by each sidebar every 1s. Path is configurable via `Config.StateFilePath`, defaulting to `/tmp/unky-mo-state.json`.
+
+- **`StateFile`**: `tmux_session` (string), `projects` ([]ProjectState), `updated_at` (time), `usage` (*UsageState, optional).
+- **`ProjectState`** — one entry **per tmux window** (multiple entries can share `Name`/`Parent` for concurrent siblings; distinguished by `WindowName` + `SessionID`): `name`, `path`, `window_name`, `status` (`"none"` | `"active"` | `"idle"` | `"permission"` | `"external"`), `parent` (for worktree/sibling rows), `section` (`"projects"` | `"external"`), `branch` + `dirty` (git-backed strays only), `session_id`, `index` (0 = primary, 2+ = sibling ordinal).
+- **`UsageState`**: `five_hour_pct`, `seven_day_pct` (ints 0–100), their `*_resets_at` timestamps, `fetched_at`, `stale`, `auth_error`.
+- Writer is the main TUI — no sidebar ever writes. Sidebars only read. Re-written on every 5s session-refresh tick, on every notification event, and after any user action that changes state.
+
+## Strays & Import-External Flow
+
+A **stray** is a live Claude session whose CWD doesn't map to any known project in the workspace. They're detected during the 5s session refresh in `internal/tui/app.go` by classifying live sessions against `projectPaths` and the git-root lookup (`project.FindGitRoot`):
+
+- **Git-backed stray** — CWD isn't a known project but *is* inside some git repo. Rendered in the `Projects` section with branch + dirty info, as if it were an ad-hoc project row.
+- **Non-git stray** — CWD is outside any git repo (e.g. `~`, `/tmp`). Rendered in a separate `External` section below projects.
+- **External flag** — set when the Claude PID is *not* a descendant of any pane in the mo tmux session (`claude.IsDescendantOf` against `tmux.PanePIDs`). These are orphans started outside mo (e.g. from a VS Code terminal). `enter` on an External row opens an import prompt.
+
+`importExternalSession(pid, sessionID, cwd, windowName)` is the takeover: SIGTERM the orphan, poll up to ~2s for exit (flushes JSONL), then `claude --resume <sessionID>` in a fresh tmux window with a sidebar. See `internal/tui/app.go`.
+
+## Sync (`internal/sync/`)
+
+Per-machine encrypted session sync via a private git repo. **Client never pushes plaintext.**
+
+- **Crypto**: AES-256-GCM for session data + HMAC-SHA256 for directory keying. Key file at `~/.config/unky-mo/sync.key` (32 raw bytes, base64-encoded on disk); `UNKY_MO_SYNC_KEY` env var overrides. See `internal/sync/crypto.go`.
+- **Repo layout**: each project name is HMAC-SHA256'd (with the `"unky-mo-dir-v1:"` prefix) to a 32-char hex directory. Each directory holds exactly two files: `session.enc` (encrypted JSONL) and `meta.enc` (encrypted `SessionMeta` JSON). No plaintext anywhere.
+- **Public API**: `IsConfigured`, `Init(url)` (`git clone`), `Push(projectName, projectPath, syncDir, sessionID)`, `Pull(projectName, localProjectPath, syncDir)`, `PullAll`, `List`, `ListLocal`, `DefaultSyncDir`.
+- **Known multi-session gap**: project name hashes to **one** directory, so pushing a second session for the same project **overwrites** the first. Multi-session sync is not yet implemented — track when extending `Push` / the hash key to include session ID.
+
+## Usage (`internal/usage/`)
+
+Tracks Claude rate-limit windows and per-session token counts.
+
+- **Windows**: 5-hour, 7-day (plus per-model 7-day Opus / 7-day Sonnet breakdowns).
+- **Source**: Anthropic OAuth `/api/oauth/usage` endpoint via `internal/usage/client.go`. Responses cached to `/tmp/mo-claude-usage.json` with a 60s TTL (see `internal/usage/cache.go`).
+- **Who fetches**: **main TUI only**, on a 60s `usageTick`. Sidebars never call the API — they read the cached snapshot from the shared state file (`UsageState`) and render it.
+- **Per-session tokens**: `usage.SessionTokens(jsonlPath)` parses a session's JSONL and returns the last turn's input + cache tokens. Cached by file size (JSONL is append-only, so size-change → recompute).
+
+## Config (`internal/config/`)
+
+Loaded from `~/.config/unky-mo/config.toml` (or `$XDG_CONFIG_HOME/unky-mo/config.toml`); `config.Load` returns a fully-defaulted struct when the file is missing — no example file is shipped.
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `workspace_dirs` | `[]string` | `[]` | Dirs to scan for projects on startup |
+| `tmux_session` | `string` | `"mo"` | tmux session name |
+| `socket_path` | `string` | `/tmp/unky-mo.sock` | Unix socket for hook notifications |
+| `state_file_path` | `string` | `/tmp/unky-mo-state.json` | Shared state file |
+| `scan_on_startup` | `bool` | `true` | Auto-discover projects under `workspace_dirs` |
+| `notify_sound` | `bool` | `true` | Enable notification sound |
+| `project` | `[]project.Project` | `nil` | Manually-configured projects, merged with discovered set |
+
+## Sidebar Responsibilities
+
+Beyond the keys and session list already documented, each sidebar (one per project window, 1s tick) is also responsible for:
+
+- **Usage strip** — reads `UsageState` out of the shared state file and renders the 5h / weekly bars. No API calls.
+- **Per-session token counter** — calls `usage.SessionTokens` against the live session's JSONL; shown next to the session row.
+- **Active shells** — `claude.ActiveShellsForSession` lists Claude's Bash-tool subprocesses currently alive, rendered as a sub-section under the session row.
+- **Changed files** — `git status --porcelain` + `git diff --numstat` on the window's path; populates the Files section where `enter`/`d`/`v`/`o` operate.
+- **Sync status** — read once on init via `moSync.ListLocal` (no network), re-checked after a local push.
+
+Everything above updates on the same 1s `stateTick`.
+
+## Testing
+
+- Unit tests live alongside code: `internal/tmux/naming_test.go`, `internal/sync/crypto_test.go`, `internal/usage/*_test.go`, smoke tests in a couple of packages.
+- Run the full suite with `go test ./...`. There is no `make test` target.
+- No test for the main TUI (`internal/tui/`) or CLI (`cmd/mo/`) — UI correctness is validated manually.
 
 ## Conventions
 
