@@ -14,6 +14,7 @@ type ProjectState struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	WindowName string `json:"window_name"`
+	WindowID   string `json:"window_id,omitempty"` // stable tmux window id (e.g. "@5"); survives renames
 	Status     string `json:"status"`               // "none", "active", "idle", "permission", "external"
 	Parent     string `json:"parent,omitempty"`     // non-empty for worktree entries
 	Section    string `json:"section,omitempty"`    // "projects" (default) or "external" — for stray-session grouping

@@ -161,8 +161,11 @@ func TestResolveSessionWindowsWithMocks(t *testing.T) {
 	cr.EXPECT().IsDescendantOf(gomock.Any(), gomock.Any()).Return(true)
 
 	got := resolveSessionWindows(tc, cr, []claude.Session{{PID: 100, SessionID: "s"}})
-	if got["s"] != "alpha" {
-		t.Errorf("want alpha, got %q", got["s"])
+	if got["s"].Name != "alpha" {
+		t.Errorf("want alpha, got %q", got["s"].Name)
+	}
+	if got["s"].ID != "@1" {
+		t.Errorf("want @1, got %q", got["s"].ID)
 	}
 }
 

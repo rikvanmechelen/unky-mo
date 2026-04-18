@@ -1780,6 +1780,7 @@ type sessionView struct {
 	ProjectName string        // display name on the row
 	Parent      string        // parent project name for worktree/sibling grouping; "" otherwise
 	WindowName  string        // real tmux window name from sessionToWindowMap; composed fallback if unresolved
+	WindowID    string        // stable tmux window id (e.g. "@5"); empty when window couldn't be resolved
 	Index       int           // 0 bare, 2+ ordinal, -1 custom-title (for ordering siblings)
 	Status      SessionStatus // raw status from poll (notif overrides applied in updateProjectStatuses)
 	Section     string        // "projects" | "external"
@@ -1820,7 +1821,7 @@ func (m Model) refreshSessions() tea.Cmd {
 			hostPIDs, _ = tmuxClient.PanePIDs()
 		}
 		// Resolve real window names for every live session by walking pane
-		// PID chains once. Used to populate sessionView.WindowName and Index.
+		// PID chains once. Used to populate sessionView.WindowName/WindowID/Index.
 		windowBySession := resolveSessionWindows(tmuxClient, claudeClient, sessions)
 
 		views := make([]sessionView, 0, len(sessions))
@@ -1898,8 +1899,9 @@ func (m Model) refreshSessions() tea.Cmd {
 			// Real window name: look up via session→window map; fall back to
 			// composed bare/worktree name so dashboards still render even if
 			// the session is mid-launch and not yet attached to any pane.
-			if wn, ok := windowBySession[s.SessionID]; ok {
-				v.WindowName = wn
+			if w, ok := windowBySession[s.SessionID]; ok {
+				v.WindowName = w.Name
+				v.WindowID = w.ID
 			} else {
 				v.WindowName = composeFallbackWindow(v)
 			}
@@ -1944,9 +1946,10 @@ func worktreeParent(cwd string, projectNames map[string]string) (string, string,
 }
 
 // resolveSessionWindows mirrors sessionToWindowMap but takes the sessions as
-// a pre-fetched argument so it runs cleanly off-goroutine.
-func resolveSessionWindows(tc ops.TmuxClient, cr ops.ClaudeReader, sessions []claude.Session) map[string]string {
-	result := map[string]string{}
+// a pre-fetched argument so it runs cleanly off-goroutine. Returns the full
+// Window so callers get both the (mutable) name and the stable window id.
+func resolveSessionWindows(tc ops.TmuxClient, cr ops.ClaudeReader, sessions []claude.Session) map[string]ttmux.Window {
+	result := map[string]ttmux.Window{}
 	if tc == nil || len(sessions) == 0 {
 		return result
 	}
@@ -1967,7 +1970,7 @@ func resolveSessionWindows(tc ops.TmuxClient, cr ops.ClaudeReader, sessions []cl
 				continue
 			}
 			if cr.IsDescendantOf(sessions[i].PID, panePIDs) {
-				result[sessions[i].SessionID] = w.Name
+				result[sessions[i].SessionID] = w
 			}
 		}
 	}
@@ -2327,6 +2330,7 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 		Name:       name,
 		Path:       v.CWD,
 		WindowName: v.WindowName,
+		WindowID:   v.WindowID,
 		Status:     statusToString(v.Status),
 		Section:    v.Section,
 		SessionID:  v.SessionID,

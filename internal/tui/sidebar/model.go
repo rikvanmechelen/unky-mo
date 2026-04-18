@@ -20,6 +20,7 @@ type SidebarItem struct {
 	Name       string
 	Path       string // project directory path
 	WindowName string // tmux window target; empty for Home (window 0)
+	WindowID   string // stable tmux window id (e.g. "@5"); empty when unresolved
 	Status     string // "none", "active", "idle", "permission", "external"
 	Parent     string // non-empty for worktree entries (parent project name)
 	Section    string // "projects" (default) or "external" — groups stray sessions
@@ -59,6 +60,7 @@ type Model struct {
 	cursorSetOnce bool // true after initial cursor placement
 	// The project this sidebar belongs to (detected from tmux window name)
 	windowName string
+	windowID   string // stable tmux window id (e.g. "@5"); survives renames
 	windowPath string
 	width      int
 	height     int
@@ -94,16 +96,8 @@ func NewModel(sessionName, stateFile string) Model {
 	// (e.g. when launching a worktree session: the pane is split before the
 	// client switches focus). For worktree windows this is especially broken
 	// because the window name (<project>@<branch>) isn't in the state file.
-	windowName := ""
-	if paneID := os.Getenv("TMUX_PANE"); paneID != "" {
-		out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{window_name}").Output()
-		if err == nil {
-			windowName = strings.TrimSpace(string(out))
-		}
-	}
-	if windowName == "" {
-		windowName = ttmux.CurrentWindowName()
-	}
+	windowName := resolveOwnWindowName()
+	windowID := resolveOwnWindowID()
 
 	// The sidebar process's cwd is its pane's cwd at startup; it's a Go
 	// program with no shell that could cd elsewhere, so this is always the
@@ -119,6 +113,7 @@ func NewModel(sessionName, stateFile string) Model {
 		claude:        defaultClaudeReader{},
 		stateFile:     stateFile,
 		windowName:    windowName,
+		windowID:      windowID,
 		windowPath:    windowPath,
 		activeTermIdx: -1,
 		focusSection:  "sessions",
@@ -356,7 +351,7 @@ func (m Model) View() string {
 			line = cursor + homeStyle.Render(name)
 		} else {
 			dot := renderDot(item.Status)
-			isCurrent := item.WindowName == m.windowName
+			isCurrent := itemMatchesOwnWindow(item, m.windowID, m.windowName)
 
 			// Worktree entries are indented under their parent project
 			indent := ""
@@ -644,7 +639,59 @@ func (m Model) renderUsageLine() string {
 	return usageLineStyle.Render(out)
 }
 
+// resolveOwnWindowName returns the current tmux window name for this pane.
+// The main TUI may rename our window at any time (custom titles, sibling
+// ordinal shuffling), so callers must re-resolve on every tick rather than
+// caching — otherwise the "current window" highlight goes stale.
+func resolveOwnWindowName() string {
+	name := ""
+	if paneID := os.Getenv("TMUX_PANE"); paneID != "" {
+		out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{window_name}").Output()
+		if err == nil {
+			name = strings.TrimSpace(string(out))
+		}
+	}
+	if name == "" {
+		name = ttmux.CurrentWindowName()
+	}
+	return name
+}
+
+// itemMatchesOwnWindow decides whether a sidebar row belongs to the sidebar's
+// own tmux window. WindowID is the stable key — preferred when both sides
+// populate it — and WindowName is the fallback for cold state rows (placeholder
+// StatusNone entries and sessions still mid-launch, where no window id is
+// resolved yet).
+func itemMatchesOwnWindow(item SidebarItem, ownID, ownName string) bool {
+	if ownID != "" && item.WindowID != "" {
+		return item.WindowID == ownID
+	}
+	return item.WindowName == ownName
+}
+
+// resolveOwnWindowID returns this pane's tmux window id (e.g. "@5"). Unlike
+// the window name, the id is stable across renames, so it's the preferred
+// key for matching the sidebar's own session row in the state file.
+func resolveOwnWindowID() string {
+	paneID := os.Getenv("TMUX_PANE")
+	if paneID == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{window_id}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (m *Model) refreshState() {
+	if name := resolveOwnWindowName(); name != "" {
+		m.windowName = name
+	}
+	if m.windowID == "" {
+		// NewModel ran before TMUX_PANE was available (rare); retry.
+		m.windowID = resolveOwnWindowID()
+	}
 	sf, err := state.Read(m.stateFile)
 	if err != nil {
 		// Fallback: try to detect sessions independently
@@ -673,6 +720,7 @@ func (m *Model) refreshState() {
 			Name:       p.Name,
 			Path:       p.Path,
 			WindowName: p.WindowName,
+			WindowID:   p.WindowID,
 			Status:     p.Status,
 			Parent:     p.Parent,
 			Section:    p.Section,
@@ -707,7 +755,7 @@ func (m *Model) refreshState() {
 	// Set cursor to own project on first load only
 	if !m.cursorSetOnce {
 		for i, item := range m.items {
-			if item.WindowName == m.windowName {
+			if itemMatchesOwnWindow(item, m.windowID, m.windowName) {
 				m.cursor = i
 				break
 			}
