@@ -63,6 +63,13 @@ func (c *Client) SwitchToWindow(target string) error {
 	return runTmux("select-window", "-t", target)
 }
 
+// DetachClient detaches every client currently attached to the tmux session.
+// All processes running inside the session keep running; users can resume
+// by running `mo` (or `tmux attach`) again.
+func (c *Client) DetachClient() error {
+	return runTmux("detach-client", "-s", c.SessionName)
+}
+
 // ListWindows returns the names of windows in the session.
 func (c *Client) ListWindows() ([]Window, error) {
 	cmd := exec.Command("tmux", "list-windows", "-t", c.SessionName, "-F", "#{window_index}:#{window_name}:#{pane_current_path}")

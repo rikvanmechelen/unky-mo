@@ -465,6 +465,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.ExecProcess(exec.Command(self), nil)
 			}
 
+		case key.Matches(msg, keys.Detach):
+			if m.tmux == nil {
+				return m, func() tea.Msg { return statusMsgEvent("tmux not available") }
+			}
+			if err := m.tmux.DetachClient(); err != nil {
+				return m, func() tea.Msg { return statusMsgEvent(fmt.Sprintf("detach failed: %v", err)) }
+			}
+			return m, nil
+
 		case key.Matches(msg, keys.Quit):
 			if m.screen != ScreenDashboard {
 				m.screen = ScreenDashboard
@@ -806,6 +815,7 @@ func (m Model) dashboardView() string {
 		{"a", "attach"},
 		{"/", "filter"},
 		{"?", "help"},
+		{"d", "detach"},
 		{"q", "quit"},
 	})
 
@@ -834,8 +844,14 @@ func (m Model) helpView() string {
 			{"a", "Attach to session (switch tmux window)"},
 			{"r", "Resume most recent session"},
 		}},
+		{"Branches (project detail)", []footerBinding{
+			{"w", "Open branch under cursor as a worktree"},
+			{"W", "Prompt for a new branch name + worktree"},
+			{"m", "Check out branch in main repo (refuse if dirty)"},
+			{"M", "Stash first, then check out in main"},
+		}},
 		{"Other", []footerBinding{
-			{"w", "Create new git worktree + session"},
+			{"d", "Detach (leaves tmux session running; re-launch mo to resume)"},
 			{"?", "Toggle this help"},
 			{"ctrl+r", "Restart (reload new binary)"},
 			{"q", "Quit"},
@@ -1238,6 +1254,7 @@ func (m Model) projectDetailView() string {
 				{"W", "new branch"},
 				{"n", "session"},
 				{"o", "PR"},
+				{"d", "detach"},
 				{"esc", "back"},
 			}
 		}
