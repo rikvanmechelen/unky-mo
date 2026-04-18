@@ -21,6 +21,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	gh "github.com/rvanmech/unky-mo/internal/github"
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/notify"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/project"
@@ -159,6 +160,7 @@ type Model struct {
 	projects       []project.Project
 	tmux           TmuxClient
 	claude         ClaudeReader
+	ops            *ops.Context
 	notifServer    *notify.Server
 	notifState     sessionStateMap // status overrides from notification system
 	statusMsg      string
@@ -284,13 +286,43 @@ type Model struct {
 }
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
-	return NewModelWithDeps(projects, newTmuxClientAdapter(tmuxClient), NewDefaultClaudeReader(), notifServer, stateFilePath, ticketsCfg)
+	opsCtx := ops.NewContext(tmuxClient)
+	return newModelWithOpsContext(projects, newTmuxClientAdapter(tmuxClient), NewDefaultClaudeReader(), opsCtx, notifServer, stateFilePath, ticketsCfg)
 }
 
 // NewModelWithDeps is the test-friendly constructor — accepts interface
 // implementations so tests can inject mocks. Production code calls NewModel,
 // which wraps the concrete *ttmux.Client and claude package.
 func NewModelWithDeps(projects []project.Project, tmuxClient TmuxClient, claudeReader ClaudeReader, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
+	// Synthesize a minimal ops.Context from the same interface impls so the
+	// test constructor can thread mocks through both the TUI and ops.
+	opsCtx := &ops.Context{
+		Tmux:         asOpsTmuxClient(tmuxClient),
+		Claude:       asOpsClaudeReader(claudeReader),
+		SidebarWidth: 42,
+	}
+	return newModelWithOpsContext(projects, tmuxClient, claudeReader, opsCtx, notifServer, stateFilePath, ticketsCfg)
+}
+
+// asOpsTmuxClient / asOpsClaudeReader let test-provided tui interface mocks
+// also satisfy the ops.* interfaces. The two interfaces have identical
+// method sets, so an implementer of one satisfies the other — but Go's
+// structural typing still requires the conversion be spelled out.
+func asOpsTmuxClient(t TmuxClient) ops.TmuxClient {
+	if t == nil {
+		return nil
+	}
+	return t.(ops.TmuxClient)
+}
+
+func asOpsClaudeReader(c ClaudeReader) ops.ClaudeReader {
+	if c == nil {
+		return nil
+	}
+	return c.(ops.ClaudeReader)
+}
+
+func newModelWithOpsContext(projects []project.Project, tmuxClient TmuxClient, claudeReader ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
 	items := make([]list.Item, len(projects))
 	for i, p := range projects {
 		items[i] = ProjectItem{project: p, status: StatusNone}
@@ -326,6 +358,7 @@ func NewModelWithDeps(projects []project.Project, tmuxClient TmuxClient, claudeR
 		projects:           projects,
 		tmux:               tmuxClient,
 		claude:             claudeReader,
+		ops:                opsCtx,
 		notifServer:        notifServer,
 		notifState:         make(sessionStateMap),
 		dashFocusLeft:      true,
@@ -3405,29 +3438,19 @@ func (m Model) launchSiblingSession(project, branch, cwd, resumeID string) tea.C
 	}
 }
 
-// launchClaudeInWindow creates a new tmux window for the given name + cwd, sends
-// the given shell command (typically "claude" or "claude --resume <id>"),
-// attaches the sidebar pane, and switches focus. Returns a statusMsgEvent.
+// launchClaudeInWindow is a thin TUI adapter over ops.LaunchSession. The
+// ops call does the tmux ceremony; this wrapper maps the typed result back
+// into the statusMsgEvent the bubbletea Update loop expects.
 func (m Model) launchClaudeInWindow(windowName, cwd, shellCmd string) tea.Msg {
-	target, err := m.tmux.CreateWindow(windowName, cwd)
+	_, err := ops.LaunchSession(m.ops, ops.LaunchParams{
+		WindowName:    windowName,
+		Cwd:           cwd,
+		ShellCmd:      shellCmd,
+		AttachSidebar: true,
+		SwitchFocus:   true,
+	})
 	if err != nil {
-		return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
-	}
-	claudePaneID, _ := m.tmux.PaneID(target)
-	// Use "exec" so the shell is replaced — when Claude exits, the pane
-	// closes immediately instead of leaving a lingering shell prompt.
-	if err := m.tmux.SendKeys(target, "exec "+shellCmd); err != nil {
-		return statusMsgEvent(fmt.Sprintf("Failed to launch claude: %v", err))
-	}
-	// Auto-close the window (sidebar + any terminal-drawer panes) only when
-	// the Claude pane exits — not when the user closes a terminal drawer.
-	if claudePaneID != "" {
-		hook := fmt.Sprintf(`if-shell -F "#{==:#{hook_pane},%s}" "kill-window"`, claudePaneID)
-		m.tmux.SetWindowHook(target, "pane-exited", hook)
-	}
-	m.addSidebarPane(target, cwd)
-	if err := m.tmux.SwitchToWindow(target); err != nil {
-		return statusMsgEvent(fmt.Sprintf("Launched but failed to switch: %v", err))
+		return statusMsgEvent(fmt.Sprintf("Launch failed: %v", err))
 	}
 	return statusMsgEvent("Launched Claude in " + windowName)
 }

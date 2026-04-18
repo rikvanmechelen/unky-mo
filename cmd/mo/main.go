@@ -12,6 +12,7 @@ import (
 
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/tmux"
@@ -251,24 +252,25 @@ func startCmd() *cobra.Command {
 				return nil
 			}
 
-			target, err := tc.CreateWindow(windowName, projectPath)
-			if err != nil {
-				return fmt.Errorf("creating window: %w", err)
-			}
-
-			claudeCmd := "exec claude"
+			shellCmd := "claude"
 			if prompt != "" {
-				claudeCmd = fmt.Sprintf("exec claude -p %q", prompt)
+				shellCmd = fmt.Sprintf("claude -p %q", prompt)
 			}
 
-			if err := tc.SendKeys(target, claudeCmd); err != nil {
-				return fmt.Errorf("launching claude: %w", err)
+			ctx := ops.NewContext(tc)
+			// CLI uses a narrower sidebar historically (33 cols) — preserve.
+			ctx.SidebarWidth = 33
+			res, err := ops.LaunchSession(ctx, ops.LaunchParams{
+				WindowName:    windowName,
+				Cwd:           projectPath,
+				ShellCmd:      shellCmd,
+				AttachSidebar: true,
+				SwitchFocus:   false, // CLI invocation from outside tmux: skip switch
+			})
+			if err != nil {
+				return err
 			}
-
-			tc.SetWindowHook(target, "pane-exited", "kill-window")
-			addCLISidebarPane(tc, target, projectPath)
-
-			fmt.Printf("Started Claude session in %s (tmux: %s)\n", windowName, target)
+			fmt.Printf("Started Claude session in %s (tmux: %s)\n", windowName, res.Target)
 			return nil
 		},
 	}
