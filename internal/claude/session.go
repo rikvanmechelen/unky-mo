@@ -313,7 +313,13 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 			// tool_use = Claude is mid-turn, running a tool
 			return msg.Message.StopReason == "end_turn"
 		case "user":
-			return false // User sent something, Claude is working
+			// User sent something. Normally Claude would be mid-response —
+			// but /compact and other slash commands write synthetic user
+			// entries (content starts with <local-command-*> / <command-*>)
+			// with no assistant follow-up, leaving the session actually
+			// idle. If the JSONL hasn't advanced in >120s, the session is
+			// waiting for real input.
+			return time.Since(info.ModTime()) > 120*time.Second
 		default:
 			continue
 		}
