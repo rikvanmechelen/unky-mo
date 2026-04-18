@@ -148,7 +148,7 @@ func (m Model) renderTicketDetailScreen() string {
 		binds := []footerBinding{
 			{"s", "start working"},
 			{"o", "open in browser"},
-			{"y", "copy branch"},
+			{"y", "copy branch name"},
 			{"esc", "back"},
 		}
 		footer = m.renderFooter(binds)

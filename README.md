@@ -309,7 +309,7 @@ Pressing `enter` on a ticket opens a full-screen detail view with its metadata (
    s → create worktree OP-175-fix-auth-flow (session already
        running in moma-apps-rails)
 
- [s] start working  [o] open in browser  [y] copy branch  [esc] back
+ [s] start working  [o] open in browser  [y] copy branch name  [esc] back
 ```
 
 The hint line above the footer tells you exactly what `s` will do right now — it depends on whether a Claude session is already running in the target project.

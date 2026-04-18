@@ -209,6 +209,10 @@ type Model struct {
 	ticketsCursor    int              // index into the flat visible list below
 	ticketsPerBucket int              // config-driven overflow cap
 	ticketsRefreshPeriod time.Duration
+	// Buckets the user has expanded via enter on the overflow row. Expansion
+	// is session-scoped (not persisted) — the default per-bucket cap applies
+	// again on next launch, which is the behavior the user most often wants.
+	ticketsExpanded  map[tickets.Bucket]bool
 	// Detail views
 	detailProject   *project.Project
 	detailSession   *claude.Session
@@ -329,6 +333,7 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 		ticketsDisabled:    ticketsCfg.Disabled,
 		ticketsProviders:   providers,
 		ticketProjectMap:   projectMap,
+		ticketsExpanded:    map[tickets.Bucket]bool{},
 		ticketsInstances:   instances,
 		ticketsPerBucket:   perBucket,
 		ticketsRefreshPeriod: refresh,
@@ -560,7 +565,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Enter):
 			if m.screen == ScreenDashboard && !m.dashFocusLeft && m.dashRightFocus == dashRightTickets {
-				// Tickets panel: enter opens the ticket detail screen.
+				// Overflow row: toggle expansion for that bucket. Cursor stays
+				// on the same row so consecutive enters flip between states.
+				if bucket, ok := m.bucketAtOverflowCursor(); ok {
+					if m.ticketsExpanded == nil {
+						m.ticketsExpanded = map[tickets.Bucket]bool{}
+					}
+					m.ticketsExpanded[bucket] = !m.ticketsExpanded[bucket]
+					// Clamp cursor to the new visible length (expanding grows it,
+					// collapsing can shrink it below the current position).
+					if n := m.ticketsVisibleLen(); n > 0 && m.ticketsCursor >= n {
+						m.ticketsCursor = n - 1
+					}
+					return m, nil
+				}
+				// Ticket row: open the detail screen.
 				if t := m.ticketAtCursor(); t != nil {
 					selected := *t // copy so the list can safely change
 					m.screen = ScreenTicket

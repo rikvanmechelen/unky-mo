@@ -30,37 +30,80 @@ func (m Model) ticketsShouldRender() bool {
 	return jira.HasToken()
 }
 
+// visibleCountFor returns how many tickets from a bucket are currently shown
+// (respecting per-bucket cap + user expansion toggle).
+func (m Model) visibleCountFor(g tickets.BucketGroup) int {
+	if m.ticketsExpanded[g.Bucket] {
+		return len(g.Tickets)
+	}
+	if m.ticketsPerBucket > 0 && len(g.Tickets) > m.ticketsPerBucket {
+		return m.ticketsPerBucket
+	}
+	return len(g.Tickets)
+}
+
+// hasOverflowRow reports whether this bucket renders a "+N more" / "show
+// less" row that's part of the focusable cursor range.
+func (m Model) hasOverflowRow(g tickets.BucketGroup) bool {
+	if m.ticketsPerBucket <= 0 {
+		return false
+	}
+	return len(g.Tickets) > m.ticketsPerBucket
+}
+
 // ticketsVisibleLen returns the count of focusable rows in the tickets panel
-// (tickets only — section headers and "+N more" are not focusable). Used
-// for cursor wrap-around.
+// — tickets + "+N more" / "show less" rows (but NOT bucket headers).
 func (m Model) ticketsVisibleLen() int {
 	n := 0
 	for _, g := range m.ticketsGroups {
-		visible := len(g.Tickets)
-		if m.ticketsPerBucket > 0 && visible > m.ticketsPerBucket {
-			visible = m.ticketsPerBucket
+		n += m.visibleCountFor(g)
+		if m.hasOverflowRow(g) {
+			n++ // overflow row is focusable
 		}
-		n += visible
 	}
 	return n
 }
 
-// ticketAtCursor returns the ticket at the current cursor position, or nil
-// if the cursor is out of range (no tickets loaded yet).
+// ticketAtCursor returns the ticket at the current cursor position. Returns
+// nil when the cursor lands on an overflow row (see bucketAtCursor).
 func (m Model) ticketAtCursor() *tickets.Ticket {
 	idx := m.ticketsCursor
 	for _, g := range m.ticketsGroups {
-		visible := len(g.Tickets)
-		if m.ticketsPerBucket > 0 && visible > m.ticketsPerBucket {
-			visible = m.ticketsPerBucket
-		}
+		visible := m.visibleCountFor(g)
 		if idx < visible {
 			t := g.Tickets[idx]
 			return &t
 		}
 		idx -= visible
+		if m.hasOverflowRow(g) {
+			if idx == 0 {
+				return nil // cursor is on the overflow row
+			}
+			idx--
+		}
 	}
 	return nil
+}
+
+// bucketAtOverflowCursor returns the bucket whose overflow row is currently
+// selected, or ("", false) when the cursor isn't on one. Drives the toggle
+// behavior of enter on the overflow row.
+func (m Model) bucketAtOverflowCursor() (tickets.Bucket, bool) {
+	idx := m.ticketsCursor
+	for _, g := range m.ticketsGroups {
+		visible := m.visibleCountFor(g)
+		if idx < visible {
+			return "", false
+		}
+		idx -= visible
+		if m.hasOverflowRow(g) {
+			if idx == 0 {
+				return g.Bucket, true
+			}
+			idx--
+		}
+	}
+	return "", false
 }
 
 // renderTicketsPanel returns the tickets pane contents for the dashboard
@@ -113,21 +156,41 @@ func (m Model) renderTicketsPanel(width int) string {
 	rowIdx := 0
 	for _, g := range m.ticketsGroups {
 		b.WriteString("  " + footerDescStyle.Render(tickets.DisplayLabel(g.Bucket)) + "\n")
-		limit := len(g.Tickets)
-		if m.ticketsPerBucket > 0 && limit > m.ticketsPerBucket {
-			limit = m.ticketsPerBucket
-		}
-		for i := 0; i < limit; i++ {
+		visible := m.visibleCountFor(g)
+		for i := 0; i < visible; i++ {
 			t := g.Tickets[i]
 			selected := focused && m.ticketsCursor == rowIdx
 			b.WriteString(renderTicketRow(t, selected, g.Bucket == tickets.BucketUnmapped, width))
 			rowIdx++
 		}
-		if overflow := len(g.Tickets) - limit; overflow > 0 {
-			b.WriteString("  " + footerDescStyle.Render(fmt.Sprintf("… +%d more", overflow)) + "\n")
+		if m.hasOverflowRow(g) {
+			selected := focused && m.ticketsCursor == rowIdx
+			b.WriteString(renderOverflowRow(g.Bucket, len(g.Tickets)-visible, m.ticketsExpanded[g.Bucket], selected))
+			rowIdx++
 		}
 	}
 	return b.String()
+}
+
+// renderOverflowRow renders the toggle row at the bottom of a capped bucket.
+// When collapsed: "… +7 more". When expanded: "… show less". Focusable, so
+// it gets a cursor arrow when selected.
+func renderOverflowRow(bucket tickets.Bucket, hidden int, expanded, selected bool) string {
+	cursor := "  "
+	if selected {
+		cursor = "▸ "
+	}
+	var label string
+	if expanded {
+		label = "… show less"
+	} else {
+		label = fmt.Sprintf("… +%d more", hidden)
+	}
+	style := footerDescStyle
+	if selected {
+		style = selectedItemStyle
+	}
+	return cursor + style.Render(label) + "\n"
 }
 
 // renderTicketRow renders a single ticket line. Format:
