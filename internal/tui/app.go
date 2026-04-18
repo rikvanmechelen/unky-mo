@@ -144,16 +144,9 @@ func (m Model) refreshGitStatuses() tea.Cmd {
 	}
 }
 
-// WorktreeStatus tracks an active session in a git worktree.
-type WorktreeStatus struct {
-	Branch     string
-	Path       string
-	WindowName string // "project@branch"
-	Status     SessionStatus
-}
-
-// sessionStateMap holds the notification-based status overrides for projects.
-// Key is project path, value is the status from notifications.
+// sessionStateMap holds notification-based status overrides. Keyed by
+// claude session ID so concurrent sessions sharing a CWD don't bleed
+// into each other.
 type sessionStateMap map[string]SessionStatus
 
 // notificationMsg wraps a notification received from the Unix socket.
@@ -256,13 +249,13 @@ type Model struct {
 	pendingCleanupWorktreePath string            // "" for plain-branch rows
 	pendingCleanupSessions     []claude.Session  // live sessions to kill, captured at entry
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
-	// project path currently in StatusExternal, populated by refreshSessions.
+	// CWD currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
 	externalSessions map[string]string
-	// Strays are live sessions whose CWD isn't a known project. Split by the
-	// renderers into the "Projects" section (git-backed) and "External"
-	// section (everything else).
-	strays []strayLive
+	// sessionViews is the source of truth for dashboard rows + state file
+	// entries: one entry per live Claude session. Populated by
+	// updateProjectStatuses from the poll result plus notifState overrides.
+	sessionViews []sessionView
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
@@ -278,8 +271,6 @@ type Model struct {
 	// this machine. Keyed by branch name (empty for main scope, unused here
 	// since the main project always has a local path).
 	remoteSynced map[string]moSync.SessionMeta
-	// activeWorktrees tracks worktree sessions grouped by parent project path.
-	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
 	stateFilePath string
 	// Claude usage snapshot (5h + weekly rate-limit windows)
@@ -1249,96 +1240,106 @@ type dashSessionItem struct {
 	Git         *project.GitStatus  // set for git-backed strays; nil otherwise
 }
 
-// refreshDashSessions rebuilds the active sessions list for the dashboard panel.
-// The list is split into two sections:
-//   - "projects": known workspace projects (and their worktrees) with a live
-//     session, plus git-backed strays — claudes running in a git repo we
-//     haven't scanned. These render as project rows with branch/dirty info.
-//   - "external": strays whose CWD isn't inside any git repo (e.g. ~ or /tmp).
-//     Shown separately so they don't clutter project-centric views.
+// refreshDashSessions rebuilds the active sessions list for the dashboard
+// panel by walking m.sessionViews. Unlike the state file, the dashboard
+// does not emit placeholders for projects without live sessions — only
+// projects that actually have a session get a row.
+//
+// Ordering: ProjectItem order drives the top-level grouping. Within each
+// project, main-checkout sessions render first (primary then siblings),
+// then each worktree's sessions. Strays (git-backed) follow the projects
+// section; non-git strays go in the external section.
 func (m *Model) refreshDashSessions() {
-	// Fetch tmux windows once so we can append sibling rows beneath each
-	// primary (matching the state-file writer).
-	var allWindows []ttmux.Window
-	if m.tmux != nil {
-		allWindows, _ = m.tmux.ListWindows()
+	mainByProject := map[string][]sessionView{}
+	worktreeByKey := map[string][]sessionView{}
+	var stray, external []sessionView
+
+	for _, v := range m.sessionViews {
+		if v.IsStray {
+			if v.Section == "external" {
+				external = append(external, v)
+			} else {
+				stray = append(stray, v)
+			}
+			continue
+		}
+		if v.IsWorktree {
+			key := v.ProjectPath + "|" + strings.TrimPrefix(v.ProjectName, "@")
+			worktreeByKey[key] = append(worktreeByKey[key], v)
+			continue
+		}
+		mainByProject[v.ProjectPath] = append(mainByProject[v.ProjectPath], v)
+	}
+	for k := range mainByProject {
+		sortViewsForDisplay(mainByProject[k])
+	}
+	for k := range worktreeByKey {
+		sortViewsForDisplay(worktreeByKey[k])
 	}
 
 	var items []dashSessionItem
 	for _, item := range m.list.Items() {
 		pi, ok := item.(ProjectItem)
-		if !ok || pi.status == StatusNone {
+		if !ok {
 			continue
 		}
-		// Skip the bare primary row when the tmux window with that name
-		// doesn't actually exist — happens when every session at this
-		// target has been renamed (primary + all siblings carry titles).
-		// The sibling loop below emits the real windows.
-		if windowNameExists(allWindows, pi.project.Name) {
-			items = append(items, dashSessionItem{
-				Name:        pi.project.Name,
-				WindowName:  pi.project.Name,
-				Status:      pi.status,
-				ProjectPath: pi.project.Path,
-				Section:     "projects",
-			})
+		for _, v := range mainByProject[pi.project.Path] {
+			items = append(items, viewToDashItem(v))
 		}
-		items = appendSiblingDashItems(items, allWindows, pi.project.Name, "", pi.project.Path)
-	}
-	// Active worktree sessions belong in the projects section too.
-	for parentPath, wtList := range m.activeWorktrees {
-		var projectName string
-		for _, it := range m.list.Items() {
-			if pi, ok := it.(ProjectItem); ok && pi.project.Path == parentPath {
-				projectName = pi.project.Name
-				break
+
+		branchesSeen := map[string]bool{}
+		var branchOrder []string
+		for key := range worktreeByKey {
+			if !strings.HasPrefix(key, pi.project.Path+"|") {
+				continue
+			}
+			branch := strings.TrimPrefix(key, pi.project.Path+"|")
+			if !branchesSeen[branch] {
+				branchesSeen[branch] = true
+				branchOrder = append(branchOrder, branch)
 			}
 		}
-		for _, wt := range wtList {
-			// Same skip as above: worktree primary can also be renamed away.
-			if windowNameExists(allWindows, wt.WindowName) {
-				items = append(items, dashSessionItem{
-					Name:        wt.WindowName,
-					WindowName:  wt.WindowName,
-					Status:      wt.Status,
-					ProjectPath: wt.Path,
-					Section:     "projects",
-				})
-			}
-			if projectName != "" {
-				items = appendSiblingDashItems(items, allWindows, projectName, wt.Branch, wt.Path)
+		sort.Strings(branchOrder)
+		for _, branch := range branchOrder {
+			for _, v := range worktreeByKey[pi.project.Path+"|"+branch] {
+				items = append(items, viewToDashItem(v))
 			}
 		}
 	}
-	// Strays: git-backed go into projects with git info, non-git into external.
-	// ProjectPath is always the session's CWD so the import flow can find the
-	// right PID/sessionID (both maps are CWD-keyed) and launch the new tmux
-	// window at exactly where claude was running.
-	for _, sr := range m.strays {
-		if sr.RepoRoot != "" {
-			gs := project.GetGitStatus(sr.RepoRoot)
-			items = append(items, dashSessionItem{
-				Name:        sr.Name,
-				WindowName:  sr.Name,
-				Status:      sr.Status,
-				ProjectPath: sr.CWD,
-				Section:     "projects",
-				Git:         &gs,
-			})
-		} else {
-			items = append(items, dashSessionItem{
-				Name:        sr.Name,
-				WindowName:  sr.Name,
-				Status:      sr.Status,
-				ProjectPath: sr.CWD,
-				Section:     "external",
-			})
-		}
+
+	// Strays: git-backed go into projects with git info, non-git into
+	// external. ProjectPath is always the session's CWD so the import flow
+	// can find the right PID/sessionID (maps are CWD-keyed) and launch the
+	// new tmux window at exactly where claude was running.
+	for _, v := range stray {
+		items = append(items, viewToDashItem(v))
 	}
+	for _, v := range external {
+		items = append(items, viewToDashItem(v))
+	}
+
 	m.dashSessionItems = items
 	if m.dashSessionCursor >= len(items) {
 		m.dashSessionCursor = max(0, len(items)-1)
 	}
+}
+
+// viewToDashItem converts one sessionView into a dashSessionItem. Name
+// keeps the real tmux window name so the sidebar + dashboard show the same
+// label (including custom-title suffixes).
+func viewToDashItem(v sessionView) dashSessionItem {
+	item := dashSessionItem{
+		Name:        v.WindowName,
+		WindowName:  v.WindowName,
+		Status:      v.Status,
+		ProjectPath: v.CWD,
+		Section:     v.Section,
+	}
+	if v.IsStray && v.Branch != "" {
+		gs := project.GitStatus{Branch: v.Branch, Dirty: v.Dirty}
+		item.Git = &gs
+	}
+	return item
 }
 
 func max(a, b int) int {
@@ -1382,19 +1383,6 @@ func (m *Model) sessionToWindowMap() map[string]string {
 	return result
 }
 
-// windowNameExists reports whether any tmux window in the list has the
-// given name. Used by the state writer + dashboard to decide whether an
-// unsuffixed "primary" row still corresponds to a real tmux window (if
-// every session at the target has been renamed, the bare window is gone).
-func windowNameExists(windows []ttmux.Window, name string) bool {
-	for _, w := range windows {
-		if w.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 // focusPrimaryIfLive tries to switch to the tmux window currently hosting a
 // live primary session at (project, branch, cwd). Returns (attempted, realWin,
 // err): `attempted=true` when a live session was found and a switch was
@@ -1435,26 +1423,6 @@ func (m *Model) primaryWindowForTarget(project, branch, cwd string) (string, *cl
 		name = ttmux.ComposeWindowName(project, branch, "")
 	}
 	return name, &primary
-}
-
-// appendSiblingDashItems walks the tmux window list for siblings of a given
-// project/branch and appends a dashSessionItem per sibling. Sibling status
-// is "active" until a richer per-window status map is introduced.
-func appendSiblingDashItems(items []dashSessionItem, windows []ttmux.Window, project, branch, path string) []dashSessionItem {
-	for _, w := range windows {
-		p, b, suffix, ok := ttmux.ParseWindowName(w.Name)
-		if !ok || p != project || b != branch || suffix == "" {
-			continue
-		}
-		items = append(items, dashSessionItem{
-			Name:        w.Name,
-			WindowName:  w.Name,
-			Status:      StatusActive,
-			ProjectPath: path,
-			Section:     "projects",
-		})
-	}
-	return items
 }
 
 func (m Model) dashboardView() string {
@@ -1772,47 +1740,69 @@ func (m Model) renderFooter(bindings []footerBinding) string {
 	return footerStyle.Width(m.width).Render(line)
 }
 
-// strayLive describes a live claude session whose CWD doesn't match any
-// scanned workspace project. Git-backed strays render in the "Projects"
-// section (with a synthetic project row); non-git strays render in the
-// "External" section of the dashboard and sidebar.
-type strayLive struct {
-	SessionID string
-	PID       int
-	CWD       string
-	RepoRoot  string // "" means non-git (CWD isn't inside any git repo)
-	Name      string // repo basename if git-backed, else CWD basename
-	Status    SessionStatus
+// sessionView is one row per live Claude session — the unit every consumer
+// (dashboard, state file, sidebar, notification overrides) actually needs.
+// Built once per refresh in the refreshSessions goroutine and stashed on
+// the model; rendered by refreshDashSessions + writeStateFile.
+//
+// Classification by Section + Parent + IsStray:
+//   - Known project, main checkout:   Section="projects", Parent="",        IsStray=false
+//   - Worktree of known project:      Section="projects", Parent=parent,    IsStray=false, IsWorktree=true
+//   - Stray inside a git repo:        Section="projects", Parent="",        IsStray=true
+//   - Stray outside any git repo:     Section="external", Parent="",        IsStray=true
+//
+// For concurrent siblings sharing a target, WindowName and Index disambiguate.
+type sessionView struct {
+	SessionID   string
+	PID         int
+	CWD         string
+	ProjectPath string        // stable key for aggregation (=cwd, worktree parent, or stray repo-root/cwd)
+	ProjectName string        // display name on the row
+	Parent      string        // parent project name for worktree/sibling grouping; "" otherwise
+	WindowName  string        // real tmux window name from sessionToWindowMap; composed fallback if unresolved
+	Index       int           // 0 bare, 2+ ordinal, -1 custom-title (for ordering siblings)
+	Status      SessionStatus // raw status from poll (notif overrides applied in updateProjectStatuses)
+	Section     string        // "projects" | "external"
+	Branch      string        // git-backed strays only
+	Dirty       int           // git-backed strays only
+	IsStray     bool
+	IsWorktree  bool
+	External    bool          // PID not descendant of mo tmux panes (StatusExternal)
 }
 
-// sessionRefreshMsg carries the detected status for each project path with a
-// live session. External (outside-tmux) sessions also carry their PID + sessionID
-// so the "import into mo" flow can kill the orphan and resume the conversation.
-// Strays are sessions whose CWD doesn't map to any known project.
+// sessionRefreshMsg carries the per-session view list plus the CWD-keyed
+// import-state caches (unchanged — the import-external flow looks them up
+// by CWD via dashSessionItem.ProjectPath).
 type sessionRefreshMsg struct {
-	statuses         map[string]SessionStatus
+	views            []sessionView
 	externalPIDs     map[string]int    // path → orphan PID to kill on import
 	externalSessions map[string]string // path → sessionID to resume
-	strays           []strayLive
 }
 
 func (m Model) refreshSessions() tea.Cmd {
-	knownPaths := make(map[string]bool)
+	// Snapshot the project list by (path → name) so the goroutine can classify
+	// without touching model state.
+	projectNames := make(map[string]string)
 	for _, item := range m.list.Items() {
 		if pi, ok := item.(ProjectItem); ok {
-			knownPaths[pi.project.Path] = true
+			projectNames[pi.project.Path] = pi.project.Name
 		}
 	}
+	tmuxClient := m.tmux // safe for read off-goroutine
 	return func() tea.Msg {
 		sessions, _ := claude.LiveSessions()
 		var hostPIDs map[int]bool
-		if m.tmux != nil {
-			hostPIDs, _ = m.tmux.PanePIDs()
+		if tmuxClient != nil {
+			hostPIDs, _ = tmuxClient.PanePIDs()
 		}
-		statuses := make(map[string]SessionStatus)
+		// Resolve real window names for every live session by walking pane
+		// PID chains once. Used to populate sessionView.WindowName and Index.
+		windowBySession := resolveSessionWindows(tmuxClient, sessions)
+
+		views := make([]sessionView, 0, len(sessions))
 		externalPIDs := make(map[string]int)
 		externalSessions := make(map[string]string)
-		var strays []strayLive
+
 		for _, s := range sessions {
 			isExternal := len(hostPIDs) > 0 && !claude.IsDescendantOf(s.PID, hostPIDs)
 
@@ -1823,141 +1813,236 @@ func (m Model) refreshSessions() tea.Cmd {
 				status = StatusIdle
 			}
 
-			// Known project or worktree dir → record status by CWD so
-			// updateProjectStatuses can attach it to the right row.
-			if _, known := knownPaths[s.CWD]; known || strings.Contains(s.CWD, ".worktrees/") {
-				statuses[s.CWD] = status
-				if isExternal {
-					externalPIDs[s.CWD] = s.PID
-					externalSessions[s.CWD] = s.SessionID
-				}
-				continue
-			}
-
-			// Stray session: classify as git-backed or not and emit a row.
-			// Key externalPIDs/Sessions by the session's CWD so the import
-			// flow launches the new tmux window at the exact directory the
-			// original claude was running in (not the repo root).
-			repoRoot := project.FindGitRoot(s.CWD)
-			// If the repo root matches a scanned project, attribute to that
-			// project rather than duplicating it as a stray row.
-			if repoRoot != "" {
-				if _, known := knownPaths[repoRoot]; known {
-					statuses[repoRoot] = status
-					if isExternal {
-						externalPIDs[repoRoot] = s.PID
-						externalSessions[repoRoot] = s.SessionID
-					}
-					continue
-				}
-			}
-			name := filepath.Base(s.CWD)
-			if repoRoot != "" {
-				name = filepath.Base(repoRoot)
-			}
-			// A user-chosen session label (via `claude --name` or `/name`)
-			// lives in the PID file's `name` field — prefer it over the
-			// directory-derived fallback so renames show up in the dashboard
-			// and sidebar.
-			if s.Name != "" {
-				name = s.Name
-			}
-			strays = append(strays, strayLive{
+			v := sessionView{
 				SessionID: s.SessionID,
 				PID:       s.PID,
 				CWD:       s.CWD,
-				RepoRoot:  repoRoot,
-				Name:      name,
 				Status:    status,
-			})
-			if isExternal {
-				externalPIDs[s.CWD] = s.PID
-				externalSessions[s.CWD] = s.SessionID
+				External:  isExternal,
 			}
+
+			switch {
+			case knownProjectPath(projectNames, s.CWD) != "":
+				name := knownProjectPath(projectNames, s.CWD)
+				v.ProjectPath = s.CWD
+				v.ProjectName = name
+				v.Section = "projects"
+
+			case strings.Contains(s.CWD, ".worktrees/"):
+				parentPath, parentName, branch := worktreeParent(s.CWD, projectNames)
+				v.ProjectPath = parentPath // stable parent key; sidebar still groups by Parent
+				v.ProjectName = "@" + branch
+				v.Parent = parentName
+				v.Section = "projects"
+				v.IsWorktree = true
+				// ProjectPath intentionally points at the parent project's path
+				// so dash ordering (grouping under the parent) works; the
+				// session's actual cwd is stored in v.CWD.
+
+			default:
+				// Stray: claude in a directory not matching any scanned
+				// project and not a worktree. Classify by git-root membership.
+				repoRoot := project.FindGitRoot(s.CWD)
+				if repoRoot != "" {
+					if name, known := projectNames[repoRoot]; known {
+						// Stray rooted in a known project — attribute to it.
+						v.ProjectPath = repoRoot
+						v.ProjectName = name
+						v.Section = "projects"
+						break
+					}
+					v.ProjectPath = repoRoot
+					v.ProjectName = filepath.Base(repoRoot)
+					v.Section = "projects"
+					v.IsStray = true
+					if gs := project.GetGitStatus(repoRoot); gs.Branch != "" {
+						v.Branch = gs.Branch
+						v.Dirty = gs.Dirty
+					}
+				} else {
+					v.ProjectPath = s.CWD
+					v.ProjectName = filepath.Base(s.CWD)
+					v.Section = "external"
+					v.IsStray = true
+				}
+				// Prefer user-chosen label from `claude --name` / `/name`.
+				if s.Name != "" {
+					v.ProjectName = s.Name
+				}
+			}
+
+			// Real window name: look up via session→window map; fall back to
+			// composed bare/worktree name so dashboards still render even if
+			// the session is mid-launch and not yet attached to any pane.
+			if wn, ok := windowBySession[s.SessionID]; ok {
+				v.WindowName = wn
+			} else {
+				v.WindowName = composeFallbackWindow(v)
+			}
+			v.Index = parseWindowIndex(v.WindowName)
+
+			// Import caches: key by CWD (preserves today's dashSessionItem
+			// lookup semantics, so `enter` on an External row still finds
+			// the PID/sessionID).
+			if isExternal {
+				externalPIDs[v.CWD] = s.PID
+				externalSessions[v.CWD] = s.SessionID
+			}
+
+			views = append(views, v)
 		}
 		return sessionRefreshMsg{
-			statuses:         statuses,
+			views:            views,
 			externalPIDs:     externalPIDs,
 			externalSessions: externalSessions,
-			strays:           strays,
 		}
 	}
 }
 
-func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
-	items := m.list.Items()
-	activeCount := 0
-	attentionCount := 0
+// knownProjectPath returns the ProjectItem name for cwd if cwd is a known
+// project path, or "" otherwise.
+func knownProjectPath(projectNames map[string]string, cwd string) string {
+	return projectNames[cwd]
+}
 
-	// Build set of known project paths for worktree matching
-	projectPaths := make(map[string]string) // projectPath → projectName
-	for _, item := range items {
-		pi, ok := item.(ProjectItem)
-		if !ok {
+// worktreeParent splits a ".worktrees/<branch>" cwd into (parentPath,
+// parentName, branch). parentName is "" when the parent project isn't in
+// the projectNames map (rare; orphaned worktree).
+func worktreeParent(cwd string, projectNames map[string]string) (string, string, string) {
+	idx := strings.Index(cwd, ".worktrees/")
+	if idx < 0 {
+		return "", "", ""
+	}
+	parentPath := cwd[:idx+len(".worktrees/")-1]
+	parentPath = strings.TrimSuffix(parentPath, ".worktrees")
+	branch := filepath.Base(cwd)
+	return parentPath, projectNames[parentPath], branch
+}
+
+// resolveSessionWindows mirrors sessionToWindowMap but takes the sessions as
+// a pre-fetched argument so it runs cleanly off-goroutine.
+func resolveSessionWindows(tc *ttmux.Client, sessions []claude.Session) map[string]string {
+	result := map[string]string{}
+	if tc == nil || len(sessions) == 0 {
+		return result
+	}
+	windows, err := tc.ListWindows()
+	if err != nil || len(windows) == 0 {
+		return result
+	}
+	for _, w := range windows {
+		panePIDs, err := tc.WindowPanePIDs(w.ID)
+		if err != nil || len(panePIDs) == 0 {
 			continue
 		}
-		projectPaths[pi.project.Path] = pi.project.Name
+		for i := range sessions {
+			if _, already := result[sessions[i].SessionID]; already {
+				continue
+			}
+			if claude.IsDescendantOf(sessions[i].PID, panePIDs) {
+				result[sessions[i].SessionID] = w.Name
+			}
+		}
 	}
+	return result
+}
+
+// composeFallbackWindow returns the bare composed tmux window name for a
+// view when the session's real window can't be resolved via PID chain
+// (usually because the session is mid-launch).
+func composeFallbackWindow(v sessionView) string {
+	if v.IsStray {
+		return v.ProjectName
+	}
+	if v.IsWorktree {
+		branch := strings.TrimPrefix(v.ProjectName, "@")
+		return ttmux.ComposeWindowName(v.Parent, branch, "")
+	}
+	return ttmux.ComposeWindowName(v.ProjectName, "", "")
+}
+
+// parseWindowIndex returns the sibling ordinal from a window name's
+// [suffix]: 0 for a bare window, N for "[N]", -1 for a custom-title suffix
+// like "[foo]". Stray windows (which don't follow the project/branch
+// naming) return 0 too.
+func parseWindowIndex(name string) int {
+	_, _, suffix, ok := ttmux.ParseWindowName(name)
+	if !ok || suffix == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(suffix); err == nil {
+		return n
+	}
+	return -1
+}
+
+func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
+	items := m.list.Items()
 
 	// Stash external-session metadata so the import prompt can reach it later.
 	m.externalPIDs = polled.externalPIDs
 	m.externalSessions = polled.externalSessions
-	m.strays = polled.strays
 
-	// Detect worktree sessions: CWDs containing ".worktrees/" that map to a known project
-	worktrees := make(map[string][]WorktreeStatus)
-	for cwd, status := range polled.statuses {
-		if idx := strings.Index(cwd, ".worktrees/"); idx >= 0 {
-			parentPath := cwd[:idx+len(".worktrees/")-1] // strip trailing "/"
-			parentPath = strings.TrimSuffix(parentPath, ".worktrees")
-			if projectName, ok := projectPaths[parentPath]; ok {
-				branch := filepath.Base(cwd)
-				worktrees[parentPath] = append(worktrees[parentPath], WorktreeStatus{
-					Branch:     branch,
-					Path:       cwd,
-					WindowName: projectName + "@" + branch,
-					Status:     status,
-				})
+	// Apply notification-state overrides per session. notifState is keyed by
+	// session ID (set in handleNotification), so concurrent sessions sharing
+	// a CWD don't bleed into each other.
+	views := make([]sessionView, len(polled.views))
+	copy(views, polled.views)
+	for i := range views {
+		if override, ok := m.notifState[views[i].SessionID]; ok {
+			// Permission always wins. Idle only wins when the poll didn't
+			// already detect idle via JSONL.
+			if override == StatusPermission {
+				views[i].Status = StatusPermission
+			} else if override == StatusIdle && views[i].Status == StatusActive {
+				views[i].Status = StatusIdle
 			}
 		}
 	}
-	m.activeWorktrees = worktrees
+	m.sessionViews = views
+
+	// Aggregate per project path for the left-column ProjectItem dot.
+	// Priority ranking: Permission > Idle > Active > External > None.
+	projectAgg := make(map[string]SessionStatus)
+	for _, v := range views {
+		if v.IsStray {
+			continue // strays don't color a ProjectItem
+		}
+		key := v.ProjectPath
+		if v.IsWorktree {
+			// Worktree sessions roll up into their parent project's dot.
+			// ProjectPath already points at the parent path for worktrees.
+		}
+		if rank(v.Status) > rank(projectAgg[key]) {
+			projectAgg[key] = v.Status
+		}
+	}
+
+	// Count totals for the title bar.
+	activeCount := 0
+	attentionCount := 0
+	for _, v := range views {
+		switch v.Status {
+		case StatusExternal:
+			// External sessions aren't "mo sessions" — don't count as active.
+		case StatusIdle, StatusPermission:
+			activeCount++
+			attentionCount++
+		case StatusActive:
+			activeCount++
+		}
+	}
 
 	for i, item := range items {
 		pi, ok := item.(ProjectItem)
 		if !ok {
 			continue
 		}
-
-		// Notification-based status takes priority for permission prompts
-		if notifStatus, ok := m.notifState[pi.project.Path]; ok && notifStatus == StatusPermission {
-			pi.status = StatusPermission
-			attentionCount++
-			activeCount++
-		} else if polledStatus, ok := polled.statuses[pi.project.Path]; ok {
-			// Use poll-based status (detects idle from JSONL, or external marker)
-			pi.status = polledStatus
-			switch polledStatus {
-			case StatusIdle:
-				attentionCount++
-				activeCount++
-			case StatusExternal:
-				// External sessions aren't "mo sessions" — don't count as active.
-			default:
-				activeCount++
-			}
+		if st, ok := projectAgg[pi.project.Path]; ok {
+			pi.status = st
 		} else {
 			pi.status = StatusNone
 		}
-
-		// Count active worktree sessions for this project
-		for _, wt := range worktrees[pi.project.Path] {
-			activeCount++
-			if wt.Status == StatusIdle {
-				attentionCount++
-			}
-		}
-
 		items[i] = pi
 	}
 
@@ -1967,6 +2052,23 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.refreshDashSessions()
 	m.syncWindowTitles()
 	m.writeStateFile()
+}
+
+// rank orders SessionStatus values for project-level aggregation.
+// Higher = takes priority when a project has multiple sessions.
+func rank(s SessionStatus) int {
+	switch s {
+	case StatusPermission:
+		return 4
+	case StatusIdle:
+		return 3
+	case StatusActive:
+		return 2
+	case StatusExternal:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // syncWindowTitles reads the latest custom-title entry for each live Claude
@@ -2056,13 +2158,39 @@ func (m *Model) writeStateFile() {
 		return
 	}
 
-	// Fetch all tmux windows once so we can append per-project/per-worktree
-	// sibling entries (windows whose parsed name has a non-empty suffix).
-	// In the single-session world this loop produces nothing and the output
-	// is identical to before.
-	var allWindows []ttmux.Window
-	if m.tmux != nil {
-		allWindows, _ = m.tmux.ListWindows()
+	// Index the session views by the parent they render under.
+	// - "projects" (primary + siblings on main checkout): key = projectPath
+	// - worktrees:                                          key = projectPath|branch
+	// - strays (git-backed): appended after known projects
+	// - externals:           appended in their own section
+	mainByProject := map[string][]sessionView{}
+	worktreeByKey := map[string][]sessionView{}
+	var stray, external []sessionView
+
+	for _, v := range m.sessionViews {
+		if v.IsStray {
+			if v.Section == "external" {
+				external = append(external, v)
+			} else {
+				stray = append(stray, v)
+			}
+			continue
+		}
+		if v.IsWorktree {
+			key := v.ProjectPath + "|" + strings.TrimPrefix(v.ProjectName, "@")
+			worktreeByKey[key] = append(worktreeByKey[key], v)
+			continue
+		}
+		mainByProject[v.ProjectPath] = append(mainByProject[v.ProjectPath], v)
+	}
+
+	// Sort siblings within each group by Index (primary=0 first, ordinals next,
+	// then custom-title windows). Stable within ties.
+	for k := range mainByProject {
+		sortViewsForDisplay(mainByProject[k])
+	}
+	for k := range worktreeByKey {
+		sortViewsForDisplay(worktreeByKey[k])
 	}
 
 	var projects []state.ProjectState
@@ -2071,96 +2199,56 @@ func (m *Model) writeStateFile() {
 		if !ok {
 			continue
 		}
-		var statusStr string
-		switch pi.status {
-		case StatusActive:
-			statusStr = "active"
-		case StatusIdle:
-			statusStr = "idle"
-		case StatusPermission:
-			statusStr = "permission"
-		case StatusExternal:
-			statusStr = "external"
-		default:
-			statusStr = "none"
-		}
-		// Emit the bare primary row only when a tmux window by that name
-		// exists — or when the project has no sessions at all (StatusNone,
-		// placeholder row so the sidebar shows the project). Skipping in
-		// the "all sessions renamed away from bare" case avoids emitting a
-		// state entry that points at a non-existent window.
-		if pi.status == StatusNone || windowNameExists(allWindows, pi.project.Name) {
+
+		// Main-checkout rows: one per live session. If none, emit a
+		// placeholder StatusNone row so the sidebar still lists the project.
+		views := mainByProject[pi.project.Path]
+		if len(views) == 0 {
 			projects = append(projects, state.ProjectState{
 				Name:       pi.project.Name,
 				Path:       pi.project.Path,
 				WindowName: pi.project.Name,
-				Status:     statusStr,
+				Status:     "none",
 				Section:    "projects",
 			})
+		} else {
+			// Main-checkout rows: parent stays "" (only worktree rows get a
+			// parent — the sidebar indents them under it).
+			for _, v := range views {
+				projects = append(projects, viewToProjectState(v, "", pi.project.Name))
+			}
 		}
 
-		// Sibling sessions for this project's main checkout (no branch).
-		projects = appendSiblingEntries(projects, allWindows, pi.project.Name, "", pi.project.Path, pi.project.Name, "")
-
-		// Append worktree entries for this project
-		for _, wt := range m.activeWorktrees[pi.project.Path] {
-			wtStatus := "active"
-			switch wt.Status {
-			case StatusIdle:
-				wtStatus = "idle"
-			case StatusPermission:
-				wtStatus = "permission"
+		// Worktrees for this project: enumerate distinct branches we saw.
+		// Each branch may host multiple sessions (primary + siblings).
+		branchesSeen := map[string]bool{}
+		var branchOrder []string
+		for key := range worktreeByKey {
+			if !strings.HasPrefix(key, pi.project.Path+"|") {
+				continue
 			}
-			// Same skip for worktree primaries whose bare window was renamed.
-			if windowNameExists(allWindows, wt.WindowName) {
-				projects = append(projects, state.ProjectState{
-					Name:       "@" + wt.Branch,
-					Path:       wt.Path,
-					WindowName: wt.WindowName,
-					Status:     wtStatus,
-					Parent:     pi.project.Name,
-					Section:    "projects",
-				})
+			branch := strings.TrimPrefix(key, pi.project.Path+"|")
+			if !branchesSeen[branch] {
+				branchesSeen[branch] = true
+				branchOrder = append(branchOrder, branch)
 			}
-
-			// Sibling sessions for this worktree's branch.
-			projects = appendSiblingEntries(projects, allWindows, pi.project.Name, wt.Branch, wt.Path, "@"+wt.Branch, pi.project.Name)
+		}
+		sort.Strings(branchOrder)
+		for _, branch := range branchOrder {
+			for _, v := range worktreeByKey[pi.project.Path+"|"+branch] {
+				rowName := "@" + branch
+				projects = append(projects, viewToProjectState(v, pi.project.Name, rowName))
+			}
 		}
 	}
 
-	// Strays: git-backed go into the projects section with branch info;
-	// non-git strays go into a dedicated external section so the sidebar
-	// can group them below known projects.
-	for _, sr := range m.strays {
-		status := "active"
-		switch sr.Status {
-		case StatusIdle:
-			status = "idle"
-		case StatusPermission:
-			status = "permission"
-		case StatusExternal:
-			status = "external"
-		}
-		if sr.RepoRoot != "" {
-			gs := project.GetGitStatus(sr.RepoRoot)
-			projects = append(projects, state.ProjectState{
-				Name:       sr.Name,
-				Path:       sr.CWD, // launch path on import, not the repo root
-				WindowName: sr.Name,
-				Status:     status,
-				Section:    "projects",
-				Branch:     gs.Branch,
-				Dirty:      gs.Dirty,
-			})
-		} else {
-			projects = append(projects, state.ProjectState{
-				Name:       sr.Name,
-				Path:       sr.CWD,
-				WindowName: sr.Name,
-				Status:     status,
-				Section:    "external",
-			})
-		}
+	// Strays: git-backed go into the projects section; externals go in their
+	// own section so the sidebar can group them below known projects.
+	for _, v := range stray {
+		projects = append(projects, viewToProjectState(v, "", v.ProjectName))
+	}
+	for _, v := range external {
+		projects = append(projects, viewToProjectState(v, "", v.ProjectName))
 	}
 
 	sessionName := ""
@@ -2186,35 +2274,74 @@ func (m *Model) writeStateFile() {
 	state.Write(m.stateFilePath, sf)
 }
 
-// appendSiblingEntries walks the tmux window list for siblings of a given
-// project/branch (windows whose parsed name has the same project+branch
-// but a non-empty suffix) and appends one state.ProjectState per sibling.
-// rowName + parent mirror the fields used by the primary entry so the
-// sidebar groups siblings under the same header. The suffix is folded into
-// the display Name (e.g. "unky-mo [2]", "@feature [debug-oauth]") so the
-// sidebar can distinguish siblings from the primary without parsing window
-// names itself.
-func appendSiblingEntries(projects []state.ProjectState, windows []ttmux.Window, project, branch, path, rowName, parent string) []state.ProjectState {
-	for _, w := range windows {
-		p, b, suffix, ok := ttmux.ParseWindowName(w.Name)
-		if !ok || p != project || b != branch || suffix == "" {
-			continue
-		}
-		idx := 0
-		if n, err := strconv.Atoi(suffix); err == nil {
-			idx = n
-		}
-		projects = append(projects, state.ProjectState{
-			Name:       rowName + " [" + suffix + "]",
-			Path:       path,
-			WindowName: w.Name,
-			Status:     "active",
-			Parent:     parent,
-			Section:    "projects",
-			Index:      idx,
-		})
+// viewToProjectState converts one sessionView into a state.ProjectState.
+// rowBaseName + parent control how the Name renders for siblings (e.g.
+// "unky-mo [2]", "@feature [debug-oauth]") so the sidebar picks them up
+// correctly. Parent is "" for main-checkout rows and strays; the parent
+// project name for worktree rows.
+func viewToProjectState(v sessionView, parent, rowBaseName string) state.ProjectState {
+	name := rowBaseName
+	// When the window has a suffix (sibling ordinal or custom title), fold it
+	// into the display Name. Primary (Index=0, suffix-less) keeps the base.
+	if _, _, suffix, ok := ttmux.ParseWindowName(v.WindowName); ok && suffix != "" {
+		name = rowBaseName + " [" + suffix + "]"
 	}
-	return projects
+	ps := state.ProjectState{
+		Name:       name,
+		Path:       v.CWD,
+		WindowName: v.WindowName,
+		Status:     statusToString(v.Status),
+		Section:    v.Section,
+		SessionID:  v.SessionID,
+		Index:      v.Index,
+		Parent:     parent,
+	}
+	if v.IsStray {
+		ps.Branch = v.Branch
+		ps.Dirty = v.Dirty
+	}
+	return ps
+}
+
+// sortViewsForDisplay orders views within a (project, branch) group so the
+// primary-ish row renders first, ordinal siblings next, custom-title
+// windows last. Index conventions: 0 = bare primary, 2+ = ordinal, -1 =
+// custom title (unknown ordering — fall back to WindowName alphabetical).
+func sortViewsForDisplay(views []sessionView) {
+	sort.SliceStable(views, func(i, j int) bool {
+		ai, bi := views[i].Index, views[j].Index
+		// Map to a sort rank: bare(0) < ordinal(>=2) < custom(-1)
+		rank := func(n int) int {
+			switch {
+			case n == 0:
+				return 0
+			case n >= 2:
+				return n
+			default:
+				return 1_000_000
+			}
+		}
+		ri, rj := rank(ai), rank(bi)
+		if ri != rj {
+			return ri < rj
+		}
+		return views[i].WindowName < views[j].WindowName
+	})
+}
+
+func statusToString(s SessionStatus) string {
+	switch s {
+	case StatusActive:
+		return "active"
+	case StatusIdle:
+		return "idle"
+	case StatusPermission:
+		return "permission"
+	case StatusExternal:
+		return "external"
+	default:
+		return "none"
+	}
 }
 
 func (m Model) projectDetailView() string {
@@ -2727,16 +2854,22 @@ func formatAge(d time.Duration) string {
 }
 
 func (m *Model) handleNotification(n notify.Notification) {
+	// notifState is keyed by session ID — a permission prompt on one
+	// sibling must not color the other. If the hook payload lacks a
+	// session ID (older hook script), fall back to the project path.
+	key := n.SessionID
+	if key == "" {
+		key = n.ProjectPath
+	}
 	switch n.Type {
 	case notify.NotifyIdlePrompt:
-		m.notifState[n.ProjectPath] = StatusIdle
+		m.notifState[key] = StatusIdle
 		m.list.NewStatusMessage(fmt.Sprintf("● %s needs input", filepath.Base(n.ProjectPath)))
 	case notify.NotifyPermissionPrompt:
-		m.notifState[n.ProjectPath] = StatusPermission
+		m.notifState[key] = StatusPermission
 		m.list.NewStatusMessage(fmt.Sprintf("● %s needs permission", filepath.Base(n.ProjectPath)))
 	case notify.NotifySessionStop:
-		// Clear notification status when session completes a turn
-		delete(m.notifState, n.ProjectPath)
+		delete(m.notifState, key)
 	}
 }
 

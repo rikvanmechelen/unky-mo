@@ -79,7 +79,8 @@ A single project or worktree can host more than one Claude session. The first se
 
 - **Key**: `n` in main TUI. If no live session exists at the target, launches immediately. If one exists, opens a `s`/`p`/`c`/`esc` prompt: `s` switch to existing, `p` park current (SIGINT claude + `kill-window` so the sidebar dies with it) then launch fresh in the same primary name, `c` add a concurrent sibling at the next free ordinal.
 - **Window composition**: `internal/tmux/naming.go` owns `ComposeWindowName` / `ParseWindowName` / `NextAvailableOrdinal`. Every launch site that could produce duplicates must go through these.
-- **Sibling attribution**: a sibling window's Claude session ID is recovered by walking tmux pane PIDs (`tmux.WindowPanePIDs`) and matching `claude.LiveSessions()` via `IsDescendantOf`. See `sessionToWindowMap` in `internal/tui/app.go`.
+- **Sibling attribution**: a sibling window's Claude session ID is recovered by walking tmux pane PIDs (`tmux.WindowPanePIDs`) and matching `claude.LiveSessions()` via `IsDescendantOf`. See `sessionToWindowMap` (main-goroutine) and `resolveSessionWindows` (off-goroutine variant called from the poll) in `internal/tui/app.go`.
+- **Status attribution**: the 5s poll (`refreshSessions`) emits one `sessionView` per live session with its own `Status`; `updateProjectStatuses` applies `notifState[sessionID]` overrides and stashes the slice on `m.sessionViews`. Both the dashboard and the state file iterate that slice, so every session — primary, sibling, renamed primary, worktree sibling — carries its own status. `notifState` is keyed by session ID so a permission prompt on one sibling never colors its neighbor.
 - **Primary window resolver**: since primaries can now be renamed too, flows that need to act on "the current primary" (`n` menu, `a` attach, `r` resume) call `primaryWindowForTarget(project, branch, cwd)` — it picks the oldest live session at the target and looks up its real window name via `sessionToWindowMap`. Never compose a primary window name from `(project, branch)` alone without this check, or renamed windows won't be found.
 - **Detail-view `enter`**: `detailRow.tmuxWindow` is populated from that map so selecting a live session lands in its real window instead of recomputing `project@branch`.
 - **Sync caveat (known gap)**: `internal/sync/sync.go` hashes the project name to a single directory — pushing a second session for the same project overwrites the first. Multi-session sync is not yet implemented.
@@ -118,7 +119,7 @@ Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When d
 
 Worktrees use the `<project>.worktrees/<branch>` directory convention. Session detection matches CWDs containing `.worktrees/` back to parent projects by stripping the suffix to recover the main project path.
 
-**Data flow**: `updateProjectStatuses()` detects worktree CWDs → stores in `m.activeWorktrees` → `writeStateFile()` emits state entries with `Parent` field → sidebar reads and renders them indented under the parent.
+**Data flow**: `refreshSessions` classifies each live session and emits one `sessionView` per session (`ProjectPath` + `Parent` + `IsWorktree` flags) → `updateProjectStatuses` applies notification overrides and stashes them on `m.sessionViews` → `writeStateFile` and `refreshDashSessions` iterate the same view list. Worktree sessions have `Parent` set to the parent project's name so the sidebar renders them indented under the parent.
 
 - **Window naming**: worktree windows are named `<project>@<branch>` (e.g. `unky-mo@feature-auth`)
 - **State file entries**: worktree entries have `name: "@branch"`, `parent: "project"`, and their own status
@@ -139,7 +140,7 @@ Claude hooks → notify-hook.sh → Unix socket → Main TUI → state file → 
 `internal/state/state.go` defines the shared JSON state written by the main TUI (atomic temp+rename) and polled by each sidebar every 1s. Path is configurable via `Config.StateFilePath`, defaulting to `/tmp/unky-mo-state.json`.
 
 - **`StateFile`**: `tmux_session` (string), `projects` ([]ProjectState), `updated_at` (time), `usage` (*UsageState, optional).
-- **`ProjectState`** — one entry **per tmux window** (multiple entries can share `Name`/`Parent` for concurrent siblings; distinguished by `WindowName` + `SessionID`): `name`, `path`, `window_name`, `status` (`"none"` | `"active"` | `"idle"` | `"permission"` | `"external"`), `parent` (for worktree/sibling rows), `section` (`"projects"` | `"external"`), `branch` + `dirty` (git-backed strays only), `session_id`, `index` (0 = primary, 2+ = sibling ordinal).
+- **`ProjectState`** — one entry **per live Claude session**, plus one placeholder per zero-session known project (so the sidebar still lists empty projects with a dim dot). Concurrent siblings / renamed primaries produce separate entries, distinguished by `WindowName` + `SessionID`. Fields: `name`, `path`, `window_name`, `status` (`"none"` | `"active"` | `"idle"` | `"permission"` | `"external"`), `parent` (for worktree/sibling rows), `section` (`"projects"` | `"external"`), `branch` + `dirty` (git-backed strays only), `session_id`, `index` (0 = primary, 2+ = sibling ordinal, -1 = custom-title window).
 - **`UsageState`**: `five_hour_pct`, `seven_day_pct` (ints 0–100), their `*_resets_at` timestamps, `fetched_at`, `stale`, `auth_error`.
 - Writer is the main TUI — no sidebar ever writes. Sidebars only read. Re-written on every 5s session-refresh tick, on every notification event, and after any user action that changes state.
 
