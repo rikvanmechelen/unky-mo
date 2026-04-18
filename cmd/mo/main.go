@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -591,15 +592,22 @@ func syncCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	listSyncCmd := &cobra.Command{
 		Use:   "list",
-		Short: "List available sessions in the sync repo",
+		Short: "List available sessions in the sync repo, grouped by project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
-			sessions, err := moSync.List(syncDir)
+			noPull, _ := cmd.Flags().GetBool("no-pull")
+
+			var sessions []moSync.SessionMeta
+			if noPull {
+				sessions, err = moSync.ListLocal(syncDir)
+			} else {
+				sessions, err = moSync.List(syncDir)
+			}
 			if err != nil {
 				return err
 			}
@@ -607,22 +615,107 @@ func syncCmd() *cobra.Command {
 				fmt.Println("No synced sessions found")
 				return nil
 			}
-			for _, s := range sessions {
-				title := s.Title
-				if title == "" {
-					title = s.SessionID[:8] + "..."
-				}
-				age := time.Since(s.PushedAt).Truncate(time.Minute)
-				marker := ""
-				if _, err := findProjectOrWorktree(cfg, s.ProjectName); err != nil {
-					marker = "  (no local repo)"
-				}
-				fmt.Printf("  %-25s %s  from %s  %s ago%s\n", s.ProjectName, title, s.Hostname, age, marker)
+
+			// Group entries by base project name ("foo" and "foo@branch" both
+			// group under "foo"). Entries without an "@" are the main project;
+			// entries with "@" are worktree scopes.
+			type entry struct {
+				branch string // "" for main-project scope
+				meta   moSync.SessionMeta
 			}
-			fmt.Printf("\n%d synced sessions\n", len(sessions))
+			groups := map[string][]entry{}
+			var order []string
+			for _, s := range sessions {
+				base := s.ProjectName
+				branch := ""
+				if i := strings.Index(s.ProjectName, "@"); i >= 0 {
+					base = s.ProjectName[:i]
+					branch = s.ProjectName[i+1:]
+				}
+				if _, ok := groups[base]; !ok {
+					order = append(order, base)
+				}
+				groups[base] = append(groups[base], entry{branch: branch, meta: s})
+			}
+			sort.Strings(order)
+
+			total := 0
+			for _, base := range order {
+				entries := groups[base]
+				sort.Slice(entries, func(i, j int) bool {
+					// main first, then worktrees alphabetically by branch
+					if entries[i].branch == "" {
+						return true
+					}
+					if entries[j].branch == "" {
+						return false
+					}
+					return entries[i].branch < entries[j].branch
+				})
+
+				basePath, baseErr := findProjectOrWorktree(cfg, base)
+				headerSuffix := ""
+				if baseErr != nil {
+					headerSuffix = "  (no local project)"
+				}
+				fmt.Printf("%s%s\n", base, headerSuffix)
+
+				for _, e := range entries {
+					scope := "(main)"
+					if e.branch != "" {
+						scope = "@" + e.branch
+					}
+					title := e.meta.Title
+					if title == "" {
+						title = "(untitled)"
+					}
+					shortID := e.meta.SessionID
+					if len(shortID) > 8 {
+						shortID = shortID[:8]
+					}
+					age := time.Since(e.meta.PushedAt).Truncate(time.Minute)
+
+					// Resolve the local path for this scope so we can report
+					// whether the decrypted JSONL is already on disk.
+					localPath := ""
+					if e.branch == "" {
+						localPath = basePath
+					} else if basePath != "" {
+						if wts, wtErr := project.ListWorktrees(basePath); wtErr == nil {
+							for _, wt := range wts {
+								if wt.Branch == e.branch {
+									localPath = wt.Path
+									break
+								}
+							}
+						}
+					}
+
+					localMarker := ""
+					switch {
+					case localPath == "":
+						localMarker = "  [no local worktree]"
+					default:
+						jsonl := filepath.Join(claude.ProjectsDirForPath(localPath), e.meta.SessionID+".jsonl")
+						if _, err := os.Stat(jsonl); err == nil {
+							localMarker = "  [local ✓]"
+						} else {
+							localMarker = "  [not pulled]"
+						}
+					}
+
+					fmt.Printf("  %-22s %s  %s  from %s  %s ago%s\n",
+						scope, shortID, title, e.meta.Hostname, age, localMarker)
+					total++
+				}
+				fmt.Println()
+			}
+			fmt.Printf("%d synced sessions across %d project(s)\n", total, len(order))
 			return nil
 		},
-	})
+	}
+	listSyncCmd.Flags().Bool("no-pull", false, "skip git pull; list only what's already in the local sync clone")
+	cmd.AddCommand(listSyncCmd)
 
 	return cmd
 }
