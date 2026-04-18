@@ -2812,13 +2812,18 @@ func (m Model) launchClaudeInWindow(windowName, cwd, shellCmd string) tea.Msg {
 	if err != nil {
 		return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
 	}
+	claudePaneID, _ := m.tmux.PaneID(target)
 	// Use "exec" so the shell is replaced — when Claude exits, the pane
 	// closes immediately instead of leaving a lingering shell prompt.
 	if err := m.tmux.SendKeys(target, "exec "+shellCmd); err != nil {
 		return statusMsgEvent(fmt.Sprintf("Failed to launch claude: %v", err))
 	}
-	// Auto-close the whole window (including sidebar) when any pane exits.
-	m.tmux.SetWindowHook(target, "pane-exited", "kill-window")
+	// Auto-close the window (sidebar + any terminal-drawer panes) only when
+	// the Claude pane exits — not when the user closes a terminal drawer.
+	if claudePaneID != "" {
+		hook := fmt.Sprintf(`if-shell -F "#{==:#{hook_pane},%s}" "kill-window"`, claudePaneID)
+		m.tmux.SetWindowHook(target, "pane-exited", hook)
+	}
 	m.addSidebarPane(target, cwd)
 	if err := m.tmux.SwitchToWindow(target); err != nil {
 		return statusMsgEvent(fmt.Sprintf("Launched but failed to switch: %v", err))

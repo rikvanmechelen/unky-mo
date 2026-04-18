@@ -238,6 +238,20 @@ func (c *Client) GetPaneWindowID(paneID string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// PaneID returns the tmux pane ID (e.g. "%7") of the given target.
+func (c *Client) PaneID(target string) (string, error) {
+	cmd := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_id}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("get pane id for %s: %s", target, msg)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // SetWindowOption sets a user option on a tmux window. The target can be a
 // window ID (@N), window name, or pane ID (%N) — tmux resolves pane targets
 // to the containing window.
