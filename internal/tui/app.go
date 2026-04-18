@@ -465,12 +465,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.ExecProcess(exec.Command(self), nil)
 			}
 
-		case key.Matches(msg, keys.Detach):
+		case key.Matches(msg, keys.Suspend):
 			if m.tmux == nil {
 				return m, func() tea.Msg { return statusMsgEvent("tmux not available") }
 			}
 			if err := m.tmux.DetachClient(); err != nil {
-				return m, func() tea.Msg { return statusMsgEvent(fmt.Sprintf("detach failed: %v", err)) }
+				return m, func() tea.Msg { return statusMsgEvent(fmt.Sprintf("suspend failed: %v", err)) }
 			}
 			return m, nil
 
@@ -815,7 +815,7 @@ func (m Model) dashboardView() string {
 		{"a", "attach"},
 		{"/", "filter"},
 		{"?", "help"},
-		{"d", "detach"},
+		{"s", "suspend"},
 		{"q", "quit"},
 	})
 
@@ -851,7 +851,7 @@ func (m Model) helpView() string {
 			{"M", "Stash first, then check out in main"},
 		}},
 		{"Other", []footerBinding{
-			{"d", "Detach (leaves tmux session running; re-launch mo to resume)"},
+			{"s", "Suspend (leaves tmux session running; re-launch mo to resume)"},
 			{"?", "Toggle this help"},
 			{"ctrl+r", "Restart (reload new binary)"},
 			{"q", "Quit"},
@@ -1254,7 +1254,7 @@ func (m Model) projectDetailView() string {
 				{"W", "new branch"},
 				{"n", "session"},
 				{"o", "PR"},
-				{"d", "detach"},
+				{"s", "suspend"},
 				{"esc", "back"},
 			}
 		}

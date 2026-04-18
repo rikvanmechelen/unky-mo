@@ -17,7 +17,7 @@ type keyMap struct {
 	Checkout         key.Binding
 	Help             key.Binding
 	Restart          key.Binding
-	Detach           key.Binding // "d" — detach tmux client, leave session running
+	Suspend          key.Binding // "s" — suspend (tmux detach-client); session keeps running
 	Quit             key.Binding
 }
 
@@ -78,9 +78,9 @@ var keys = keyMap{
 		key.WithKeys("ctrl+r"),
 		key.WithHelp("ctrl+r", "restart"),
 	),
-	Detach: key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "detach"),
+	Suspend: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "suspend"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
