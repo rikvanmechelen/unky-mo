@@ -129,7 +129,7 @@ type Model struct {
 	detailPRExpanded int            // index of expanded PR (-1 = none)
 	detailPRDetail   *gh.PRDetail   // fetched detail for expanded PR
 	detailFocusLeft  bool           // true = left panel (sessions/worktrees), false = right (PRs)
-	syncedSessionIDs map[string]bool // session IDs that exist in the sync repo
+	syncedSessions map[string]moSync.SessionMeta // sync metadata keyed by session ID for the current detail project
 	// activeWorktrees tracks worktree sessions grouped by parent project path.
 	activeWorktrees map[string][]WorktreeStatus
 	// State file for sidebar instances
@@ -279,7 +279,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailPRErr = ""
 					m.detailPRExpanded = -1
 					m.detailPRDetail = nil
-					m.syncedSessionIDs = nil
+					m.syncedSessions = nil
 					m.detailFocusLeft = true
 					m.screen = ScreenProject
 					return m, tea.Batch(
@@ -516,7 +516,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case syncPullMsg:
-		m.syncedSessionIDs = msg.syncedIDs
+		m.syncedSessions = msg.synced
 		if msg.pulled && m.detailProject != nil {
 			// Rebuild rows to include the newly pulled session
 			m.buildDetailRows()
@@ -1242,10 +1242,16 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, selected bool, maxWidt
 		name = name[:maxName-3] + "..."
 	}
 
-	// Sync indicator
+	// Sync indicator — include source host + push age when metadata is available.
 	syncMark := ""
-	if m.syncedSessionIDs[rs.SessionID] {
+	if meta, ok := m.syncedSessions[rs.SessionID]; ok {
 		syncMark = " ⇅"
+		if meta.Hostname != "" {
+			syncMark += " " + meta.Hostname
+		}
+		if !meta.PushedAt.IsZero() {
+			syncMark += " " + formatAge(time.Since(meta.PushedAt))
+		}
 	}
 
 	line := fmt.Sprintf("%s%s %s  %s%s", cursor, statusStr, age, name, syncMark)
@@ -1566,14 +1572,14 @@ func (m Model) fetchPRDetail(number int) tea.Cmd {
 
 // syncPullMsg carries the result of an auto-sync-pull when opening a project.
 type syncPullMsg struct {
-	syncedIDs map[string]bool // session IDs that exist in the sync repo
-	pulled    bool            // true if a new session was pulled
+	synced map[string]moSync.SessionMeta // sync metadata keyed by session ID
+	pulled bool                          // true if a new session was pulled
 }
 
 func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 	return func() tea.Msg {
 		syncDir := moSync.DefaultSyncDir()
-		result := syncPullMsg{syncedIDs: make(map[string]bool)}
+		result := syncPullMsg{synced: make(map[string]moSync.SessionMeta)}
 
 		// List what's in the sync repo for this project
 		sessions, err := moSync.List(syncDir)
@@ -1581,17 +1587,31 @@ func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 			return result // silently fail — sync is optional
 		}
 
-		for _, s := range sessions {
-			if s.ProjectName == projectName {
-				result.syncedIDs[s.SessionID] = true
+		// Map each sync project name → local filesystem path. Main-project
+		// entries map to projectPath; worktree entries ("<project>@<branch>")
+		// resolve to a local worktree whose branch matches the suffix.
+		pathFor := map[string]string{projectName: projectPath}
+		worktrees, _ := project.ListWorktrees(projectPath)
+		prefix := projectName + "@"
+		for _, wt := range worktrees {
+			if wt.Path != projectPath && wt.Branch != "" {
+				pathFor[prefix+wt.Branch] = wt.Path
+			}
+		}
 
-				// Pull the session if we don't have it locally
-				localDir := claude.ProjectsDirForPath(projectPath)
-				localPath := localDir + "/" + s.SessionID + ".jsonl"
-				if _, err := os.Stat(localPath); os.IsNotExist(err) {
-					moSync.Pull(projectName, projectPath, syncDir)
-					result.pulled = true
-				}
+		for _, s := range sessions {
+			localPath, ok := pathFor[s.ProjectName]
+			if !ok {
+				continue
+			}
+			result.synced[s.SessionID] = s
+
+			// Pull the session if we don't have it locally
+			localDir := claude.ProjectsDirForPath(localPath)
+			jsonlPath := filepath.Join(localDir, s.SessionID+".jsonl")
+			if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+				moSync.Pull(s.ProjectName, localPath, syncDir)
+				result.pulled = true
 			}
 		}
 

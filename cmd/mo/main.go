@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -193,6 +194,31 @@ func findProject(cfg *config.Config, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("project %q not found. Run 'mo list' to see available projects", name)
+}
+
+// findProjectOrWorktree resolves a sync project name to a local filesystem
+// path. A bare name (e.g. "unky-mo") resolves to the project root; a
+// worktree name (e.g. "unky-mo@feature-branch") resolves to the local
+// worktree whose git branch matches the suffix.
+func findProjectOrWorktree(cfg *config.Config, name string) (string, error) {
+	base, branch, isWT := strings.Cut(name, "@")
+	mainPath, err := findProject(cfg, base)
+	if err != nil {
+		return "", err
+	}
+	if !isWT {
+		return mainPath, nil
+	}
+	wts, err := project.ListWorktrees(mainPath)
+	if err != nil {
+		return "", fmt.Errorf("listing worktrees for %s: %w", base, err)
+	}
+	for _, wt := range wts {
+		if wt.Path != mainPath && wt.Branch == branch {
+			return wt.Path, nil
+		}
+	}
+	return "", fmt.Errorf("no local worktree on branch %q for project %q", branch, base)
 }
 
 func startCmd() *cobra.Command {
@@ -450,7 +476,7 @@ func syncCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
-			projectPath, err := findProject(cfg, args[0])
+			projectPath, err := findProjectOrWorktree(cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -475,36 +501,44 @@ func syncCmd() *cobra.Command {
 
 			if len(args) == 0 {
 				resolver := func(name string) string {
-					path, err := findProject(cfg, name)
+					path, err := findProjectOrWorktree(cfg, name)
 					if err != nil {
 						return ""
 					}
 					return path
 				}
-				sessions, err := moSync.PullAll(syncDir, resolver)
+				results, err := moSync.PullAll(syncDir, resolver)
 				if err != nil {
 					return err
 				}
-				if len(sessions) == 0 {
+				if len(results) == 0 {
 					fmt.Println("No synced sessions found")
 					return nil
 				}
-				for _, s := range sessions {
-					title := s.Title
+				pulled := 0
+				for _, r := range results {
+					title := r.Meta.Title
 					if title == "" {
-						title = s.SessionID[:8] + "..."
+						title = r.Meta.SessionID[:8] + "..."
 					}
+					age := time.Since(r.Meta.PushedAt).Truncate(time.Minute)
 					marker := ""
-					if _, err := findProject(cfg, s.ProjectName); err != nil {
-						marker = "  (no local repo)"
+					if !r.Pulled {
+						if r.Skipped != "" {
+							marker = fmt.Sprintf("  (skipped: %s)", r.Skipped)
+						} else {
+							marker = "  (skipped)"
+						}
+					} else {
+						pulled++
 					}
-					fmt.Printf("  %-25s %s  from %s%s\n", s.ProjectName, title, s.Hostname, marker)
+					fmt.Printf("  %-25s %s  from %s  %s ago%s\n", r.Meta.ProjectName, title, r.Meta.Hostname, age, marker)
 				}
-				fmt.Printf("\nPulled %d sessions\n", len(sessions))
+				fmt.Printf("\nPulled %d of %d sessions\n", pulled, len(results))
 				return nil
 			}
 
-			projectPath, err := findProject(cfg, args[0])
+			projectPath, err := findProjectOrWorktree(cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -569,7 +603,7 @@ func syncCmd() *cobra.Command {
 				}
 				age := time.Since(s.PushedAt).Truncate(time.Minute)
 				marker := ""
-				if _, err := findProject(cfg, s.ProjectName); err != nil {
+				if _, err := findProjectOrWorktree(cfg, s.ProjectName); err != nil {
 					marker = "  (no local repo)"
 				}
 				fmt.Printf("  %-25s %s  from %s  %s ago%s\n", s.ProjectName, title, s.Hostname, age, marker)

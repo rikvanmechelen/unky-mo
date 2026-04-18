@@ -184,13 +184,23 @@ func ListLocal(syncDir string) ([]SessionMeta, error) {
 	return readAllMeta(key, syncDir)
 }
 
-// PullAll fetches every session in the sync repo and copies each JSONL to the
-// appropriate local Claude projects directory. Sessions whose project isn't
-// present locally are skipped with a warning (project metadata no longer
-// carries the source machine's path).
+// PullAll fetches every session in the sync repo and attempts to copy each
+// JSONL into the local Claude projects directory. The returned slice always
+// contains one entry per remote session — including ones that couldn't be
+// pulled locally (no matching project/worktree, decrypt failure, etc.) — so
+// callers can display the full inventory.
 type ProjectPathResolver func(projectName string) string
 
-func PullAll(syncDir string, resolve ProjectPathResolver) ([]SessionMeta, error) {
+// PullResult is one remote session returned by PullAll. Pulled is true when
+// the JSONL was successfully written into the local Claude projects dir.
+// Skipped holds a short reason when Pulled is false ("" when Pulled).
+type PullResult struct {
+	Meta    SessionMeta
+	Pulled  bool
+	Skipped string
+}
+
+func PullAll(syncDir string, resolve ProjectPathResolver) ([]PullResult, error) {
 	if err := ensureRepo(syncDir); err != nil {
 		return nil, err
 	}
@@ -207,7 +217,7 @@ func PullAll(syncDir string, resolve ProjectPathResolver) ([]SessionMeta, error)
 		return nil, err
 	}
 
-	var sessions []SessionMeta
+	var results []PullResult
 	for _, e := range entries {
 		if !e.IsDir() || !IsDirHash(e.Name()) {
 			continue
@@ -218,23 +228,29 @@ func PullAll(syncDir string, resolve ProjectPathResolver) ([]SessionMeta, error)
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", e.Name(), err)
 			continue
 		}
+		res := PullResult{Meta: *meta}
 		dstPath := resolve(meta.ProjectName)
 		if dstPath == "" {
-			fmt.Fprintf(os.Stderr, "skipping %s: no local workspace for project (run 'mo scan' after checking it out)\n", meta.ProjectName)
+			res.Skipped = "no local repo"
+			results = append(results, res)
 			continue
 		}
 		dstDir := claude.ProjectsDirForPath(dstPath)
 		if err := os.MkdirAll(dstDir, 0755); err != nil {
+			res.Skipped = fmt.Sprintf("mkdir: %v", err)
+			results = append(results, res)
 			continue
 		}
 		dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
 		if err := DecryptFile(key, filepath.Join(projectDir, sessionFilename), dstJSONL, adSession(e.Name())); err != nil {
-			fmt.Fprintf(os.Stderr, "skipping %s: decrypt session: %v\n", meta.ProjectName, err)
+			res.Skipped = fmt.Sprintf("decrypt: %v", err)
+			results = append(results, res)
 			continue
 		}
-		sessions = append(sessions, *meta)
+		res.Pulled = true
+		results = append(results, res)
 	}
-	return sessions, nil
+	return results, nil
 }
 
 // Migrate re-encrypts any legacy plaintext project directories in the sync
