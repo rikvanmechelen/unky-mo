@@ -84,6 +84,71 @@ func TestGroupAssignsEmptyBucketToUnmapped(t *testing.T) {
 	}
 }
 
+func TestStatusMapResolveEmptyStatusMapAllUnmapped(t *testing.T) {
+	sm := StatusMap{}
+	for _, raw := range []string{"In Progress", "Blocked", "Done", "Anything"} {
+		if got := sm.Resolve(raw); got != BucketUnmapped {
+			t.Errorf("empty map should send everything to Unmapped; %q → %q", raw, got)
+		}
+	}
+}
+
+func TestGroupSortsWithinEachBucket(t *testing.T) {
+	now := time.Now()
+	ts := []Ticket{
+		{ID: "A", Bucket: BucketInProgress, Priority: PriorityMedium, UpdatedAt: now.Add(-1 * time.Hour)},
+		{ID: "B", Bucket: BucketInProgress, Priority: PriorityHigh, InSprint: true, UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "C", Bucket: BucketTodo, Priority: PriorityLow, UpdatedAt: now},
+	}
+	groups := Group(ts)
+	if len(groups) != 2 {
+		t.Fatalf("want 2 groups, got %d", len(groups))
+	}
+	// First group is InProgress; B (in sprint + high) should precede A.
+	if groups[0].Bucket != BucketInProgress {
+		t.Errorf("want InProgress first, got %q", groups[0].Bucket)
+	}
+	if groups[0].Tickets[0].ID != "B" {
+		t.Errorf("sprint+high should sort first within bucket, got %q", groups[0].Tickets[0].ID)
+	}
+}
+
+func TestSortByRelevanceStableTieBreak(t *testing.T) {
+	// Identical keys → input order preserved (stable sort).
+	same := time.Now()
+	ts := []Ticket{
+		{ID: "A", Priority: PriorityMedium, UpdatedAt: same},
+		{ID: "B", Priority: PriorityMedium, UpdatedAt: same},
+		{ID: "C", Priority: PriorityMedium, UpdatedAt: same},
+	}
+	SortByRelevance(ts)
+	want := []string{"A", "B", "C"}
+	for i, v := range ts {
+		if v.ID != want[i] {
+			t.Errorf("stable-sort broke: position %d has %q, want %q", i, v.ID, want[i])
+		}
+	}
+}
+
+func TestDisplayLabel(t *testing.T) {
+	cases := map[Bucket]string{
+		BucketInProgress: "In Progress",
+		BucketBlocked:    "Blocked",
+		BucketReview:     "Review",
+		BucketTodo:       "To Do",
+		BucketUnmapped:   "Unmapped",
+	}
+	for b, want := range cases {
+		if got := DisplayLabel(b); got != want {
+			t.Errorf("DisplayLabel(%q) = %q, want %q", b, got, want)
+		}
+	}
+	// Unknown bucket falls through to the raw string.
+	if got := DisplayLabel(Bucket("custom")); got != "custom" {
+		t.Errorf("unknown bucket should return raw string, got %q", got)
+	}
+}
+
 func idsOf(ts []Ticket) []string {
 	out := make([]string, len(ts))
 	for i, t := range ts {

@@ -270,9 +270,12 @@ Everything above updates on the same 1s `stateTick`.
 
 ## Testing
 
-- Unit tests live alongside code: `internal/tmux/naming_test.go`, `internal/sync/crypto_test.go`, `internal/usage/*_test.go`, smoke tests in a couple of packages.
-- Run the full suite with `go test ./...`. There is no `make test` target.
-- No test for the main TUI (`internal/tui/`) or CLI (`cmd/mo/`) — UI correctness is validated manually.
+- **Always run `go test ./...` after any code change.** Failing tests are a signal — either the code regressed, or the test encoded a behavior that has legitimately changed. Never skip, delete, or comment out a test without first understanding what it's asserting. If a test is wrong, fix the test; if the code is wrong, fix the code. Do not "fix" a failing test by weakening its assertion to make it pass.
+- Unit tests live alongside code. Covered packages: `internal/claude` (JSONL parsing, idle detection, path encoding, PPID ancestry), `internal/config` (TOML load + defaults), `internal/notify` (Unix-socket server + JSON round-trip), `internal/state` (schema round-trip, atomic write), `internal/project` (real-git tempdir suites for branches + worktrees + guards), `internal/sync` (AES-GCM + HMAC), `internal/tickets` (status map, sort, slug, mapping), `internal/tickets/jira` (httptest-mocked `/rest/api/3/search/jql`), `internal/tmux` (naming), `internal/usage` (cache TTL decision tree, session token parsing). Smoke tests in `internal/usage` are skipped without credentials.
+- Run the full suite with `go test ./...`. There is no `make test` target. Also useful: `go test -race ./...` and `go vet ./...` before committing.
+- **Expected-to-fail tests** guarded by `//go:build expectfail` encode CLAUDE.md claims that may have drifted from the code. Run with `go test -tags expectfail ./...`. A failure here means either the code or the docs need to change — do not silence these without making that decision explicit. Current drift: `config.Load()`'s missing-file branch skips `StateFilePath` and `Tickets.*` defaults (see `internal/config/config_expectfail_test.go`).
+- Real-git tests in `internal/project/` create a fresh repo in `t.TempDir()` (`newGitRepo` helper) — they skip gracefully when `git` isn't on `$PATH`.
+- No test for the main TUI (`internal/tui/`) or CLI (`cmd/mo/`) — UI correctness is validated manually. When adding logic that is worth testing, extract it out of the bubbletea `Update` into a pure helper so it can be covered without a terminal harness.
 
 ## Conventions
 

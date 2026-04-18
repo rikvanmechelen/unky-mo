@@ -41,10 +41,25 @@ func TestBranchNameForTicket(t *testing.T) {
 		{"OP-175", "", "OP-175"},
 		{"", "orphan title", "orphan-title"},
 		{"", "", ""},
+		// Numeric-only IDs still work.
+		{"42", "go", "42-go"},
+		// All-non-alphanumeric titles slug to empty, so we fall back to ID-only.
+		{"OP-1", "!!!!", "OP-1"},
+		// Leading/trailing whitespace in ID is trimmed; empty title handled.
+		{"  OP-9  ", "", "OP-9"},
 	}
 	for _, tc := range tests {
 		if got := BranchNameForTicket(tc.id, tc.title); got != tc.want {
 			t.Errorf("BranchNameForTicket(%q, %q) = %q, want %q", tc.id, tc.title, got, tc.want)
+		}
+	}
+}
+
+func TestSlugifyOnlyNonAlphanumericIsEmpty(t *testing.T) {
+	cases := []string{"!!!", "   ", "---", "()()", "@#$%^"}
+	for _, c := range cases {
+		if got := Slugify(c); got != "" {
+			t.Errorf("Slugify(%q) should be empty, got %q", c, got)
 		}
 	}
 }

@@ -610,13 +610,24 @@ make install
 # Build only (local binary)
 go build -o mo ./cmd/mo
 
-# Run tests
-go vet ./...
+# Run tests (always do this before committing)
+go test ./...
+go test -race ./...              # data-race detector
+go vet ./...                     # static checks
+
+# Surface documented-but-drifted behavior (some failures are expected here)
+go test -tags expectfail ./...
 
 # Dev workflow: edit code → make install → ctrl+r in Mo to reload
 ```
 
 When developing Mo while using it, `ctrl+r` restarts the TUI and all sidebars to pick up the new binary.
+
+### Testing philosophy
+
+Unit tests live alongside the code they cover. Packages with active coverage: `claude`, `config`, `notify`, `state`, `project`, `sync`, `tickets`, `tickets/jira`, `tmux`, `usage`. The TUI (`internal/tui/`) has no automated tests — correctness is validated by running the binary. When adding non-trivial logic, prefer extracting it into a pure helper that can be tested without bubbletea.
+
+Tests under the `expectfail` build tag encode claims from `CLAUDE.md` that current code does not yet satisfy — running them reveals drift between docs and implementation. Failures there should be treated as prompts to patch either side, not ignored.
 
 ## tmux Tips
 
