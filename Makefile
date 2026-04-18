@@ -17,6 +17,11 @@ build:
 install: build
 	mkdir -p $(GOBIN)
 	cp $(BINARY) $(GOBIN)/$(BINARY)
+	@echo "Installed $(BINARY) to $(GOBIN)/$(BINARY)"
+	@case ":$$PATH:" in \
+		*":$(GOBIN):"*) ;; \
+		*) echo "Note: $(GOBIN) is not on your PATH. Add it to run '$(BINARY)' from anywhere." ;; \
+	esac
 
 clean:
 	rm -f $(BINARY)
