@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -2954,22 +2953,6 @@ func (m Model) restartSidebars() {
 	}
 }
 
-// addSidebarPane splits off a sidebar pane in the given window target
-// with the given cwd, then refocuses back to the main (left) pane.
-func (m Model) addSidebarPane(target, cwd string) {
-	if m.tmux == nil {
-		return
-	}
-	moPath, err := os.Executable()
-	if err != nil {
-		return
-	}
-	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	m.tmux.SplitWindow(target, 42, cwd, sidebarCmd)
-	// Refocus to the main pane (left/first pane)
-	m.tmux.SelectPane(target + ".0")
-}
-
 type statusMsgEvent string
 type clearStatusMsg struct{}
 
@@ -3280,54 +3263,19 @@ func (m *Model) clearPendingNewMenu() {
 	m.pendingNewResumeSession = ""
 }
 
-// signalAndWaitExit sends SIGINT to pid (so Claude flushes its JSONL cleanly),
-// waits up to ~2s for it to exit, then falls back to SIGTERM for another ~1s.
-// Silently no-ops on pid <= 0. Used by park-and-launch and cleanup flows.
-func signalAndWaitExit(pid int) {
-	if pid <= 0 {
-		return
-	}
-	if proc, err := os.FindProcess(pid); err == nil {
-		_ = proc.Signal(syscall.SIGINT)
-	}
-	for i := 0; i < 20; i++ {
-		if !claude.IsAlive(pid) {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if proc, err := os.FindProcess(pid); err == nil {
-		_ = proc.Signal(syscall.SIGTERM)
-	}
-	for i := 0; i < 10; i++ {
-		if !claude.IsAlive(pid) {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// parkAndLaunchPrimary signals the given Claude PID to exit, waits briefly
-// for it to die, explicitly kills its tmux window so the sidebar and any
-// terminal-drawer panes go with it, and launches a Claude session in a
-// new window with the same primary name. When resumeID is non-empty the
-// replacement resumes that session; otherwise it starts fresh.
+// parkAndLaunchPrimary is a thin TUI adapter over ops.ParkAndLaunch.
 func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID string) tea.Cmd {
 	return func() tea.Msg {
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
+		_, err := ops.ParkAndLaunch(m.ops, ops.ParkParams{
+			PID:               pid,
+			PrimaryWindowName: primaryWindowName,
+			Cwd:               cwd,
+			ResumeID:          resumeID,
+		})
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Park failed: %v", err))
 		}
-		signalAndWaitExit(pid)
-		// Kill the window explicitly so the sidebar + any terminal-drawer
-		// panes are torn down alongside the claude pane. The pane-exited
-		// hook would usually handle this when claude exits, but we don't
-		// want to race the hook before creating the replacement window.
-		_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + primaryWindowName)
-		shellCmd := "claude"
-		if resumeID != "" {
-			shellCmd = "claude --resume " + resumeID
-		}
-		return m.launchClaudeInWindow(primaryWindowName, cwd, shellCmd)
+		return statusMsgEvent("Launched Claude in " + primaryWindowName)
 	}
 }
 
@@ -3342,17 +3290,15 @@ func (m *Model) clearPendingCleanupMenu() {
 	m.pendingCleanupSessions = nil
 }
 
-// killCleanupSessions SIGINTs every session in the list, waits for each to
-// exit, then explicitly kills its tmux window. Emits a statusMsgEvent so the
-// dashboard shows how many sessions were cleared before the action menu
-// advances.
+// killCleanupSessions is a thin TUI adapter over ops.CleanupWorktree's
+// kill-only mode (DeleteBranch=false, no worktree removal — just the kill
+// step). We pass an empty branch to skip the worktree removal; the callers
+// always follow up with runCleanup for the actual removal.
 func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 	return func() tea.Msg {
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
-		}
-		// Resolve each session's window via PID-chain match so we can kill
-		// the whole window (not just the claude pane).
+		// Kill-only: re-use ops.CleanupWorktree would also try to remove a
+		// worktree by branch, which we don't have here. Use ops.SignalAndWaitExit
+		// + window resolution directly.
 		windowBySession := map[string]string{}
 		if windows, err := m.tmux.ListWindows(); err == nil {
 			for _, w := range windows {
@@ -3371,7 +3317,7 @@ func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 			}
 		}
 		for _, s := range sessions {
-			signalAndWaitExit(s.PID)
+			ops.SignalAndWaitExit(m.ops, s.PID)
 			if name, ok := windowBySession[s.SessionID]; ok {
 				_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + name)
 			}
@@ -3380,61 +3326,34 @@ func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 	}
 }
 
-// runCleanup removes the worktree for the given branch (if one exists) and
-// optionally deletes the local branch. Emits branchesChangedMsg so the
-// detail view rebuilds.
+// runCleanup is a thin TUI adapter over ops.CleanupWorktree.
 func (m Model) runCleanup(projectPath, branch string, alsoDeleteBranch bool) tea.Cmd {
 	return func() tea.Msg {
-		var parts []string
-		// Remove worktree if one exists. Ignore "no worktree for branch" —
-		// plain branch rows legitimately have none.
-		if err := project.RemoveWorktree(projectPath, branch); err == nil {
-			parts = append(parts, "worktree removed")
-		} else if !strings.Contains(err.Error(), "no worktree found") {
-			return branchesChangedMsg{status: fmt.Sprintf("Remove worktree failed: %v", err)}
+		res, err := ops.CleanupWorktree(m.ops, ops.CleanupParams{
+			ProjectPath:  projectPath,
+			Branch:       branch,
+			DeleteBranch: alsoDeleteBranch,
+		})
+		if err != nil {
+			return branchesChangedMsg{status: err.Error()}
 		}
-		if alsoDeleteBranch {
-			if err := project.DeleteBranch(projectPath, branch); err != nil {
-				return branchesChangedMsg{status: fmt.Sprintf("Delete branch failed: %v", err)}
-			}
-			parts = append(parts, "branch deleted")
-		}
-		status := "Cleanup: " + branch
-		if len(parts) > 0 {
-			status += " (" + strings.Join(parts, ", ") + ")"
-		}
-		return branchesChangedMsg{status: status}
+		return branchesChangedMsg{status: res.Status}
 	}
 }
 
-// launchSiblingSession always creates a new concurrent sibling window for
-// the given (project, branch) target, even if a primary window already
-// exists. The sibling is named "project [N]" (or "project@branch [N]")
-// where N is the lowest unused ordinal. When resumeID is non-empty the
-// sibling resumes that session; otherwise it starts a fresh Claude.
+// launchSiblingSession is a thin TUI adapter over ops.LaunchSibling.
 func (m Model) launchSiblingSession(project, branch, cwd, resumeID string) tea.Cmd {
 	return func() tea.Msg {
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
-		}
-		if project == "" || cwd == "" {
-			return statusMsgEvent("No project selected")
-		}
-		windows, err := m.tmux.ListWindows()
+		res, err := ops.LaunchSibling(m.ops, ops.SiblingParams{
+			ProjectName: project,
+			Branch:      branch,
+			Cwd:         cwd,
+			ResumeID:    resumeID,
+		})
 		if err != nil {
-			return statusMsgEvent(fmt.Sprintf("Failed to list windows: %v", err))
+			return statusMsgEvent(fmt.Sprintf("Sibling launch failed: %v", err))
 		}
-		names := make([]string, 0, len(windows))
-		for _, w := range windows {
-			names = append(names, w.Name)
-		}
-		ordinal := ttmux.NextAvailableOrdinal(names, project, branch)
-		windowName := ttmux.ComposeWindowName(project, branch, ordinal)
-		shellCmd := "claude"
-		if resumeID != "" {
-			shellCmd = "claude --resume " + resumeID
-		}
-		return m.launchClaudeInWindow(windowName, cwd, shellCmd)
+		return statusMsgEvent("Launched Claude in " + res.Target)
 	}
 }
 
@@ -3540,44 +3459,22 @@ func (m Model) pullRemoteSessionAndLaunch(branch string, meta moSync.SessionMeta
 	}
 }
 
-// createWorktreeAndLaunch creates a new git worktree for the branch (creating
-// the branch if needed) and launches a Claude session in it. Emits a
-// worktreeCreatedMsg so Update can refresh detailWorktrees.
+// createWorktreeAndLaunch is a thin TUI adapter over ops.CreateWorktreeAndLaunch.
 func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
 	return func() tea.Msg {
 		p := m.detailProject
 		if p == nil {
 			return statusMsgEvent("No project selected")
 		}
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
-		}
-		wtPath, err := project.CreateWorktree(p.Path, branch)
+		res, err := ops.CreateWorktreeAndLaunch(m.ops, ops.WorktreeParams{
+			ProjectName: p.Name,
+			ProjectPath: p.Path,
+			Branch:      branch,
+		})
 		if err != nil {
-			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
+			return worktreeCreatedMsg{status: err.Error()}
 		}
-		windowName := p.Name + "@" + branch
-		var status string
-		// Prefer focusing a live (possibly renamed) session at this target.
-		if attempted, realWin, err := m.focusPrimaryIfLive(p.Name, branch, wtPath); attempted {
-			if err != nil {
-				status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
-			} else {
-				status = "Switched to " + realWin
-			}
-		} else if existed, err := m.focusIfExists(windowName); existed {
-			if err != nil {
-				status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
-			} else {
-				status = "Switched to " + windowName
-			}
-		} else {
-			launch := m.launchClaudeInWindow(windowName, wtPath, "claude")
-			if se, ok := launch.(statusMsgEvent); ok {
-				status = string(se)
-			}
-		}
-		return worktreeCreatedMsg{status: status}
+		return worktreeCreatedMsg{status: res.Status}
 	}
 }
 
@@ -3644,64 +3541,35 @@ func (m Model) resumeInDir(sessionID, cwd, windowName string) tea.Cmd {
 // next 5s tick.
 type sessionImportedMsg struct{ status string }
 
-// importExternalSession terminates an orphan claude running outside mo's tmux
-// session (e.g. started from a VS Code terminal) and resumes its conversation
-// in a fresh tmux window. The SIGTERM gives claude a moment to flush its
-// JSONL before the new process attaches to the same sessionID.
+// importExternalSession is a thin TUI adapter over ops.ImportExternalSession.
 func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string) tea.Cmd {
 	return func() tea.Msg {
-		if m.tmux == nil {
-			return sessionImportedMsg{status: "tmux not available"}
+		_, err := ops.ImportExternalSession(m.ops, ops.ImportParams{
+			PID:        pid,
+			SessionID:  sessionID,
+			Cwd:        cwd,
+			WindowName: windowName,
+		})
+		if err != nil {
+			return sessionImportedMsg{status: fmt.Sprintf("Import failed: %v", err)}
 		}
-		if pid > 0 {
-			if proc, err := os.FindProcess(pid); err == nil {
-				_ = proc.Signal(syscall.SIGTERM)
-			}
-			// Wait up to ~2s for the orphan to exit cleanly; fall through regardless.
-			for i := 0; i < 20; i++ {
-				if !m.claude.IsAlive(pid) {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
-		// Give the newly-spawned claude a moment to write its PID file so
-		// the refresh that follows actually sees it.
-		msg := m.launchResumeInWindow(windowName, cwd, sessionID)
-		for i := 0; i < 30; i++ {
-			if m.claude.SessionForPath(cwd) != nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		status := ""
-		if se, ok := msg.(statusMsgEvent); ok {
-			status = string(se)
-		}
-		return sessionImportedMsg{status: status}
+		return sessionImportedMsg{status: "Resumed session in " + windowName}
 	}
 }
 
-// launchResumeInWindow creates a fresh tmux window for the project, runs
-// `claude --resume <id>` in it, attaches a sidebar pane, and switches focus.
-// Returns a statusMsgEvent describing the outcome.
+// launchResumeInWindow is a thin TUI adapter over ops.LaunchSession that
+// passes `claude --resume <id>` as the shell command.
 func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) tea.Msg {
-	target, err := m.tmux.CreateWindow(windowName, projectPath)
+	_, err := ops.LaunchSession(m.ops, ops.LaunchParams{
+		WindowName:    windowName,
+		Cwd:           projectPath,
+		ShellCmd:      fmt.Sprintf("claude --resume %s", sessionID),
+		AttachSidebar: true,
+		SwitchFocus:   true,
+	})
 	if err != nil {
-		return statusMsgEvent(fmt.Sprintf("Failed to create window: %v", err))
+		return statusMsgEvent(fmt.Sprintf("Resume failed: %v", err))
 	}
-
-	cmd := fmt.Sprintf("claude --resume %s", sessionID)
-	if err := m.tmux.SendKeys(target, cmd); err != nil {
-		return statusMsgEvent(fmt.Sprintf("Failed to resume: %v", err))
-	}
-
-	m.addSidebarPane(target, projectPath)
-
-	if err := m.tmux.SwitchToWindow(target); err != nil {
-		return statusMsgEvent(fmt.Sprintf("Resumed but failed to switch: %v", err))
-	}
-
 	return statusMsgEvent("Resumed session in " + windowName)
 }
 
