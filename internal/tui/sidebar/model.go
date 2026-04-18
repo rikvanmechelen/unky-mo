@@ -691,7 +691,7 @@ func (m *Model) refreshState() {
 	m.items = items
 	m.usage = sf.Usage
 	m.sessionTokens = 0
-	if live := claude.SessionForPath(m.windowPath); live != nil {
+	if live := m.ownWindowSession(); live != nil {
 		jsonl := filepath.Join(claude.ProjectsDirForPath(m.windowPath), live.SessionID+".jsonl")
 		m.sessionTokens = usage.SessionTokens(jsonl)
 	}
@@ -715,6 +715,34 @@ func (m *Model) refreshState() {
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1
 	}
+}
+
+// ownWindowSession returns the Claude session running in this sidebar's own
+// tmux window, picked by matching session PIDs against the window's pane
+// PIDs. This is what distinguishes concurrent sessions sharing a CWD — plain
+// path lookup (SessionForPath) returns an arbitrary first match.
+func (m *Model) ownWindowSession() *claude.Session {
+	candidates := claude.SessionsForPath(m.windowPath)
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return &candidates[0]
+	}
+	if m.windowName == "" || m.tmux == nil {
+		return &candidates[0]
+	}
+	target := fmt.Sprintf("%s:%s", m.tmux.SessionName, m.windowName)
+	panePIDs, err := m.tmux.WindowPanePIDs(target)
+	if err != nil || len(panePIDs) == 0 {
+		return &candidates[0]
+	}
+	for i := range candidates {
+		if claude.IsDescendantOf(candidates[i].PID, panePIDs) {
+			return &candidates[i]
+		}
+	}
+	return &candidates[0]
 }
 
 func (m *Model) refreshFromSessions() {
