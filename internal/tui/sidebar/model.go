@@ -52,7 +52,8 @@ type Model struct {
 	items         []SidebarItem
 	cursor        int
 	viewportStart int // for scrolling
-	tmux          *ttmux.Client
+	tmux          TmuxClient
+	claude        ClaudeReader
 	stateFile     string
 	statusMsg     string
 	cursorSetOnce bool // true after initial cursor placement
@@ -110,10 +111,12 @@ func NewModel(sessionName, stateFile string) Model {
 	windowPath, _ := os.Getwd()
 
 	tc := ttmux.NewClient(sessionName)
-	tc.ConfigureStatusFormat()
+	tmuxAdapter := newTmuxClientAdapter(tc)
+	tmuxAdapter.ConfigureStatusFormat()
 
 	m := Model{
-		tmux:          tc,
+		tmux:          tmuxAdapter,
+		claude:        defaultClaudeReader{},
 		stateFile:     stateFile,
 		windowName:    windowName,
 		windowPath:    windowPath,
@@ -419,7 +422,7 @@ func (m Model) View() string {
 		b.WriteString(headerStyle.Render(fmt.Sprintf("Shells (%d)", len(m.activeShells))) + "\n")
 		for i, sh := range m.activeShells {
 			isFocused := m.focusSection == "shells" && m.shellCursor == i
-			display := claude.FormatShellCommand(sh.Command, m.width-6)
+			display := m.claude.FormatShellCommand(sh.Command, m.width-6)
 			cursor := " "
 			if isFocused {
 				cursor = "▸"
@@ -692,12 +695,12 @@ func (m *Model) refreshState() {
 	m.usage = sf.Usage
 	m.sessionTokens = 0
 	if live := m.ownWindowSession(); live != nil {
-		jsonl := filepath.Join(claude.ProjectsDirForPath(m.windowPath), live.SessionID+".jsonl")
+		jsonl := filepath.Join(m.claude.ProjectsDirForPath(m.windowPath), live.SessionID+".jsonl")
 		m.sessionTokens = usage.SessionTokens(jsonl)
 	}
 	m.refreshTerminals()
 	m.refreshChangedFiles()
-	m.activeShells = claude.ActiveShellsForSession(m.windowPath)
+	m.activeShells = m.claude.ActiveShellsForSession(m.windowPath)
 	// Sync status is checked on init and after push, not every tick
 	// (moSync.List does git pull which is too slow for 1s polling)
 
@@ -722,7 +725,7 @@ func (m *Model) refreshState() {
 // PIDs. This is what distinguishes concurrent sessions sharing a CWD — plain
 // path lookup (SessionForPath) returns an arbitrary first match.
 func (m *Model) ownWindowSession() *claude.Session {
-	candidates := claude.SessionsForPath(m.windowPath)
+	candidates := m.claude.SessionsForPath(m.windowPath)
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -732,13 +735,13 @@ func (m *Model) ownWindowSession() *claude.Session {
 	if m.windowName == "" || m.tmux == nil {
 		return &candidates[0]
 	}
-	target := fmt.Sprintf("%s:%s", m.tmux.SessionName, m.windowName)
+	target := fmt.Sprintf("%s:%s", m.tmux.SessionName(), m.windowName)
 	panePIDs, err := m.tmux.WindowPanePIDs(target)
 	if err != nil || len(panePIDs) == 0 {
 		return &candidates[0]
 	}
 	for i := range candidates {
-		if claude.IsDescendantOf(candidates[i].PID, panePIDs) {
+		if m.claude.IsDescendantOf(candidates[i].PID, panePIDs) {
 			return &candidates[i]
 		}
 	}
@@ -747,7 +750,7 @@ func (m *Model) ownWindowSession() *claude.Session {
 
 func (m *Model) refreshFromSessions() {
 	// Fallback: read live sessions directly
-	sessions, _ := claude.LiveSessions()
+	sessions, _ := m.claude.LiveSessions()
 	liveByPath := make(map[string]bool)
 	for _, s := range sessions {
 		liveByPath[s.CWD] = true
@@ -1003,7 +1006,7 @@ func (m *Model) refreshSyncStatus() {
 	for _, s := range sessions {
 		if s.ProjectName == m.windowName {
 			// Found a synced session — check if local JSONL is newer
-			localDir := claude.ProjectsDirForPath(m.windowPath)
+			localDir := m.claude.ProjectsDirForPath(m.windowPath)
 			localPath := localDir + "/" + s.SessionID + ".jsonl"
 			info, err := os.Stat(localPath)
 			if err != nil {
@@ -1075,7 +1078,7 @@ func (m *Model) openDrawer() tea.Cmd {
 		idx = 0
 	}
 
-	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName(), m.windowName)
 	if err := m.tmux.JoinPaneVertical(m.terminals[idx].PaneID, target); err != nil {
 		return statusCmd(fmt.Sprintf("err: %v", err))
 	}
@@ -1120,7 +1123,7 @@ func (m *Model) newTerminal() tea.Cmd {
 
 // createTerminalPane splits a new terminal below the Claude pane.
 func (m *Model) createTerminalPane() tea.Cmd {
-	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName(), m.windowName)
 	paneID, err := m.tmux.SplitWindowHorizontal(target, m.windowPath)
 	if err != nil {
 		return statusCmd(fmt.Sprintf("err: %v", err))
@@ -1167,7 +1170,7 @@ func (m *Model) switchTerminalIdx(idx int) tea.Cmd {
 	}
 
 	// Show target
-	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName(), m.windowName)
 	if err := m.tmux.JoinPaneVertical(m.terminals[idx].PaneID, target); err != nil {
 		return statusCmd(fmt.Sprintf("err: %v", err))
 	}
@@ -1215,7 +1218,7 @@ func (m *Model) closeTerminal() tea.Cmd {
 	}
 
 	// Show the next terminal
-	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName, m.windowName)
+	target := fmt.Sprintf("%s:%s.0", m.tmux.SessionName(), m.windowName)
 	if err := m.tmux.JoinPaneVertical(m.terminals[idx].PaneID, target); err != nil {
 		m.activeTermIdx = idx
 		m.drawerOpen = false
@@ -1318,13 +1321,13 @@ func (m Model) showShellOutput(shell claude.ActiveShell) tea.Cmd {
 	}
 
 	// Build a header script that shows status info then tails the output
-	displayCmd := claude.FormatShellCommand(shell.Command, 60)
+	displayCmd := m.claude.FormatShellCommand(shell.Command, 60)
 	script := fmt.Sprintf(
 		`echo "Shell details"; echo ""; echo "Status: running"; echo "Command: %s"; echo "Output:"; echo ""; tail -f %s`,
 		displayCmd, shell.OutputFile,
 	)
 
-	title := fmt.Sprintf(" Shell: %s ", claude.FormatShellCommand(shell.Command, 30))
+	title := fmt.Sprintf(" Shell: %s ", m.claude.FormatShellCommand(shell.Command, 30))
 	c := exec.Command("tmux", "display-popup", "-E",
 		"-w", "95%", "-h", "95%",
 		"-T", title,
@@ -1398,7 +1401,7 @@ func (m Model) syncPush() tea.Cmd {
 		if m.windowName == "" || m.windowPath == "" {
 			return sidebarStatusMsg("no project")
 		}
-		live := claude.SessionForPath(m.windowPath)
+		live := m.claude.SessionForPath(m.windowPath)
 		if live == nil {
 			return sidebarStatusMsg("no live session to sync")
 		}
@@ -1433,9 +1436,9 @@ func (m Model) switchToSelected() tea.Cmd {
 		item := m.items[m.cursor]
 		var target string
 		if item.IsHome {
-			target = fmt.Sprintf("%s:0", m.tmux.SessionName)
+			target = fmt.Sprintf("%s:0", m.tmux.SessionName())
 		} else if item.WindowName != "" {
-			target = fmt.Sprintf("%s:%s", m.tmux.SessionName, item.WindowName)
+			target = fmt.Sprintf("%s:%s", m.tmux.SessionName(), item.WindowName)
 		} else {
 			return nil
 		}

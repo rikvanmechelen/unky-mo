@@ -157,7 +157,8 @@ type Model struct {
 	screen         Screen
 	list           list.Model
 	projects       []project.Project
-	tmux           *ttmux.Client
+	tmux           TmuxClient
+	claude         ClaudeReader
 	notifServer    *notify.Server
 	notifState     sessionStateMap // status overrides from notification system
 	statusMsg      string
@@ -283,6 +284,13 @@ type Model struct {
 }
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
+	return NewModelWithDeps(projects, newTmuxClientAdapter(tmuxClient), NewDefaultClaudeReader(), notifServer, stateFilePath, ticketsCfg)
+}
+
+// NewModelWithDeps is the test-friendly constructor — accepts interface
+// implementations so tests can inject mocks. Production code calls NewModel,
+// which wraps the concrete *ttmux.Client and claude package.
+func NewModelWithDeps(projects []project.Project, tmuxClient TmuxClient, claudeReader ClaudeReader, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
 	items := make([]list.Item, len(projects))
 	for i, p := range projects {
 		items[i] = ProjectItem{project: p, status: StatusNone}
@@ -317,6 +325,7 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 		list:               l,
 		projects:           projects,
 		tmux:               tmuxClient,
+		claude:             claudeReader,
 		notifServer:        notifServer,
 		notifState:         make(sessionStateMap),
 		dashFocusLeft:      true,
@@ -596,7 +605,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					if m.tmux != nil {
-						target := m.tmux.SessionName + ":" + item.WindowName
+						target := m.tmux.SessionName() + ":" + item.WindowName
 						m.tmux.SwitchToWindow(target)
 					}
 				}
@@ -606,7 +615,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := m.currentProject()
 				if p != nil {
 					m.detailProject = p
-					m.detailSession = claude.SessionForPath(p.Path)
+					m.detailSession = m.claude.SessionForPath(p.Path)
 					m.detailWorktrees, _ = project.ListWorktrees(p.Path)
 					m.detailBranches, _ = project.ListBranches(p.Path)
 					m.buildDetailRows()
@@ -671,7 +680,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.tmux == nil || !m.tmux.WindowExists(windowName) {
 						return m, m.resumeInDir(selectedID, row.path, windowName)
 					}
-					existing := claude.SessionForPath(row.path)
+					existing := m.claude.SessionForPath(row.path)
 					if existing == nil || existing.SessionID == selectedID {
 						return m, m.resumeInDir(selectedID, row.path, windowName)
 					}
@@ -891,7 +900,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if b.IsMain && b.WorktreePath == "" {
 					return m, func() tea.Msg { return statusMsgEvent("Cannot delete the main branch") }
 				}
-				sessions := claude.SessionsForPath(b.WorktreePath)
+				sessions := m.claude.SessionsForPath(b.WorktreePath)
 				m.pendingCleanupActive = true
 				m.pendingCleanupProjectPath = m.detailProject.Path
 				m.pendingCleanupProjectName = m.detailProject.Name
@@ -1362,7 +1371,7 @@ func (m *Model) sessionToWindowMap() map[string]string {
 	if err != nil || len(windows) == 0 {
 		return result
 	}
-	sessions, _ := claude.LiveSessions()
+	sessions, _ := m.claude.LiveSessions()
 	if len(sessions) == 0 {
 		return result
 	}
@@ -1375,7 +1384,7 @@ func (m *Model) sessionToWindowMap() map[string]string {
 			if _, already := result[sessions[i].SessionID]; already {
 				continue
 			}
-			if claude.IsDescendantOf(sessions[i].PID, panePIDs) {
+			if m.claude.IsDescendantOf(sessions[i].PID, panePIDs) {
 				result[sessions[i].SessionID] = w.Name
 			}
 		}
@@ -1409,7 +1418,7 @@ func (m *Model) focusPrimaryIfLive(project, branch, cwd string) (bool, string, e
 // window name no longer matches the bare composed form — can still be
 // switched to, killed, or resumed correctly.
 func (m *Model) primaryWindowForTarget(project, branch, cwd string) (string, *claude.Session) {
-	sessions := claude.SessionsForPath(cwd)
+	sessions := m.claude.SessionsForPath(cwd)
 	if len(sessions) == 0 {
 		return "", nil
 	}
@@ -1789,27 +1798,31 @@ func (m Model) refreshSessions() tea.Cmd {
 		}
 	}
 	tmuxClient := m.tmux // safe for read off-goroutine
+	claudeClient := m.claude
+	if claudeClient == nil {
+		claudeClient = defaultClaudeReader{}
+	}
 	return func() tea.Msg {
-		sessions, _ := claude.LiveSessions()
+		sessions, _ := claudeClient.LiveSessions()
 		var hostPIDs map[int]bool
 		if tmuxClient != nil {
 			hostPIDs, _ = tmuxClient.PanePIDs()
 		}
 		// Resolve real window names for every live session by walking pane
 		// PID chains once. Used to populate sessionView.WindowName and Index.
-		windowBySession := resolveSessionWindows(tmuxClient, sessions)
+		windowBySession := resolveSessionWindows(tmuxClient, claudeClient, sessions)
 
 		views := make([]sessionView, 0, len(sessions))
 		externalPIDs := make(map[string]int)
 		externalSessions := make(map[string]string)
 
 		for _, s := range sessions {
-			isExternal := len(hostPIDs) > 0 && !claude.IsDescendantOf(s.PID, hostPIDs)
+			isExternal := len(hostPIDs) > 0 && !claudeClient.IsDescendantOf(s.PID, hostPIDs)
 
 			status := StatusActive
 			if isExternal {
 				status = StatusExternal
-			} else if claude.IsSessionIdle(s.CWD, s.SessionID) {
+			} else if claudeClient.IsSessionIdle(s.CWD, s.SessionID) {
 				status = StatusIdle
 			}
 
@@ -1921,10 +1934,13 @@ func worktreeParent(cwd string, projectNames map[string]string) (string, string,
 
 // resolveSessionWindows mirrors sessionToWindowMap but takes the sessions as
 // a pre-fetched argument so it runs cleanly off-goroutine.
-func resolveSessionWindows(tc *ttmux.Client, sessions []claude.Session) map[string]string {
+func resolveSessionWindows(tc TmuxClient, cr ClaudeReader, sessions []claude.Session) map[string]string {
 	result := map[string]string{}
 	if tc == nil || len(sessions) == 0 {
 		return result
+	}
+	if cr == nil {
+		cr = defaultClaudeReader{}
 	}
 	windows, err := tc.ListWindows()
 	if err != nil || len(windows) == 0 {
@@ -1939,7 +1955,7 @@ func resolveSessionWindows(tc *ttmux.Client, sessions []claude.Session) map[stri
 			if _, already := result[sessions[i].SessionID]; already {
 				continue
 			}
-			if claude.IsDescendantOf(sessions[i].PID, panePIDs) {
+			if cr.IsDescendantOf(sessions[i].PID, panePIDs) {
 				result[sessions[i].SessionID] = w.Name
 			}
 		}
@@ -1983,22 +1999,7 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.externalPIDs = polled.externalPIDs
 	m.externalSessions = polled.externalSessions
 
-	// Apply notification-state overrides per session. notifState is keyed by
-	// session ID (set in handleNotification), so concurrent sessions sharing
-	// a CWD don't bleed into each other.
-	views := make([]sessionView, len(polled.views))
-	copy(views, polled.views)
-	for i := range views {
-		if override, ok := m.notifState[views[i].SessionID]; ok {
-			// Permission always wins. Idle only wins when the poll didn't
-			// already detect idle via JSONL.
-			if override == StatusPermission {
-				views[i].Status = StatusPermission
-			} else if override == StatusIdle && views[i].Status == StatusActive {
-				views[i].Status = StatusIdle
-			}
-		}
-	}
+	views := applyNotifOverrides(polled.views, m.notifState)
 	m.sessionViews = views
 
 	// Aggregate per project path for the left-column ProjectItem dot.
@@ -2054,6 +2055,31 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.writeStateFile()
 }
 
+// applyNotifOverrides returns a copy of polled views with per-session
+// notification status overrides merged in. Permission always wins; Idle only
+// wins when the polled status is Active (so a poll-detected end_turn isn't
+// clobbered by a stale idle notification). Pure function — extracted for
+// testability out of updateProjectStatuses.
+func applyNotifOverrides(polled []sessionView, overrides sessionStateMap) []sessionView {
+	views := make([]sessionView, len(polled))
+	copy(views, polled)
+	if len(overrides) == 0 {
+		return views
+	}
+	for i := range views {
+		override, ok := overrides[views[i].SessionID]
+		if !ok {
+			continue
+		}
+		if override == StatusPermission {
+			views[i].Status = StatusPermission
+		} else if override == StatusIdle && views[i].Status == StatusActive {
+			views[i].Status = StatusIdle
+		}
+	}
+	return views
+}
+
 // rank orders SessionStatus values for project-level aggregation.
 // Higher = takes priority when a project has multiple sessions.
 func rank(s SessionStatus) int {
@@ -2085,7 +2111,7 @@ func (m *Model) syncWindowTitles() {
 	if err != nil {
 		return
 	}
-	sessions, _ := claude.LiveSessions()
+	sessions, _ := m.claude.LiveSessions()
 	if len(sessions) == 0 {
 		return
 	}
@@ -2111,7 +2137,7 @@ func (m *Model) syncWindowTitles() {
 		}
 		var sess *claude.Session
 		for i := range sessions {
-			if claude.IsDescendantOf(sessions[i].PID, panePIDs) {
+			if m.claude.IsDescendantOf(sessions[i].PID, panePIDs) {
 				sess = &sessions[i]
 				break
 			}
@@ -2119,7 +2145,7 @@ func (m *Model) syncWindowTitles() {
 		if sess == nil {
 			continue
 		}
-		title := claude.CustomTitleFor(sess.CWD, sess.SessionID)
+		title := m.claude.CustomTitleFor(sess.CWD, sess.SessionID)
 		// Decide desired suffix:
 		//   title != ""  → use the title
 		//   title == ""  → revert to bare if free, else next free ordinal
@@ -2253,7 +2279,7 @@ func (m *Model) writeStateFile() {
 
 	sessionName := ""
 	if m.tmux != nil {
-		sessionName = m.tmux.SessionName
+		sessionName = m.tmux.SessionName()
 	}
 
 	sf := &state.StateFile{
@@ -2634,7 +2660,7 @@ func (m Model) renderSessionRow(rs *claude.RecentSession, launchPath string, sel
 
 	tokStr := ""
 	if launchPath != "" && rs.SessionID != "" {
-		jsonl := filepath.Join(claude.ProjectsDirForPath(launchPath), rs.SessionID+".jsonl")
+		jsonl := filepath.Join(m.claude.ProjectsDirForPath(launchPath), rs.SessionID+".jsonl")
 		tokStr = usage.FormatTokensShort(usage.SessionTokens(jsonl))
 	}
 
@@ -2739,7 +2765,7 @@ func (m *Model) buildDetailRows() {
 			continue
 		}
 
-		sessions := claude.RecentSessions(launchPath, 5)
+		sessions := m.claude.RecentSessions(launchPath, 5)
 		if len(sessions) == 0 {
 			rows = append(rows, detailRow{
 				kind:   "br-empty",
@@ -2809,7 +2835,7 @@ func (m *Model) loadRecap() {
 	if row.session == nil {
 		return
 	}
-	m.detailRecap = claude.LastMessages(row.path, row.session.SessionID, 6)
+	m.detailRecap = m.claude.LastMessages(row.path, row.session.SessionID, 6)
 }
 
 // renderPrompt renders a two-row confirmation bar: the question on top, key
@@ -2889,7 +2915,7 @@ func (m Model) restartSidebars() {
 		if w.Index == "0" {
 			continue // skip the TUI window itself
 		}
-		target := fmt.Sprintf("%s:%s.1", m.tmux.SessionName, w.Index)
+		target := fmt.Sprintf("%s:%s.1", m.tmux.SessionName(), w.Index)
 		// tmux key-name M-C-r = alt+ctrl+r; the sidebar's handler execs the new binary.
 		m.tmux.SendRawKeys(target, "M-C-r")
 	}
@@ -3104,7 +3130,7 @@ func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 			result.synced[s.SessionID] = s
 
 			// Pull the session if we don't have it locally
-			localDir := claude.ProjectsDirForPath(localPath)
+			localDir := m.claude.ProjectsDirForPath(localPath)
 			jsonlPath := filepath.Join(localDir, s.SessionID+".jsonl")
 			if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 				if _, err := moSync.Pull(s.ProjectName, localPath, syncDir); err != nil {
@@ -3143,7 +3169,7 @@ func (m Model) focusIfExists(windowName string) (bool, error) {
 	if !m.tmux.WindowExists(windowName) {
 		return false, nil
 	}
-	return true, m.tmux.SwitchToWindow(m.tmux.SessionName + ":" + windowName)
+	return true, m.tmux.SwitchToWindow(m.tmux.SessionName() + ":" + windowName)
 }
 
 func (m Model) launchSession() tea.Cmd {
@@ -3263,7 +3289,7 @@ func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID st
 		// panes are torn down alongside the claude pane. The pane-exited
 		// hook would usually handle this when claude exits, but we don't
 		// want to race the hook before creating the replacement window.
-		_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + primaryWindowName)
+		_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + primaryWindowName)
 		shellCmd := "claude"
 		if resumeID != "" {
 			shellCmd = "claude --resume " + resumeID
@@ -3305,7 +3331,7 @@ func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 					if _, already := windowBySession[s.SessionID]; already {
 						continue
 					}
-					if claude.IsDescendantOf(s.PID, panePIDs) {
+					if m.claude.IsDescendantOf(s.PID, panePIDs) {
 						windowBySession[s.SessionID] = w.Name
 					}
 				}
@@ -3314,7 +3340,7 @@ func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 		for _, s := range sessions {
 			signalAndWaitExit(s.PID)
 			if name, ok := windowBySession[s.SessionID]; ok {
-				_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + name)
+				_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + name)
 			}
 		}
 		return statusMsgEvent(fmt.Sprintf("Killed %d session(s)", len(sessions)))
@@ -3610,7 +3636,7 @@ func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string)
 			}
 			// Wait up to ~2s for the orphan to exit cleanly; fall through regardless.
 			for i := 0; i < 20; i++ {
-				if !claude.IsAlive(pid) {
+				if !m.claude.IsAlive(pid) {
 					break
 				}
 				time.Sleep(100 * time.Millisecond)
@@ -3620,7 +3646,7 @@ func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string)
 		// the refresh that follows actually sees it.
 		msg := m.launchResumeInWindow(windowName, cwd, sessionID)
 		for i := 0; i < 30; i++ {
-			if claude.SessionForPath(cwd) != nil {
+			if m.claude.SessionForPath(cwd) != nil {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -3729,7 +3755,7 @@ func (m Model) openBranchInMain(branch string, force bool) tea.Cmd {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-		if claude.SessionForPath(p.Path) != nil {
+		if m.claude.SessionForPath(p.Path) != nil {
 			return statusMsgEvent("Main has an active Claude session; close it first")
 		}
 		dirty, err := project.IsDirty(p.Path)
