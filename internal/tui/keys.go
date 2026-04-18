@@ -3,18 +3,21 @@ package tui
 import "github.com/charmbracelet/bubbles/key"
 
 type keyMap struct {
-	Enter       key.Binding
-	Back        key.Binding
-	New         key.Binding
-	Attach      key.Binding
-	Resume      key.Binding
-	NewWorktree   key.Binding
-	Tab           key.Binding
-	OpenInBrowser key.Binding
-	Checkout      key.Binding
-	Help          key.Binding
-	Restart       key.Binding
-	Quit          key.Binding
+	Enter            key.Binding
+	Back             key.Binding
+	New              key.Binding
+	Attach           key.Binding
+	Resume           key.Binding
+	NewWorktree      key.Binding // "w" — create worktree for the branch under cursor
+	NewBranchPrompt  key.Binding // "W" — type a brand-new branch name
+	OpenInMain       key.Binding // "m" — checkout branch in main repo (safe)
+	OpenInMainForce  key.Binding // "M" — stash then checkout in main repo
+	Tab              key.Binding
+	OpenInBrowser    key.Binding
+	Checkout         key.Binding
+	Help             key.Binding
+	Restart          key.Binding
+	Quit             key.Binding
 }
 
 var keys = keyMap{
@@ -40,7 +43,19 @@ var keys = keyMap{
 	),
 	NewWorktree: key.NewBinding(
 		key.WithKeys("w"),
-		key.WithHelp("w", "new worktree"),
+		key.WithHelp("w", "worktree"),
+	),
+	NewBranchPrompt: key.NewBinding(
+		key.WithKeys("W"),
+		key.WithHelp("W", "new branch"),
+	),
+	OpenInMain: key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "main"),
+	),
+	OpenInMainForce: key.NewBinding(
+		key.WithKeys("M"),
+		key.WithHelp("M", "stash+main"),
 	),
 	Tab: key.NewBinding(
 		key.WithKeys("tab"),
