@@ -152,11 +152,6 @@ type Model struct {
 	detailRows   []detailRow
 	detailCursor int
 	detailRecap  []claude.SessionMessage // last messages for currently selected session
-	// Resume-confirmation prompt: non-empty means we're asking the user whether
-	// to disconnect the currently-running session and resume this one instead.
-	pendingResumeSessionID string
-	pendingResumePath      string
-	pendingResumeWindow    string
 	// Import-external-session prompt: non-empty means we're asking the user
 	// whether to take over a claude running outside mo (kill it + resume here).
 	pendingImportSessionID string
@@ -165,16 +160,18 @@ type Model struct {
 	pendingImportProject   string // project display name, for the prompt text
 	pendingImportPID       int
 	// New-session menu: active when the user pressed `n` on a target that
-	// already has a live session. Presents s/p/c/esc options (switch /
-	// park+new / concurrent / cancel). Captured per-field so the menu
-	// survives cursor movement without re-querying.
-	pendingNewMenuActive bool
-	pendingNewProject    string
-	pendingNewBranch     string // "" for main checkout
-	pendingNewCwd        string
-	pendingNewPrimaryWin string // composed primary window name (no suffix)
-	pendingNewLivePID    int    // claude PID of the session to park on `p`
-	pendingNewLiveID     string // claude session ID of the current primary
+	// already has a live session, or `enter` on a historical session row
+	// whose primary window is occupied by a different session. Presents
+	// s/p/c/esc options (switch / park+new / concurrent / cancel). Captured
+	// per-field so the menu survives cursor movement without re-querying.
+	pendingNewMenuActive     bool
+	pendingNewProject        string
+	pendingNewBranch         string // "" for main checkout
+	pendingNewCwd            string
+	pendingNewPrimaryWin     string // composed primary window name (no suffix)
+	pendingNewLivePID        int    // claude PID of the session to park on `p`
+	pendingNewLiveID         string // claude session ID of the current primary
+	pendingNewResumeSession  string // non-empty ⇒ `p`/`c` launch `claude --resume <id>` instead of fresh
 	// Cleanup menu: active when the user pressed `x` on a branch row.
 	// Two stages: "kill" (one or more sessions live in the target; user
 	// must confirm SIGINT) then "action" (choose [w] worktree only / [b]
@@ -311,26 +308,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Resume-confirmation prompt captures all input while active.
-		if m.pendingResumeSessionID != "" && m.screen == ScreenProject {
-			switch msg.String() {
-			case "y", "Y", "enter":
-				sessionID := m.pendingResumeSessionID
-				resumePath := m.pendingResumePath
-				resumeWindow := m.pendingResumeWindow
-				m.pendingResumeSessionID = ""
-				m.pendingResumePath = ""
-				m.pendingResumeWindow = ""
-				return m, m.disconnectAndResumeInDir(sessionID, resumePath, resumeWindow)
-			case "n", "N", "esc", "escape":
-				m.pendingResumeSessionID = ""
-				m.pendingResumePath = ""
-				m.pendingResumeWindow = ""
-				return m, nil
-			}
-			return m, nil
-		}
-
 		// New-session menu captures all input while active.
 		if m.pendingNewMenuActive {
 			switch msg.String() {
@@ -350,11 +327,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				pid := m.pendingNewLivePID
 				primary := m.pendingNewPrimaryWin
 				cwd := m.pendingNewCwd
+				resumeID := m.pendingNewResumeSession
 				m.clearPendingNewMenu()
-				return m, m.parkAndLaunchPrimary(pid, primary, cwd)
+				return m, m.parkAndLaunchPrimary(pid, primary, cwd, resumeID)
 			case "c", "C":
+				resumeID := m.pendingNewResumeSession
+				project := m.pendingNewProject
+				branch := m.pendingNewBranch
+				cwd := m.pendingNewCwd
 				m.clearPendingNewMenu()
-				return m, m.launchSiblingSession()
+				return m, m.launchSiblingSession(project, branch, cwd, resumeID)
 			case "esc", "escape":
 				m.clearPendingNewMenu()
 				return m, nil
@@ -512,22 +494,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if row.tmuxWindow != "" {
 						return m, m.resumeInDir(selectedID, row.path, row.tmuxWindow)
 					}
-					// Historical resume: spawn in the primary window, with a
-					// disconnect-confirm if the primary is running a different
-					// session.
-					windowName := m.detailProject.Name
+					// Historical resume. If the primary window is free, just
+					// launch there. If it's occupied by a different session,
+					// open the same switch/park+new/concurrent menu `n` uses,
+					// with the selected session set as the resume target.
+					branchName := ""
 					if !row.branch.IsMain {
-						windowName = m.detailProject.Name + "@" + row.branch.Name
+						branchName = row.branch.Name
 					}
-					if m.tmux != nil && m.tmux.WindowExists(windowName) {
-						if m.detailSession == nil || m.detailSession.SessionID != selectedID {
-							m.pendingResumeSessionID = selectedID
-							m.pendingResumePath = row.path
-							m.pendingResumeWindow = windowName
-							return m, nil
-						}
+					windowName := ttmux.ComposeWindowName(m.detailProject.Name, branchName, "")
+					if m.tmux == nil || !m.tmux.WindowExists(windowName) {
+						return m, m.resumeInDir(selectedID, row.path, windowName)
 					}
-					return m, m.resumeInDir(selectedID, row.path, windowName)
+					existing := claude.SessionForPath(row.path)
+					if existing == nil || existing.SessionID == selectedID {
+						return m, m.resumeInDir(selectedID, row.path, windowName)
+					}
+					m.pendingNewMenuActive = true
+					m.pendingNewProject = m.detailProject.Name
+					m.pendingNewBranch = branchName
+					m.pendingNewCwd = row.path
+					m.pendingNewPrimaryWin = windowName
+					m.pendingNewLivePID = existing.PID
+					m.pendingNewLiveID = existing.SessionID
+					m.pendingNewResumeSession = selectedID
+					return m, nil
 				case "branch", "br-empty":
 					if row.branch == nil {
 						return m, nil
@@ -2023,12 +2014,6 @@ func (m Model) projectDetailView() string {
 			{"c", "concurrent"},
 			{"esc", "cancel"},
 		})
-	case m.pendingResumeSessionID != "":
-		question := fmt.Sprintf("A session is already running for %s. Disconnect it and start the selected session?", p.Name)
-		footer = m.renderPrompt(question, []footerBinding{
-			{"y", "yes"},
-			{"n", "no"},
-		})
 	default:
 		var bindings []footerBinding
 		if !m.detailFocusLeft && m.detailPRExpanded >= 0 {
@@ -2635,10 +2620,15 @@ func (m Model) cleanupPrompt() (string, []footerBinding) {
 
 // newMenuPromptText renders the question shown above the s/p/c/esc menu.
 // Names the primary target so the user knows what they're about to affect.
+// If the menu was opened to resume a specific historical session, the
+// prompt mentions that too so `p` / `c` semantics are unambiguous.
 func (m Model) newMenuPromptText() string {
 	target := m.pendingNewPrimaryWin
 	if target == "" {
 		target = "this target"
+	}
+	if m.pendingNewResumeSession != "" {
+		return fmt.Sprintf("A different session is running in %s — how should the selected session be resumed?", target)
 	}
 	return fmt.Sprintf("A session is already running in %s — what would you like to do?", target)
 }
@@ -2652,6 +2642,7 @@ func (m *Model) clearPendingNewMenu() {
 	m.pendingNewPrimaryWin = ""
 	m.pendingNewLivePID = 0
 	m.pendingNewLiveID = ""
+	m.pendingNewResumeSession = ""
 }
 
 // signalAndWaitExit sends SIGINT to pid (so Claude flushes its JSONL cleanly),
@@ -2683,9 +2674,10 @@ func signalAndWaitExit(pid int) {
 
 // parkAndLaunchPrimary signals the given Claude PID to exit, waits briefly
 // for it to die, explicitly kills its tmux window so the sidebar and any
-// terminal-drawer panes go with it, and launches a fresh Claude session in
-// a new window with the same primary name.
-func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd string) tea.Cmd {
+// terminal-drawer panes go with it, and launches a Claude session in a
+// new window with the same primary name. When resumeID is non-empty the
+// replacement resumes that session; otherwise it starts fresh.
+func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID string) tea.Cmd {
 	return func() tea.Msg {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
@@ -2696,7 +2688,11 @@ func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd string) tea.
 		// hook would usually handle this when claude exits, but we don't
 		// want to race the hook before creating the replacement window.
 		_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + primaryWindowName)
-		return m.launchClaudeInWindow(primaryWindowName, cwd, "claude")
+		shellCmd := "claude"
+		if resumeID != "" {
+			shellCmd = "claude --resume " + resumeID
+		}
+		return m.launchClaudeInWindow(primaryWindowName, cwd, shellCmd)
 	}
 }
 
@@ -2777,17 +2773,16 @@ func (m Model) runCleanup(projectPath, branch string, alsoDeleteBranch bool) tea
 }
 
 // launchSiblingSession always creates a new concurrent sibling window for
-// the current target, even if a primary window already exists. The sibling
-// is named "project [N]" (or "project@branch [N]") where N is the lowest
-// unused ordinal. Used today via the temporary shift-N binding; step 6
-// folds this into the `n`-key menu.
-func (m Model) launchSiblingSession() tea.Cmd {
+// the given (project, branch) target, even if a primary window already
+// exists. The sibling is named "project [N]" (or "project@branch [N]")
+// where N is the lowest unused ordinal. When resumeID is non-empty the
+// sibling resumes that session; otherwise it starts a fresh Claude.
+func (m Model) launchSiblingSession(project, branch, cwd, resumeID string) tea.Cmd {
 	return func() tea.Msg {
 		if m.tmux == nil {
 			return statusMsgEvent("tmux not available")
 		}
-		project, branch, cwd, ok := m.detailLaunchTarget()
-		if !ok {
+		if project == "" || cwd == "" {
 			return statusMsgEvent("No project selected")
 		}
 		windows, err := m.tmux.ListWindows()
@@ -2800,7 +2795,11 @@ func (m Model) launchSiblingSession() tea.Cmd {
 		}
 		ordinal := ttmux.NextAvailableOrdinal(names, project, branch)
 		windowName := ttmux.ComposeWindowName(project, branch, ordinal)
-		return m.launchClaudeInWindow(windowName, cwd, "claude")
+		shellCmd := "claude"
+		if resumeID != "" {
+			shellCmd = "claude --resume " + resumeID
+		}
+		return m.launchClaudeInWindow(windowName, cwd, shellCmd)
 	}
 }
 
@@ -3020,18 +3019,6 @@ func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string)
 			status = string(se)
 		}
 		return sessionImportedMsg{status: status}
-	}
-}
-
-// disconnectAndResumeInDir kills the existing tmux window and starts the
-// selected session fresh in the given directory.
-func (m Model) disconnectAndResumeInDir(sessionID, cwd, windowName string) tea.Cmd {
-	return func() tea.Msg {
-		if m.tmux == nil {
-			return statusMsgEvent("tmux not available")
-		}
-		_ = m.tmux.KillWindow(m.tmux.SessionName + ":" + windowName)
-		return m.launchResumeInWindow(windowName, cwd, sessionID)
 	}
 }
 
