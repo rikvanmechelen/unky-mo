@@ -11,6 +11,8 @@ import (
 const defaultTmuxSession = "mo"
 const defaultSocketPath = "/tmp/unky-mo.sock"
 const defaultStateFilePath = "/tmp/unky-mo-state.json"
+const defaultTicketsRefreshSeconds = 300
+const defaultTicketsPerBucketLimit = 5
 
 type Config struct {
 	WorkspaceDirs []string          `toml:"workspace_dirs"`
@@ -20,6 +22,36 @@ type Config struct {
 	ScanOnStartup bool              `toml:"scan_on_startup"`
 	NotifySound   bool              `toml:"notify_sound"`
 	Projects      []project.Project `toml:"project"`
+	Tickets       TicketsConfig     `toml:"tickets"`
+}
+
+// TicketsConfig controls the dashboard tickets panel. Nested providers are
+// arrays so multiple Jira (or future Linear / GitHub) instances can coexist.
+// The panel is shown automatically whenever a token or instance is present;
+// set Disabled = true to hide it even when credentials exist.
+type TicketsConfig struct {
+	Disabled        bool         `toml:"disabled"`
+	RefreshSeconds  int          `toml:"refresh_seconds"`
+	PerBucketLimit  int          `toml:"per_bucket_limit"`
+	Jira            []JiraConfig `toml:"jira"`
+}
+
+// JiraConfig is one Atlassian Cloud instance.
+type JiraConfig struct {
+	Name          string             `toml:"name"`
+	BaseURL       string             `toml:"base_url"`
+	Email         string             `toml:"email"`
+	SprintFieldID string             `toml:"sprint_field_id"`
+	StatusMap     JiraStatusMap      `toml:"status_map"`
+}
+
+// JiraStatusMap maps raw Jira statuses to Mo's four buckets. Empty slices
+// fall back to tickets.DefaultStatusMap at load time.
+type JiraStatusMap struct {
+	InProgress []string `toml:"in_progress"`
+	Blocked    []string `toml:"blocked"`
+	Review     []string `toml:"review"`
+	Todo       []string `toml:"todo"`
 }
 
 func DefaultConfigDir() string {
@@ -59,6 +91,12 @@ func Load() (*Config, error) {
 	}
 	if cfg.StateFilePath == "" {
 		cfg.StateFilePath = defaultStateFilePath
+	}
+	if cfg.Tickets.RefreshSeconds <= 0 {
+		cfg.Tickets.RefreshSeconds = defaultTicketsRefreshSeconds
+	}
+	if cfg.Tickets.PerBucketLimit <= 0 {
+		cfg.Tickets.PerBucketLimit = defaultTicketsPerBucketLimit
 	}
 
 	return cfg, nil

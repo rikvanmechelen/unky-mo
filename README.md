@@ -49,18 +49,28 @@ When you launch Claude sessions from the TUI, they open as sibling tmux windows 
 
 ## Dashboard
 
-The main screen shows all your projects with git status and session indicators, plus an active sessions panel on the right:
+The main screen is a 50/50 split: projects on the left, Active Sessions (top) and your Jira tickets (bottom, optional) on the right.
 
 ```
  Unky Mo  3 active  ▲1                    │
- ▸ moma-apps-rails  [ruby]  main *2  ● active   │ Active Sessions ◀
+ ▸ moma-apps-rails  [ruby]  main *2  ● active    │ Active Sessions
    moma-go          [go  ]  main     ○ no session│   ● moma-apps-rails
-   unky-mo          [go  ]  main ↑3  ● idle      │ ▸ ● unky-mo        idle
-   moma-auth0       [node]  main     ○ no session│   ● mla-wrapper
-   ...                                            │
+   unky-mo          [go  ]  main ↑3  ● idle      │   ● unky-mo          idle
+   moma-auth0       [node]  main     ○ no session│
+   ...                                            │ Tickets ◀
+                                                  │   In Progress
+                                                  │ ▸ ⚡ OP-175  In Development  fix auth flow
+                                                  │     OP-180  In Development  refactor jwt
+                                                  │   Review
+                                                  │     OP-162  Code Review     update readme
+                                                  │   To Do
+                                                  │     OP-190  Selected        onboarding wizard
+                                                  │     … +7 more
 ```
 
 Each project row shows: name, language, git branch, dirty/ahead/behind counts, and session status.
+
+The Tickets panel only appears once you've set up Jira (`mo jira setup`) — see [Jira Tickets](#jira-tickets) below. Up/down on the right panel crosses between sessions and tickets automatically.
 
 ### Dashboard shortcuts
 
@@ -68,12 +78,13 @@ Each project row shows: name, language, git branch, dirty/ahead/behind counts, a
 |--------------|---------------------------------------|
 | `↑` / `k`   | Move up                               |
 | `↓` / `j`   | Move down                             |
-| `→`          | Focus active sessions panel           |
+| `→`          | Focus right panel (sessions / tickets) |
 | `←`          | Focus project list                    |
-| `enter`      | Open project detail / switch to session |
+| `enter`      | Open project detail / switch to session / open ticket in browser |
 | `/`          | Filter projects (fuzzy search)        |
 | `n`          | Start a new Claude session (prompts switch/park/concurrent if one is already running) |
 | `a`          | Attach to session window              |
+| `o`          | Open selected ticket in browser       |
 | `s`          | Suspend (tmux detach-client; sessions keep running) |
 | `?`          | Toggle help overlay                   |
 | `ctrl+r`     | Restart TUI + all sidebars            |
@@ -223,6 +234,100 @@ The first session for a target keeps the bare window name (`project` or `project
 
 > **Sync caveat**: session sync keys on project name, so pushing a second session for the same project overwrites the first. Multi-session sync isn't implemented yet.
 
+## Jira Tickets
+
+The bottom half of the dashboard right panel shows the Jira tickets currently assigned to you, grouped by status. It only renders once you've set up a token or a Jira config block — a clean install shows no ticket panel at all.
+
+### Setup
+
+Run the interactive wizard:
+
+```bash
+mo jira setup
+```
+
+You'll need a Jira API token — create one at [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens). The wizard will:
+
+1. Ask for your Jira URL (e.g. `https://your-org.atlassian.net`) and email
+2. Read your API token **without echoing it** to the terminal
+3. Verify the credentials against Jira's `/rest/api/2/myself` endpoint before writing anything
+4. Write the token to `~/.config/unky-mo/jira.token` (mode `0600`, same pattern as `sync.key`)
+5. Append a `[[tickets.jira]]` block to `~/.config/unky-mo/config.toml`
+
+Press `ctrl+alt+r` in the TUI to pick up the new config — tickets will appear within a few seconds.
+
+To use a secret manager instead of the token file, export `UNKY_MO_JIRA_TOKEN` in your shell — the env var overrides the file.
+
+### What you see
+
+Tickets are grouped into four buckets, shown in this order (empty buckets are hidden):
+
+| Bucket | Typical Jira statuses |
+|---|---|
+| **In Progress** | In Progress, In Development, Doing |
+| **Blocked** | Blocked, On Hold, Waiting |
+| **Review** | In Review, Code Review, In PR, Ready for Review |
+| **To Do** | To Do, Open, Backlog, Selected for Development |
+
+Anything your Jira workflow doesn't match falls into an **Unmapped** bucket, rendered with the raw status in red brackets — visible on purpose so you can either add the status to your config or learn that a new workflow step got introduced. Status matching is case-insensitive and whitespace-tolerant.
+
+Within each bucket, tickets sort by:
+
+1. **In an active sprint** first (marked with `⚡`)
+2. **Priority** — Highest/Blocker down to Lowest/Trivial
+3. **Most recently updated**
+
+The ticket row format is: `⚡ OP-175  In Development  fix auth flow` — ID, raw Jira status, then title. The first five rows per bucket are shown; the rest collapse to a `… +N more` line.
+
+### Interactions
+
+Arrow down past the sessions list to focus tickets.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Navigate tickets (crosses back into Sessions at the top) |
+| `enter` | Open selected ticket in your browser |
+| `o` | Open selected ticket in your browser |
+
+### CLI
+
+```bash
+mo jira setup          # interactive wizard (URL + email + token, verifies before writing)
+mo jira fetch          # run one fetch per instance, print ticket count or extracted error (diagnostic)
+mo jira show-token     # print the current token for copying to another machine
+```
+
+### Config options
+
+Everything under `[tickets]` is optional. A bare `[[tickets.jira]]` with `base_url` and `email` is enough to get going.
+
+```toml
+[tickets]
+# disabled = true           # hide the panel even when credentials exist
+# refresh_seconds = 300     # background fetch cadence (default 5 min)
+# per_bucket_limit = 5      # max rows per bucket before "+N more"
+
+[[tickets.jira]]
+base_url = "https://your-org.atlassian.net"
+email = "you@your-org.com"
+# sprint_field_id = "customfield_10020"   # override if your instance uses a different sprint field
+
+# Customize the raw Jira status → bucket mapping. Case-insensitive.
+# [tickets.jira.status_map]
+# in_progress = ["In Progress", "In Development"]
+# blocked     = ["Blocked", "On Hold"]
+# review      = ["Code Review", "In PR", "Ready for Review"]
+# todo        = ["To Do", "Backlog", "Selected for Development"]
+```
+
+Multiple `[[tickets.jira]]` blocks are supported for people with more than one Atlassian org. All instances share a single token file; export `UNKY_MO_JIRA_TOKEN` if you need per-instance credentials (it wins for the duration of the shell).
+
+### Security notes
+
+- Tokens **never** go in `config.toml` — always in a dedicated `0600` file (or env var). Mo refuses to read a token file with loose permissions.
+- Nothing is written to disk during `mo jira setup` until the credentials verify against Jira.
+- `mo jira fetch` uses the same code path as the background TUI fetch — no credentials ever leave the process.
+
 ## CLI Commands
 
 ```bash
@@ -245,6 +350,9 @@ mo sync pull                    # Pull + decrypt all sessions (files only)
 mo sync pull <project>          # Pull a session and resume it in a tmux window
 mo sync list                    # List available synced sessions
 mo sync migrate                 # Re-encrypt any legacy plaintext sessions
+mo jira setup                   # Interactive Jira integration setup (URL + email + token)
+mo jira fetch                   # Run one Jira fetch and print result (diagnostic)
+mo jira show-token              # Print current Jira API token
 mo debug <project>              # Dump session/worktree debug info
 mo version                      # Print version
 ```
@@ -299,6 +407,8 @@ description = "Main web application"
 language = "ruby"
 tags = ["production"]
 ```
+
+Jira integration has its own `[tickets]` / `[[tickets.jira]]` blocks — see the [Jira Tickets](#jira-tickets) section. Use `mo jira setup` to write them interactively rather than editing by hand.
 
 ### Project auto-discovery
 

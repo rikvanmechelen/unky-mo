@@ -19,11 +19,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/config"
 	gh "github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/notify"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/tickets"
+	"github.com/rvanmech/unky-mo/internal/tickets/jira"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
@@ -97,6 +100,36 @@ func (m Model) fetchUsage() tea.Cmd {
 	}
 }
 
+// ticketsTickMsg fires on the user-configurable refresh cadence (default 5m).
+type ticketsTickMsg time.Time
+
+func ticketsTick(period time.Duration) tea.Cmd {
+	return tea.Tick(period, func(t time.Time) tea.Msg {
+		return ticketsTickMsg(t)
+	})
+}
+
+// ticketsRefreshMsg carries the outcome of a tickets fetch across all
+// providers. Errors are kept per-provider so one unhealthy provider doesn't
+// hide a healthy one.
+type ticketsRefreshMsg struct {
+	groups  []tickets.BucketGroup
+	results []tickets.FetchResult
+}
+
+func (m Model) fetchTickets() tea.Cmd {
+	providers := m.ticketsProviders
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		all, results := tickets.FetchAll(ctx, providers)
+		return ticketsRefreshMsg{
+			groups:  tickets.Group(all),
+			results: results,
+		}
+	}
+}
+
 // gitStatusMsg carries refreshed git statuses for all projects.
 type gitStatusMsg map[string]project.GitStatus
 
@@ -138,9 +171,24 @@ type Model struct {
 	attentionCount int
 	gitStatuses    map[string]project.GitStatus // project path → git status
 	// Dashboard active sessions panel (right side)
-	dashFocusLeft      bool // true = project list, false = sessions panel
+	dashFocusLeft      bool // true = project list, false = sessions/tickets panel
 	dashSessionItems   []dashSessionItem
 	dashSessionCursor  int
+	// Dashboard right-panel focus: sessions (top) vs tickets (bottom). Only
+	// relevant when dashFocusLeft is false.
+	dashRightFocus   dashRightSection
+	// Tickets state (populated by background ticketsFetch).
+	ticketsDisabled  bool             // explicit opt-out via [tickets] enabled = false
+	ticketsProviders []tickets.Provider
+	ticketsInstances []jira.Instance  // retained for NeedsConfig re-check on token env changes
+	ticketsGroups    []tickets.BucketGroup
+	ticketsErrors    []tickets.FetchResult
+	ticketsLoaded    bool             // false until first fetch completes
+	ticketsLoading   bool             // true while a fetch is in flight
+	ticketsLastFetch time.Time
+	ticketsCursor    int              // index into the flat visible list below
+	ticketsPerBucket int              // config-driven overflow cap
+	ticketsRefreshPeriod time.Duration
 	// Detail views
 	detailProject   *project.Project
 	detailSession   *claude.Session
@@ -219,7 +267,7 @@ type Model struct {
 	ready      bool
 }
 
-func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string) Model {
+func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
 	items := make([]list.Item, len(projects))
 	for i, p := range projects {
 		items[i] = ProjectItem{project: p, status: StatusNone}
@@ -233,17 +281,63 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 	l.InfiniteScrolling = true  // Circular navigation
 	l.Styles.Title = titleStyle
 
+	instances := ticketsInstancesFromConfig(ticketsCfg)
+	providers := jira.BuildProviders(instances)
+	perBucket := ticketsCfg.PerBucketLimit
+	if perBucket <= 0 {
+		perBucket = 5
+	}
+	refresh := time.Duration(ticketsCfg.RefreshSeconds) * time.Second
+	if refresh <= 0 {
+		refresh = 5 * time.Minute
+	}
+
 	return Model{
-		screen:        ScreenDashboard,
-		list:          l,
-		projects:      projects,
-		tmux:          tmuxClient,
-		notifServer:   notifServer,
-		notifState:    make(sessionStateMap),
-		dashFocusLeft: true,
-		stateFilePath: stateFilePath,
+		screen:             ScreenDashboard,
+		list:               l,
+		projects:           projects,
+		tmux:               tmuxClient,
+		notifServer:        notifServer,
+		notifState:         make(sessionStateMap),
+		dashFocusLeft:      true,
+		stateFilePath:      stateFilePath,
+		ticketsDisabled:    ticketsCfg.Disabled,
+		ticketsProviders:   providers,
+		ticketsInstances:   instances,
+		ticketsPerBucket:   perBucket,
+		ticketsRefreshPeriod: refresh,
 	}
 }
+
+// ticketsInstancesFromConfig bridges the config shape to the jira package's
+// flat Instance type, converting the TOML status map to tickets.StatusMap.
+func ticketsInstancesFromConfig(cfg config.TicketsConfig) []jira.Instance {
+	out := make([]jira.Instance, 0, len(cfg.Jira))
+	for _, j := range cfg.Jira {
+		out = append(out, jira.Instance{
+			Name:          j.Name,
+			BaseURL:       j.BaseURL,
+			Email:         j.Email,
+			SprintFieldID: j.SprintFieldID,
+			StatusMap: tickets.StatusMap{
+				InProgress: j.StatusMap.InProgress,
+				Blocked:    j.StatusMap.Blocked,
+				Review:     j.StatusMap.Review,
+				Todo:       j.StatusMap.Todo,
+			},
+		})
+	}
+	return out
+}
+
+// dashRightSection identifies the focused section in the dashboard right
+// panel when the right panel itself is focused.
+type dashRightSection int
+
+const (
+	dashRightSessions dashRightSection = iota
+	dashRightTickets
+)
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
@@ -253,6 +347,11 @@ func (m Model) Init() tea.Cmd {
 	}
 	if m.notifServer != nil {
 		cmds = append(cmds, m.waitForNotification())
+	}
+	// Kick off the first tickets fetch immediately so the panel populates on
+	// first paint. Subsequent fetches come from ticketsTick.
+	if len(m.ticketsProviders) > 0 {
+		cmds = append(cmds, m.fetchTickets(), ticketsTick(m.ticketsRefreshPeriod))
 	}
 	return tea.Batch(cmds...)
 }
@@ -417,6 +516,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, keys.Enter):
+			if m.screen == ScreenDashboard && !m.dashFocusLeft && m.dashRightFocus == dashRightTickets {
+				// Tickets panel: enter opens the selected ticket in browser.
+				if t := m.ticketAtCursor(); t != nil && t.URL != "" {
+					url := t.URL
+					id := t.ID
+					return m, func() tea.Msg {
+						if err := openInBrowser(url); err != nil {
+							return statusMsgEvent(fmt.Sprintf("Open failed: %v", err))
+						}
+						return statusMsgEvent(fmt.Sprintf("Opened %s in browser", id))
+					}
+				}
+				return m, nil
+			}
 			if m.screen == ScreenDashboard && !m.dashFocusLeft {
 				// Sessions panel: switch to the selected session's tmux window —
 				// or, if it's external, prompt to import it instead of failing.
@@ -584,6 +697,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.String() == "right" || msg.String() == "l":
 			if m.screen == ScreenDashboard {
 				m.dashFocusLeft = false
+				// Default to sessions; fall through to tickets when no sessions exist.
+				if len(m.dashSessionItems) == 0 && m.ticketsVisibleLen() > 0 {
+					m.dashRightFocus = dashRightTickets
+				} else {
+					m.dashRightFocus = dashRightSessions
+				}
 				return m, nil
 			}
 			if m.screen == ScreenProject {
@@ -614,6 +733,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					gh.OpenPRInBrowser(m.detailProject.Path, pr.Number)
 					return statusMsgEvent(fmt.Sprintf("Opened PR #%d in browser", pr.Number))
+				}
+			}
+			if m.screen == ScreenDashboard && !m.dashFocusLeft && m.dashRightFocus == dashRightTickets {
+				if t := m.ticketAtCursor(); t != nil && t.URL != "" {
+					url := t.URL
+					id := t.ID
+					return m, func() tea.Msg {
+						if err := openInBrowser(url); err != nil {
+							return statusMsgEvent(fmt.Sprintf("Open failed: %v", err))
+						}
+						return statusMsgEvent(fmt.Sprintf("Opened %s in browser", id))
+					}
 				}
 			}
 
@@ -756,6 +887,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.writeStateFile()
 		return m, nil
 
+	case ticketsTickMsg:
+		if len(m.ticketsProviders) == 0 {
+			return m, nil
+		}
+		m.ticketsLoading = true
+		return m, tea.Batch(ticketsTick(m.ticketsRefreshPeriod), m.fetchTickets())
+
+	case ticketsRefreshMsg:
+		m.ticketsGroups = msg.groups
+		m.ticketsErrors = msg.results
+		m.ticketsLoaded = true
+		m.ticketsLoading = false
+		m.ticketsLastFetch = time.Now()
+		if m.ticketsCursor >= m.ticketsVisibleLen() {
+			m.ticketsCursor = max(0, m.ticketsVisibleLen()-1)
+		}
+		return m, nil
+
 	case gitStatusMsg:
 		m.gitStatuses = map[string]project.GitStatus(msg)
 		// Update ProjectItems with git info
@@ -865,16 +1014,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch m.screen {
 	case ScreenDashboard:
-		// Right panel (active sessions): handle up/down ourselves
+		// Right panel: sessions (top) + optional tickets (bottom). Up/down
+		// moves within the focused section and crosses the boundary at the
+		// ends (down past the last session → first ticket; up past the first
+		// ticket → last session). Wraps within each section if tickets isn't
+		// rendered.
 		if !m.dashFocusLeft {
 			if msg, ok := msg.(tea.KeyMsg); ok {
-				n := len(m.dashSessionItems)
-				if n > 0 {
-					switch msg.String() {
-					case "up", "k":
-						m.dashSessionCursor = (m.dashSessionCursor - 1 + n) % n
-					case "down", "j":
-						m.dashSessionCursor = (m.dashSessionCursor + 1) % n
+				sess := len(m.dashSessionItems)
+				ticketsLen := 0
+				if m.ticketsShouldRender() {
+					ticketsLen = m.ticketsVisibleLen()
+				}
+				switch msg.String() {
+				case "up", "k":
+					if m.dashRightFocus == dashRightSessions {
+						if sess > 0 {
+							if m.dashSessionCursor == 0 && ticketsLen > 0 {
+								m.dashRightFocus = dashRightTickets
+								m.ticketsCursor = ticketsLen - 1
+							} else {
+								m.dashSessionCursor = (m.dashSessionCursor - 1 + sess) % sess
+							}
+						}
+					} else {
+						if ticketsLen > 0 {
+							if m.ticketsCursor == 0 && sess > 0 {
+								m.dashRightFocus = dashRightSessions
+								m.dashSessionCursor = sess - 1
+							} else {
+								m.ticketsCursor = (m.ticketsCursor - 1 + ticketsLen) % ticketsLen
+							}
+						}
+					}
+				case "down", "j":
+					if m.dashRightFocus == dashRightSessions {
+						if sess > 0 {
+							if m.dashSessionCursor == sess-1 && ticketsLen > 0 {
+								m.dashRightFocus = dashRightTickets
+								m.ticketsCursor = 0
+							} else {
+								m.dashSessionCursor = (m.dashSessionCursor + 1) % sess
+							}
+						} else if ticketsLen > 0 {
+							m.dashRightFocus = dashRightTickets
+							m.ticketsCursor = 0
+						}
+					} else {
+						if ticketsLen > 0 {
+							if m.ticketsCursor == ticketsLen-1 && sess > 0 {
+								m.dashRightFocus = dashRightSessions
+								m.dashSessionCursor = 0
+							} else {
+								m.ticketsCursor = (m.ticketsCursor + 1) % ticketsLen
+							}
+						}
 					}
 				}
 			}
@@ -1104,16 +1298,23 @@ func (m Model) dashboardView() string {
 		m.list.Title = "Unky Mo  " + strings.Join(statusParts, "  ")
 	}
 
-	// Calculate panel widths
+	// Split the dashboard 50/50 between the project list and the
+	// sessions+tickets panel. On narrow terminals, clamp the left side so
+	// the list stays usable; on very wide terminals the even split keeps
+	// each half readable without stretching.
 	totalWidth := m.width
 	if totalWidth == 0 {
 		totalWidth = 120
 	}
-	rightWidth := 35
 	dividerWidth := 3
+	rightWidth := (totalWidth - dividerWidth) / 2
 	leftWidth := totalWidth - rightWidth - dividerWidth
 	if leftWidth < 40 {
 		leftWidth = 40
+		rightWidth = totalWidth - leftWidth - dividerWidth
+		if rightWidth < 20 {
+			rightWidth = 20
+		}
 	}
 
 	// Resize list to fit the left panel
@@ -1123,11 +1324,12 @@ func (m Model) dashboardView() string {
 	// === Left panel: project list ===
 	leftStr := m.list.View()
 
-	// === Right panel: active sessions ===
+	// === Right panel: active sessions (top) + tickets (bottom) ===
 	var right strings.Builder
 
+	sessionsFocused := !m.dashFocusLeft && m.dashRightFocus == dashRightSessions
 	focusIndicator := ""
-	if !m.dashFocusLeft {
+	if sessionsFocused {
 		focusIndicator = " ◀"
 	}
 	// Pad top to align with the first project row in the list
@@ -1157,7 +1359,7 @@ func (m Model) dashboardView() string {
 				prevSection = section
 			}
 
-			selected := !m.dashFocusLeft && m.dashSessionCursor == i
+			selected := sessionsFocused && m.dashSessionCursor == i
 			cursor := "  "
 			if selected {
 				cursor = "▸ "
@@ -1209,6 +1411,10 @@ func (m Model) dashboardView() string {
 
 			right.WriteString(cursor + dot + " " + styledName + suffix + "\n")
 		}
+	}
+
+	if panel := m.renderTicketsPanel(rightWidth); panel != "" {
+		right.WriteString(panel)
 	}
 
 	rightStr := right.String()
@@ -3189,7 +3395,7 @@ func (m Model) attachSession() tea.Cmd {
 	}
 }
 
-func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string) error {
+func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
 		// Use the actual current session — the user may be in a session
@@ -3214,7 +3420,7 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 		defer ns.Stop()
 	}
 
-	m := NewModel(projects, tc, ns, stateFilePath)
+	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 

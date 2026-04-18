@@ -36,6 +36,8 @@ make install   # Build and install to ~/go/bin/mo
 - `internal/config/` — TOML config loading
 - `internal/project/` — Project model, workspace scanner, worktree support
 - `internal/usage/` — Claude rate-limit-window fetcher + per-session token counter
+- `internal/tickets/` — Provider-agnostic ticket model (Ticket, Bucket, Priority, Provider interface, StatusMap, Group/SortByRelevance, FetchAll)
+- `internal/tickets/jira/` — Atlassian Cloud provider. POSTs to `/rest/api/3/search/jql` (API v2 was removed in 2025). Token loaded via env `UNKY_MO_JIRA_TOKEN` or `~/.config/unky-mo/jira.token` (mode 0600)
 
 ## Claude Session Data
 
@@ -98,7 +100,7 @@ The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
-- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard has side-by-side layout: project list (left) + active sessions panel (right). Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it, plus optional `[merged]` / `[gone]` hints. `←`/`→` switch panels. Keys: `enter` (smart resume), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session; prompts switch/park+new/concurrent when one is already running — see Multi-session), `x` (cleanup worktree/branch under cursor — see Cleanup), `a`, `r`, `o`, `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Dashboard is a 50/50 split: project list (left) + sessions-on-top / tickets-below (right). Right-panel focus has two sub-sections (`dashRightFocus`: sessions vs. tickets) and up/down crosses the boundary at the ends. Project detail has a **branches list** (left) + PRs (right); each branch row is marked `●` main checkout, `⎇` has worktree, or `·` neither, with sessions nested under it, plus optional `[merged]` / `[gone]` hints. `←`/`→` switch panels. Keys: `enter` (smart resume / open ticket in browser when on tickets section), `w` (open row's branch as worktree), `m` / `M` (checkout in main; `M` stashes first), `W` (prompt for a brand-new branch name), `n` (new session; prompts switch/park+new/concurrent when one is already running — see Multi-session), `x` (cleanup worktree/branch under cursor — see Cleanup), `a`, `r`, `o` (open PR or ticket in browser), `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client, session keeps running), `esc`, `q`.
 - **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Has two focus sections:
   - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
   - **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).
@@ -168,6 +170,21 @@ Tracks Claude rate-limit windows and per-session token counts.
 - **Who fetches**: **main TUI only**, on a 60s `usageTick`. Sidebars never call the API — they read the cached snapshot from the shared state file (`UsageState`) and render it.
 - **Per-session tokens**: `usage.SessionTokens(jsonlPath)` parses a session's JSONL and returns the last turn's input + cache tokens. Cached by file size (JSONL is append-only, so size-change → recompute).
 
+## Tickets (`internal/tickets/`)
+
+Provider-agnostic ticket panel rendered in the bottom half of the dashboard right column. Jira is the only provider today but the `Ticket` / `Bucket` / `Provider` abstractions accept anything (Linear, GitHub Projects) that can return tickets assigned to the authenticated user.
+
+- **Buckets**: `in_progress`, `blocked`, `review`, `todo`, `unmapped`. Raw provider statuses are resolved via `StatusMap` (case-insensitive, whitespace-trimmed). Anything not matched falls into `unmapped` and renders the raw status in red brackets so workflow drift is obvious.
+- **Sort within bucket** (`SortByRelevance`): `(InSprint desc, Priority desc, UpdatedAt desc)`. Stable sort — ties preserve provider-returned order.
+- **Jira endpoint**: `POST /rest/api/3/search/jql` with `{jql, fields, maxResults}`. The v2 `/rest/api/2/search` endpoint was removed by Atlassian in 2025 (changelog CHANGE-2046); do not roll back to it.
+- **Sprint detection**: JQL runs `assignee = currentUser() AND statusCategory != Done`. The dynamic sprint custom field (default `customfield_10020`) is extracted out of band because its ID varies per installation. Configurable via `sprint_field_id`.
+- **Priority normalization**: Jira's named priorities (`Highest`/`Blocker`/`Critical`, `High`/`Major`, `Medium`, `Low`, `Lowest`/`Trivial`) map to the 1–5 scale.
+- **Auth**: basic auth with `email:API-token`. Token lives at `~/.config/unky-mo/jira.token` (mode 0600, enforced by `LoadToken`); env var `UNKY_MO_JIRA_TOKEN` overrides the file. Tokens **never** go in `config.toml`.
+- **Error surfacing**: `extractJiraError` parses `{errorMessages, errors, message}` shapes so the panel and `mo jira fetch` show just the human message, not the JSON blob.
+- **Rendering**: panel only appears when a token is present (file or env) OR `[[tickets.jira]]` is configured — controlled by `ticketsShouldRender()` in `internal/tui/tickets.go`. Explicit opt-out via `[tickets] disabled = true`. Overflow cap per bucket is `per_bucket_limit` (default 5); extra rows collapse to `… +N more`.
+- **Fetch cadence**: `ticketsTickMsg` in `internal/tui/app.go`, default 5min (config `refresh_seconds`). Initial fetch fires from `Init` so the panel populates on first paint.
+- **Multiple instances**: `[[tickets.jira]]` is an array; each instance gets its own `jira.Provider`. A single token is shared across instances today (the token file is per-user, not per-instance) — revisit if multi-org support becomes real.
+
 ## Config (`internal/config/`)
 
 Loaded from `~/.config/unky-mo/config.toml` (or `$XDG_CONFIG_HOME/unky-mo/config.toml`); `config.Load` returns a fully-defaulted struct when the file is missing — no example file is shipped.
@@ -181,6 +198,10 @@ Loaded from `~/.config/unky-mo/config.toml` (or `$XDG_CONFIG_HOME/unky-mo/config
 | `scan_on_startup` | `bool` | `true` | Auto-discover projects under `workspace_dirs` |
 | `notify_sound` | `bool` | `true` | Enable notification sound |
 | `project` | `[]project.Project` | `nil` | Manually-configured projects, merged with discovered set |
+| `tickets.disabled` | `bool` | `false` | Explicit opt-out — hide the panel even when credentials exist |
+| `tickets.refresh_seconds` | `int` | `300` | Background fetch cadence |
+| `tickets.per_bucket_limit` | `int` | `5` | Max rows per bucket before `… +N more` |
+| `tickets.jira` | `[]JiraConfig` | `nil` | One or more Jira instances; see `[[tickets.jira]]` block with `base_url`, `email`, `sprint_field_id`, `status_map.{in_progress,blocked,review,todo}` |
 
 ## Sidebar Responsibilities
 
@@ -243,6 +264,9 @@ mo sync init <url>    # Connect to private GitHub repo for session sync
 mo sync push <proj>   # Push a session (encrypted) to sync repo
 mo sync pull [proj]   # Pull sessions from sync repo
 mo sync list          # List available synced sessions
+mo jira setup         # Interactive wizard: prompts URL/email, reads token without echo, verifies, writes token file + [[tickets.jira]] block
+mo jira fetch         # Run one fetch per configured instance (diagnostic; prints ticket count or extracted error)
+mo jira show-token    # Print the current token (for copying to another machine)
 mo debug <project>    # Dump session/worktree debug info for a project
 mo sidebar            # Run sidebar TUI (internal, launched in panes)
 mo version            # Print version

@@ -38,6 +38,7 @@ func main() {
 	rootCmd.AddCommand(resumeCmd())
 	rootCmd.AddCommand(hooksCmd())
 	rootCmd.AddCommand(syncCmd())
+	rootCmd.AddCommand(jiraCmd())
 	rootCmd.AddCommand(sidebarCmd())
 	rootCmd.AddCommand(debugCmd())
 	rootCmd.AddCommand(versionCmd())
@@ -62,7 +63,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading projects: %w", err)
 	}
-	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath)
+	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets)
 }
 
 func listCmd() *cobra.Command {
