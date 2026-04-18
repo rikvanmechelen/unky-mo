@@ -63,8 +63,14 @@ func Init(repoURL, syncDir string) error {
 	return cmd.Run()
 }
 
-// Push exports a project's active session to the sync repo (encrypted) and pushes.
-func Push(projectName, projectPath, syncDir string) error {
+// Push exports a specific session for a project to the sync repo (encrypted)
+// and pushes. sessionID must match a JSONL file in the project's Claude
+// sessions directory — callers are responsible for resolving which session
+// they mean (live session for the window, an explicit --session flag, etc.).
+func Push(projectName, projectPath, syncDir, sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("session id required")
+	}
 	if err := ensureRepo(syncDir); err != nil {
 		return err
 	}
@@ -73,11 +79,11 @@ func Push(projectName, projectPath, syncDir string) error {
 		return err
 	}
 
-	sessions := claude.RecentSessions(projectPath, 1)
-	if len(sessions) == 0 {
-		return fmt.Errorf("no sessions found for %s", projectName)
+	srcJSONL := filepath.Join(claude.ProjectsDirForPath(projectPath), sessionID+".jsonl")
+	if _, err := os.Stat(srcJSONL); err != nil {
+		return fmt.Errorf("session %s not found for %s", sessionID, projectName)
 	}
-	session := sessions[0]
+	title := claude.SessionTitle(srcJSONL)
 
 	dirHash := DirHash(key, projectName)
 	projectDir := filepath.Join(syncDir, dirHash)
@@ -85,15 +91,14 @@ func Push(projectName, projectPath, syncDir string) error {
 		return err
 	}
 
-	srcJSONL := filepath.Join(claude.ProjectsDirForPath(projectPath), session.SessionID+".jsonl")
 	if err := EncryptFile(key, srcJSONL, filepath.Join(projectDir, sessionFilename), adSession(dirHash)); err != nil {
 		return fmt.Errorf("encrypt session: %w", err)
 	}
 
 	hostname, _ := os.Hostname()
 	meta := SessionMeta{
-		SessionID:   session.SessionID,
-		Title:       session.Title,
+		SessionID:   sessionID,
+		Title:       title,
 		ProjectName: projectName,
 		Hostname:    hostname,
 		PushedAt:    time.Now(),

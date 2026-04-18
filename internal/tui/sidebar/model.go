@@ -1364,8 +1364,12 @@ func (m Model) syncPush() tea.Cmd {
 		if m.windowName == "" || m.windowPath == "" {
 			return sidebarStatusMsg("no project")
 		}
+		live := claude.SessionForPath(m.windowPath)
+		if live == nil {
+			return sidebarStatusMsg("no live session to sync")
+		}
 		syncDir := moSync.DefaultSyncDir()
-		if err := moSync.Push(m.windowName, m.windowPath, syncDir); err != nil {
+		if err := moSync.Push(m.windowName, m.windowPath, syncDir, live.SessionID); err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("sync err: %v", err))
 		}
 		return sidebarStatusMsg("synced " + m.windowName)

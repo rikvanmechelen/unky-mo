@@ -395,6 +395,12 @@ func RecentSessions(projectPath string, maxResults int) []RecentSession {
 	return results
 }
 
+// SessionTitle returns the custom title for a session JSONL, or "" if none is set.
+func SessionTitle(path string) string {
+	title, _, _ := parseSessionJSONL(path)
+	return title
+}
+
 // parseSessionJSONL reads the first user message and git branch from a session file.
 // It only reads the first few lines to stay fast on large files.
 func parseSessionJSONL(path string) (title, summary, branch string) {

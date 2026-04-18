@@ -467,7 +467,7 @@ func syncCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	pushCmd := &cobra.Command{
 		Use:   "push <project>",
 		Short: "Push a project's session to the sync repo",
 		Args:  cobra.ExactArgs(1),
@@ -481,13 +481,24 @@ func syncCmd() *cobra.Command {
 				return err
 			}
 
-			if err := moSync.Push(args[0], projectPath, syncDir); err != nil {
+			sessionID, _ := cmd.Flags().GetString("session")
+			if sessionID == "" {
+				live := claude.SessionForPath(projectPath)
+				if live == nil {
+					return fmt.Errorf("no live session for %s; pass --session <id> to push a specific session", args[0])
+				}
+				sessionID = live.SessionID
+			}
+
+			if err := moSync.Push(args[0], projectPath, syncDir, sessionID); err != nil {
 				return err
 			}
-			fmt.Printf("Pushed session for %s\n", args[0])
+			fmt.Printf("Pushed session %s for %s\n", sessionID, args[0])
 			return nil
 		},
-	})
+	}
+	pushCmd.Flags().String("session", "", "explicit session ID to push (defaults to the live session for the project)")
+	cmd.AddCommand(pushCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "pull [project]",
