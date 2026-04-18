@@ -522,6 +522,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.buildDetailRows()
 			m.loadRecap()
 		}
+		if msg.err != nil {
+			return m, func() tea.Msg {
+				return statusMsgEvent("sync failed: " + msg.err.Error())
+			}
+		}
 		return m, nil
 
 	case worktreeCreatedMsg:
@@ -1574,6 +1579,7 @@ func (m Model) fetchPRDetail(number int) tea.Cmd {
 type syncPullMsg struct {
 	synced map[string]moSync.SessionMeta // sync metadata keyed by session ID
 	pulled bool                          // true if a new session was pulled
+	err    error                         // non-nil when sync is configured but failed
 }
 
 func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
@@ -1581,10 +1587,16 @@ func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 		syncDir := moSync.DefaultSyncDir()
 		result := syncPullMsg{synced: make(map[string]moSync.SessionMeta)}
 
+		// Stay quiet when the user hasn't set up sync on this machine.
+		if !moSync.IsConfigured(syncDir) {
+			return result
+		}
+
 		// List what's in the sync repo for this project
 		sessions, err := moSync.List(syncDir)
 		if err != nil {
-			return result // silently fail — sync is optional
+			result.err = err
+			return result
 		}
 
 		// Map each sync project name → local filesystem path. Main-project
@@ -1610,7 +1622,12 @@ func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 			localDir := claude.ProjectsDirForPath(localPath)
 			jsonlPath := filepath.Join(localDir, s.SessionID+".jsonl")
 			if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-				moSync.Pull(s.ProjectName, localPath, syncDir)
+				if _, err := moSync.Pull(s.ProjectName, localPath, syncDir); err != nil {
+					if result.err == nil {
+						result.err = fmt.Errorf("%s: %w", s.ProjectName, err)
+					}
+					continue
+				}
 				result.pulled = true
 			}
 		}

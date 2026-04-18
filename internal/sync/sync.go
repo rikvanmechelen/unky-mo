@@ -35,6 +35,20 @@ func DefaultSyncDir() string {
 	return filepath.Join(home, ".config", "unky-mo", "sync")
 }
 
+// IsConfigured reports whether the user appears to have set up sync on this
+// machine — i.e. both the sync repo and the key file exist. Used by callers
+// (like the TUI auto-pull) to decide whether sync errors are worth surfacing
+// or whether the feature is simply not enabled and should stay silent.
+func IsConfigured(syncDir string) bool {
+	if _, err := os.Stat(filepath.Join(syncDir, ".git")); err != nil {
+		return false
+	}
+	if _, err := os.Stat(DefaultKeyPath()); err != nil {
+		return false
+	}
+	return true
+}
+
 // Init clones the remote repo into the sync directory.
 func Init(repoURL, syncDir string) error {
 	if _, err := os.Stat(filepath.Join(syncDir, ".git")); err == nil {
