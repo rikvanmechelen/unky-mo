@@ -12,6 +12,7 @@ var (
 	colorMuted     = lipgloss.Color("#6B7280") // subtle but legible gray
 	colorWhite     = lipgloss.Color("#F3F4F6")
 	colorBg        = lipgloss.Color("#14191E")
+	colorInfo      = lipgloss.Color("#60A5FA") // blue-400 — external / informational
 
 	// Title bar
 	titleStyle = lipgloss.NewStyle().
@@ -64,6 +65,12 @@ var (
 
 	statusNone = lipgloss.NewStyle().
 			Foreground(colorMuted)
+
+	// External: a live claude running outside mo's tmux session (e.g. started
+	// from a VS Code terminal). Distinct color signals the "import me?" UX.
+	statusExternal = lipgloss.NewStyle().
+			Foreground(colorInfo).
+			Bold(true)
 
 	// Notification badge
 	notifBadgeStyle = lipgloss.NewStyle().

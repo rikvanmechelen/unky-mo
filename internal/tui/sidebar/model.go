@@ -20,7 +20,7 @@ type SidebarItem struct {
 	Name       string
 	Path       string // project directory path
 	WindowName string // tmux window target; empty for Home (window 0)
-	Status     string // "none", "active", "idle", "permission"
+	Status     string // "none", "active", "idle", "permission", "external"
 	Parent     string // non-empty for worktree entries (parent project name)
 	IsHome     bool
 	IsHeader   bool // non-interactive section header (e.g., "── Terminals ──")
@@ -370,6 +370,8 @@ func (m Model) View() string {
 				suffix = " " + dotIdle.Render("idle")
 			} else if item.Status == "permission" {
 				suffix = " " + dotPermission.Render("perm")
+			} else if item.Status == "external" {
+				suffix = " " + dotExternal.Render("ext")
 			}
 
 			line = cursor + dot + " " + indent + styledName + suffix
@@ -518,6 +520,8 @@ func renderDot(status string) string {
 		return dotIdle.Render("●")
 	case "permission":
 		return dotPermission.Render("●")
+	case "external":
+		return dotExternal.Render("●")
 	default:
 		return dotNone.Render("○")
 	}

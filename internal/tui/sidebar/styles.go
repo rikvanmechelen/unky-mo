@@ -11,6 +11,7 @@ var (
 	colorMuted   = lipgloss.Color("#6B7280")
 	colorWhite   = lipgloss.Color("#F3F4F6")
 	colorDim     = lipgloss.Color("#9CA3AF")
+	colorInfo    = lipgloss.Color("#60A5FA")
 
 	headerStyle = lipgloss.NewStyle().
 			Foreground(colorWhite).
@@ -43,6 +44,10 @@ var (
 
 	dotNone = lipgloss.NewStyle().
 		Foreground(colorMuted)
+
+	dotExternal = lipgloss.NewStyle().
+			Foreground(colorInfo).
+			Bold(true)
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)

@@ -60,6 +60,8 @@ func (d projectDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		statusStr = statusIdle.Render(symbolIdle + " needs input")
 	case StatusPermission:
 		statusStr = statusPermission.Render(symbolPermission + " permission!")
+	case StatusExternal:
+		statusStr = statusExternal.Render(symbolActive + " external")
 	default:
 		statusStr = statusNone.Render(symbolNone + " no session")
 	}

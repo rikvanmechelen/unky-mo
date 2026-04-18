@@ -100,6 +100,29 @@ func (c *Client) KillWindow(target string) error {
 	return runTmux("kill-window", "-t", target)
 }
 
+// PanePIDs returns the set of shell PIDs running in this tmux session's panes.
+// Used to distinguish Claude processes spawned under mo (descendants of one of
+// these PIDs) from orphans running elsewhere on the host.
+func (c *Client) PanePIDs() (map[int]bool, error) {
+	cmd := exec.Command("tmux", "list-panes", "-s", "-t", c.SessionName, "-F", "#{pane_pid}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	pids := make(map[int]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(line, "%d", &pid); err != nil {
+			continue
+		}
+		pids[pid] = true
+	}
+	return pids, nil
+}
+
 // WindowExists checks if a window with the given name exists.
 func (c *Client) WindowExists(name string) bool {
 	windows, err := c.ListWindows()

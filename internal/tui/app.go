@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -33,6 +34,7 @@ const (
 	StatusActive                   // Claude is processing
 	StatusIdle                     // Waiting for user input
 	StatusPermission               // Needs permission approval
+	StatusExternal                 // Live claude running outside mo's tmux — not joinable, offer to import
 )
 
 // ProjectItem wraps a project for the list component.
@@ -153,6 +155,17 @@ type Model struct {
 	pendingResumeSessionID string
 	pendingResumePath      string
 	pendingResumeWindow    string
+	// Import-external-session prompt: non-empty means we're asking the user
+	// whether to take over a claude running outside mo (kill it + resume here).
+	pendingImportSessionID string
+	pendingImportPath      string
+	pendingImportWindow    string
+	pendingImportProject   string // project display name, for the prompt text
+	pendingImportPID       int
+	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
+	// project path currently in StatusExternal, populated by refreshSessions.
+	externalPIDs     map[string]int
+	externalSessions map[string]string
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
@@ -286,6 +299,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Import-external-session prompt captures all input while active.
+		if m.pendingImportSessionID != "" {
+			switch msg.String() {
+			case "y", "Y", "enter":
+				sessionID := m.pendingImportSessionID
+				pid := m.pendingImportPID
+				path := m.pendingImportPath
+				window := m.pendingImportWindow
+				m.pendingImportSessionID = ""
+				m.pendingImportPID = 0
+				m.pendingImportPath = ""
+				m.pendingImportWindow = ""
+				m.pendingImportProject = ""
+				return m, m.importExternalSession(pid, sessionID, path, window)
+			case "n", "N", "esc", "escape":
+				m.pendingImportSessionID = ""
+				m.pendingImportPID = 0
+				m.pendingImportPath = ""
+				m.pendingImportWindow = ""
+				m.pendingImportProject = ""
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, keys.Help):
 			if m.screen == ScreenHelp {
@@ -297,9 +335,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Enter):
 			if m.screen == ScreenDashboard && !m.dashFocusLeft {
-				// Sessions panel: switch to the selected session's tmux window
+				// Sessions panel: switch to the selected session's tmux window —
+				// or, if it's external, prompt to import it instead of failing.
 				if m.dashSessionCursor >= 0 && m.dashSessionCursor < len(m.dashSessionItems) {
 					item := m.dashSessionItems[m.dashSessionCursor]
+					if item.Status == StatusExternal {
+						m.pendingImportSessionID = m.externalSessions[item.ProjectPath]
+						m.pendingImportPID = m.externalPIDs[item.ProjectPath]
+						m.pendingImportPath = item.ProjectPath
+						m.pendingImportWindow = item.WindowName
+						m.pendingImportProject = item.Name
+						return m, nil
+					}
 					if m.tmux != nil {
 						target := m.tmux.SessionName + ":" + item.WindowName
 						m.tmux.SwitchToWindow(target)
@@ -711,9 +758,10 @@ func (m Model) View() string {
 
 // dashSessionItem represents an active session in the dashboard's right panel.
 type dashSessionItem struct {
-	Name       string
-	WindowName string
-	Status     SessionStatus
+	Name        string
+	WindowName  string
+	Status      SessionStatus
+	ProjectPath string // cwd — used to resolve external PID/sessionID on import
 }
 
 // refreshDashSessions rebuilds the active sessions list for the dashboard panel.
@@ -725,18 +773,20 @@ func (m *Model) refreshDashSessions() {
 			continue
 		}
 		items = append(items, dashSessionItem{
-			Name:       pi.project.Name,
-			WindowName: pi.project.Name,
-			Status:     pi.status,
+			Name:        pi.project.Name,
+			WindowName:  pi.project.Name,
+			Status:      pi.status,
+			ProjectPath: pi.project.Path,
 		})
 	}
 	// Also add active worktree sessions
 	for _, wtList := range m.activeWorktrees {
 		for _, wt := range wtList {
 			items = append(items, dashSessionItem{
-				Name:       wt.WindowName,
-				WindowName: wt.WindowName,
-				Status:     wt.Status,
+				Name:        wt.WindowName,
+				WindowName:  wt.WindowName,
+				Status:      wt.Status,
+				ProjectPath: wt.Path,
 			})
 		}
 	}
@@ -817,6 +867,8 @@ func (m Model) dashboardView() string {
 				dot = statusIdle.Render(symbolIdle)
 			case StatusPermission:
 				dot = statusPermission.Render(symbolPermission)
+			case StatusExternal:
+				dot = statusExternal.Render(symbolActive)
 			default:
 				dot = statusNone.Render(symbolNone)
 			}
@@ -839,6 +891,8 @@ func (m Model) dashboardView() string {
 				suffix = " " + statusIdle.Render("idle")
 			} else if item.Status == StatusPermission {
 				suffix = " " + statusPermission.Render("perm")
+			} else if item.Status == StatusExternal {
+				suffix = " " + statusExternal.Render("external")
 			}
 
 			right.WriteString(cursor + dot + " " + styledName + suffix + "\n")
@@ -866,17 +920,26 @@ func (m Model) dashboardView() string {
 
 	usageStrip := m.renderUsageStrip(totalWidth)
 
-	footer := m.renderFooter([]footerBinding{
-		{"↑↓", "navigate"},
-		{"←→", "switch panel"},
-		{"enter", "open"},
-		{"n", "new session"},
-		{"a", "attach"},
-		{"/", "filter"},
-		{"?", "help"},
-		{"s", "suspend"},
-		{"q", "quit"},
-	})
+	var footer string
+	if m.pendingImportSessionID != "" {
+		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here)", m.pendingImportProject)
+		footer = m.renderPrompt(question, []footerBinding{
+			{"y", "yes"},
+			{"n", "no"},
+		})
+	} else {
+		footer = m.renderFooter([]footerBinding{
+			{"↑↓", "navigate"},
+			{"←→", "switch panel"},
+			{"enter", "open"},
+			{"n", "new session"},
+			{"a", "attach"},
+			{"/", "filter"},
+			{"?", "help"},
+			{"s", "suspend"},
+			{"q", "quit"},
+		})
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		body,
@@ -1005,21 +1068,42 @@ func (m Model) renderFooter(bindings []footerBinding) string {
 	return footerStyle.Width(m.width).Render(line)
 }
 
-// sessionRefreshMsg carries the detected status for each project path with a live session.
-type sessionRefreshMsg map[string]SessionStatus
+// sessionRefreshMsg carries the detected status for each project path with a
+// live session. External (outside-tmux) sessions also carry their PID + sessionID
+// so the "import into mo" flow can kill the orphan and resume the conversation.
+type sessionRefreshMsg struct {
+	statuses         map[string]SessionStatus
+	externalPIDs     map[string]int    // cwd → orphan PID to kill on import
+	externalSessions map[string]string // cwd → sessionID to resume
+}
 
 func (m Model) refreshSessions() tea.Cmd {
 	return func() tea.Msg {
 		sessions, _ := claude.LiveSessions()
+		var hostPIDs map[int]bool
+		if m.tmux != nil {
+			hostPIDs, _ = m.tmux.PanePIDs()
+		}
 		statuses := make(map[string]SessionStatus)
+		externalPIDs := make(map[string]int)
+		externalSessions := make(map[string]string)
 		for _, s := range sessions {
+			// Any claude not descended from one of our tmux panes is external:
+			// it's a live session the user started elsewhere (e.g. VS Code
+			// terminal) and "join" would fail because no tmux window hosts it.
+			if len(hostPIDs) > 0 && !claude.IsDescendantOf(s.PID, hostPIDs) {
+				statuses[s.CWD] = StatusExternal
+				externalPIDs[s.CWD] = s.PID
+				externalSessions[s.CWD] = s.SessionID
+				continue
+			}
 			if claude.IsSessionIdle(s.CWD, s.SessionID) {
 				statuses[s.CWD] = StatusIdle
 			} else {
 				statuses[s.CWD] = StatusActive
 			}
 		}
-		return sessionRefreshMsg(statuses)
+		return sessionRefreshMsg{statuses: statuses, externalPIDs: externalPIDs, externalSessions: externalSessions}
 	}
 }
 
@@ -1038,9 +1122,13 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 		projectPaths[pi.project.Path] = pi.project.Name
 	}
 
+	// Stash external-session metadata so the import prompt can reach it later.
+	m.externalPIDs = polled.externalPIDs
+	m.externalSessions = polled.externalSessions
+
 	// Detect worktree sessions: CWDs containing ".worktrees/" that map to a known project
 	worktrees := make(map[string][]WorktreeStatus)
-	for cwd, status := range polled {
+	for cwd, status := range polled.statuses {
 		if idx := strings.Index(cwd, ".worktrees/"); idx >= 0 {
 			parentPath := cwd[:idx+len(".worktrees/")-1] // strip trailing "/"
 			parentPath = strings.TrimSuffix(parentPath, ".worktrees")
@@ -1068,13 +1156,18 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 			pi.status = StatusPermission
 			attentionCount++
 			activeCount++
-		} else if polledStatus, ok := polled[pi.project.Path]; ok {
-			// Use poll-based status (detects idle from JSONL)
+		} else if polledStatus, ok := polled.statuses[pi.project.Path]; ok {
+			// Use poll-based status (detects idle from JSONL, or external marker)
 			pi.status = polledStatus
-			if polledStatus == StatusIdle {
+			switch polledStatus {
+			case StatusIdle:
 				attentionCount++
+				activeCount++
+			case StatusExternal:
+				// External sessions aren't "mo sessions" — don't count as active.
+			default:
+				activeCount++
 			}
-			activeCount++
 		} else {
 			pi.status = StatusNone
 		}
@@ -1116,6 +1209,8 @@ func (m *Model) writeStateFile() {
 			statusStr = "idle"
 		case StatusPermission:
 			statusStr = "permission"
+		case StatusExternal:
+			statusStr = "external"
 		default:
 			statusStr = "none"
 		}
@@ -1975,6 +2070,31 @@ func (m Model) resumeInDir(sessionID, cwd, windowName string) tea.Cmd {
 				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
 			}
 			return statusMsgEvent("Switched to " + windowName)
+		}
+		return m.launchResumeInWindow(windowName, cwd, sessionID)
+	}
+}
+
+// importExternalSession terminates an orphan claude running outside mo's tmux
+// session (e.g. started from a VS Code terminal) and resumes its conversation
+// in a fresh tmux window. The SIGTERM gives claude a moment to flush its
+// JSONL before the new process attaches to the same sessionID.
+func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string) tea.Cmd {
+	return func() tea.Msg {
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		if pid > 0 {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Signal(syscall.SIGTERM)
+			}
+			// Wait up to ~2s for the orphan to exit cleanly; fall through regardless.
+			for i := 0; i < 20; i++ {
+				if !claude.IsAlive(pid) {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
 		}
 		return m.launchResumeInWindow(windowName, cwd, sessionID)
 	}

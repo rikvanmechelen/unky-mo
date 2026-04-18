@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,6 +88,40 @@ func ReadSessions() ([]Session, error) {
 func IsAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil
+}
+
+// parentPID returns the PPID of the given process, or 0 if it can't be read.
+// Reads /proc/<pid>/status (Linux-specific; returns 0 on other OSes).
+func parentPID(pid int) int {
+	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Text()
+		if strings.HasPrefix(line, "PPid:") {
+			var ppid int
+			if _, err := fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid); err != nil {
+				return 0
+			}
+			return ppid
+		}
+	}
+	return 0
+}
+
+// IsDescendantOf reports whether pid has any ancestor in the given set,
+// walking up the PPID chain. Returns false if pid == 0 or the chain ends
+// before hitting a host (e.g. an orphaned process reparented to init).
+func IsDescendantOf(pid int, hostPIDs map[int]bool) bool {
+	for p := pid; p > 1; p = parentPID(p) {
+		if hostPIDs[p] {
+			return true
+		}
+	}
+	return false
 }
 
 // LiveSessions returns only sessions whose PID is still alive.
