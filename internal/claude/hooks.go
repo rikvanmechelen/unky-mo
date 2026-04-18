@@ -137,7 +137,11 @@ func writeSettings(settings map[string]interface{}) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(ClaudeSettingsPath(), data, 0644)
+	path := ClaudeSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 // filterOutUnkyMo removes entries with the unky-mo marker from a hook type.

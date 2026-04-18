@@ -71,31 +71,13 @@ func (c *Client) DetachClient() error {
 }
 
 // ListWindows returns the names of windows in the session.
-// window_id is placed first so SplitN(4) safely preserves any ':' characters
-// that happen to appear in pane_current_path.
 func (c *Client) ListWindows() ([]Window, error) {
 	cmd := exec.Command("tmux", "list-windows", "-t", c.SessionName, "-F", "#{window_id}:#{window_index}:#{window_name}:#{pane_current_path}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
-	var windows []Window
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 4)
-		if len(parts) < 4 {
-			continue
-		}
-		windows = append(windows, Window{
-			ID:    parts[0],
-			Index: parts[1],
-			Name:  parts[2],
-			CWD:   parts[3],
-		})
-	}
-	return windows, nil
+	return parseWindowList(out), nil
 }
 
 // KillWindow kills a specific window.
@@ -118,18 +100,7 @@ func (c *Client) PanePIDs() (map[int]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
-	pids := make(map[int]bool)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		var pid int
-		if _, err := fmt.Sscanf(line, "%d", &pid); err != nil {
-			continue
-		}
-		pids[pid] = true
-	}
-	return pids, nil
+	return parsePIDSet(out), nil
 }
 
 // WindowPanePIDs returns the set of shell PIDs in the panes of a specific
@@ -141,18 +112,7 @@ func (c *Client) WindowPanePIDs(target string) (map[int]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
-	pids := make(map[int]bool)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		var pid int
-		if _, err := fmt.Sscanf(line, "%d", &pid); err != nil {
-			continue
-		}
-		pids[pid] = true
-	}
-	return pids, nil
+	return parsePIDSet(out), nil
 }
 
 // WindowExists checks if a window with the given name exists.

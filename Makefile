@@ -9,7 +9,7 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 
-.PHONY: build install clean
+.PHONY: build install clean test test-race test-expectfail mocks mocks-check
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/mo
@@ -25,3 +25,21 @@ install: build
 
 clean:
 	rm -f $(BINARY)
+
+test:
+	go test ./...
+
+test-race:
+	go test -race ./...
+
+test-expectfail:
+	@go test -tags expectfail ./... || true
+
+# Regenerate all gomock mocks. Requires mockgen — `go install go.uber.org/mock/mockgen@latest`.
+mocks:
+	@command -v mockgen >/dev/null 2>&1 || { echo "mockgen not found — run: go install go.uber.org/mock/mockgen@latest"; exit 1; }
+	go generate ./...
+
+# CI check: mocks are up-to-date.
+mocks-check: mocks
+	@git diff --exit-code -- '*mock_*.go' || { echo "mocks are stale — run 'make mocks' and commit the result"; exit 1; }
