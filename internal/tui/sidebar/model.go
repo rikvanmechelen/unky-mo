@@ -22,6 +22,9 @@ type SidebarItem struct {
 	WindowName string // tmux window target; empty for Home (window 0)
 	Status     string // "none", "active", "idle", "permission", "external"
 	Parent     string // non-empty for worktree entries (parent project name)
+	Section    string // "projects" (default) or "external" — groups stray sessions
+	Branch     string // git branch (populated for git-backed strays)
+	Dirty      int    // dirty file count (populated for git-backed strays)
 	IsHome     bool
 	IsHeader   bool // non-interactive section header (e.g., "── Terminals ──")
 	// Terminal items
@@ -289,8 +292,7 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	// Header
-	header := headerStyle.Render("── Sessions ──")
-	b.WriteString(header + "\n")
+	b.WriteString(renderSectionHeader("Sessions", m.width) + "\n")
 
 	// Calculate visible range
 	headerLines := 1
@@ -326,9 +328,9 @@ func (m Model) View() string {
 
 		var line string
 		if item.IsHeader {
-			// Section header — not selectable
-			line = headerStyle.Render(item.Name)
-			b.WriteString(line + "\n")
+			// Section header — not selectable; rendered as a full-width
+			// centered title with extending rule like the top "Sessions".
+			b.WriteString(renderSectionHeader(item.Name, m.width) + "\n")
 			continue
 		} else if item.IsTerminal {
 			// Terminal item: "  1: term-1 ◀"
@@ -372,6 +374,15 @@ func (m Model) View() string {
 				suffix = " " + dotPermission.Render("perm")
 			} else if item.Status == "external" {
 				suffix = " " + dotExternal.Render("ext")
+			}
+			// Git-backed strays carry branch info; show it so the row is
+			// distinguishable from other repos of the same basename.
+			if item.Branch != "" {
+				info := item.Branch
+				if item.Dirty > 0 {
+					info += fmt.Sprintf(" *%d", item.Dirty)
+				}
+				suffix = " " + normalStyle.Render(info) + suffix
 			}
 
 			line = cursor + dot + " " + indent + styledName + suffix
@@ -512,6 +523,19 @@ func (m Model) View() string {
 	return b.String()
 }
 
+// renderSectionHeader renders "────── Label ──────" centered in width,
+// used for every top-level section label in the sidebar.
+func renderSectionHeader(label string, width int) string {
+	inner := " " + label + " "
+	if width <= len(inner)+2 {
+		return headerStyle.Render("── " + label + " ──")
+	}
+	total := width - len(inner)
+	left := total / 2
+	right := total - left
+	return headerStyle.Render(strings.Repeat("─", left) + inner + strings.Repeat("─", right))
+}
+
 func renderDot(status string) string {
 	switch status {
 	case "active":
@@ -627,19 +651,35 @@ func (m *Model) refreshState() {
 		return
 	}
 
-	// Rebuild items: Home + only projects with active sessions
+	// Rebuild items: Home + projects section + optional External section.
+	// Group into two passes so the external header only renders when there
+	// is at least one stray, and so external rows always sit below projects.
 	items := []SidebarItem{{Name: "Unky Mo Home", IsHome: true}}
+	var projectItems, externalItems []SidebarItem
 	for _, p := range sf.Projects {
 		if p.Status == "none" {
 			continue
 		}
-		items = append(items, SidebarItem{
+		row := SidebarItem{
 			Name:       p.Name,
 			Path:       p.Path,
 			WindowName: p.WindowName,
 			Status:     p.Status,
 			Parent:     p.Parent,
-		})
+			Section:    p.Section,
+			Branch:     p.Branch,
+			Dirty:      p.Dirty,
+		}
+		if p.Section == "external" {
+			externalItems = append(externalItems, row)
+		} else {
+			projectItems = append(projectItems, row)
+		}
+	}
+	items = append(items, projectItems...)
+	if len(externalItems) > 0 {
+		items = append(items, SidebarItem{Name: "External", IsHeader: true, Section: "external"})
+		items = append(items, externalItems...)
 	}
 
 	m.items = items
@@ -1224,7 +1264,7 @@ func (m *Model) refreshTerminals() {
 	// Append terminal items to the sidebar list
 	if len(m.terminals) > 0 {
 		m.items = append(m.items, SidebarItem{
-			Name:     "── Terminals ──",
+			Name:     "Terminals",
 			IsHeader: true,
 		})
 		for i, t := range m.terminals {

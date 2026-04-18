@@ -166,6 +166,10 @@ type Model struct {
 	// project path currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
 	externalSessions map[string]string
+	// Strays are live sessions whose CWD isn't a known project. Split by the
+	// renderers into the "Projects" section (git-backed) and "External"
+	// section (everything else).
+	strays []strayLive
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
@@ -761,10 +765,18 @@ type dashSessionItem struct {
 	Name        string
 	WindowName  string
 	Status      SessionStatus
-	ProjectPath string // cwd — used to resolve external PID/sessionID on import
+	ProjectPath string              // cwd — used to resolve external PID/sessionID on import
+	Section     string              // "projects" (default) or "external"
+	Git         *project.GitStatus  // set for git-backed strays; nil otherwise
 }
 
 // refreshDashSessions rebuilds the active sessions list for the dashboard panel.
+// The list is split into two sections:
+//   - "projects": known workspace projects (and their worktrees) with a live
+//     session, plus git-backed strays — claudes running in a git repo we
+//     haven't scanned. These render as project rows with branch/dirty info.
+//   - "external": strays whose CWD isn't inside any git repo (e.g. ~ or /tmp).
+//     Shown separately so they don't clutter project-centric views.
 func (m *Model) refreshDashSessions() {
 	var items []dashSessionItem
 	for _, item := range m.list.Items() {
@@ -777,9 +789,10 @@ func (m *Model) refreshDashSessions() {
 			WindowName:  pi.project.Name,
 			Status:      pi.status,
 			ProjectPath: pi.project.Path,
+			Section:     "projects",
 		})
 	}
-	// Also add active worktree sessions
+	// Active worktree sessions belong in the projects section too.
 	for _, wtList := range m.activeWorktrees {
 		for _, wt := range wtList {
 			items = append(items, dashSessionItem{
@@ -787,6 +800,32 @@ func (m *Model) refreshDashSessions() {
 				WindowName:  wt.WindowName,
 				Status:      wt.Status,
 				ProjectPath: wt.Path,
+				Section:     "projects",
+			})
+		}
+	}
+	// Strays: git-backed go into projects with git info, non-git into external.
+	// ProjectPath is always the session's CWD so the import flow can find the
+	// right PID/sessionID (both maps are CWD-keyed) and launch the new tmux
+	// window at exactly where claude was running.
+	for _, sr := range m.strays {
+		if sr.RepoRoot != "" {
+			gs := project.GetGitStatus(sr.RepoRoot)
+			items = append(items, dashSessionItem{
+				Name:        sr.Name,
+				WindowName:  sr.Name,
+				Status:      sr.Status,
+				ProjectPath: sr.CWD,
+				Section:     "projects",
+				Git:         &gs,
+			})
+		} else {
+			items = append(items, dashSessionItem{
+				Name:        sr.Name,
+				WindowName:  sr.Name,
+				Status:      sr.Status,
+				ProjectPath: sr.CWD,
+				Section:     "external",
 			})
 		}
 	}
@@ -852,7 +891,25 @@ func (m Model) dashboardView() string {
 	if len(m.dashSessionItems) == 0 {
 		right.WriteString("  " + footerDescStyle.Render("No active sessions") + "\n")
 	} else {
+		prevSection := ""
 		for i, item := range m.dashSessionItems {
+			section := item.Section
+			if section == "" {
+				section = "projects"
+			}
+			if section != prevSection {
+				label := "Projects"
+				if section == "external" {
+					label = "External"
+				}
+				// Blank line between sections; label above the first row.
+				if prevSection != "" {
+					right.WriteString("\n")
+				}
+				right.WriteString("  " + footerDescStyle.Render(label) + "\n")
+				prevSection = section
+			}
+
 			selected := !m.dashFocusLeft && m.dashSessionCursor == i
 			cursor := "  "
 			if selected {
@@ -893,6 +950,14 @@ func (m Model) dashboardView() string {
 				suffix = " " + statusPermission.Render("perm")
 			} else if item.Status == StatusExternal {
 				suffix = " " + statusExternal.Render("external")
+			}
+			// Branch/dirty info for git-backed strays.
+			if item.Git != nil && item.Git.Branch != "" {
+				gitInfo := item.Git.Branch
+				if item.Git.Dirty > 0 {
+					gitInfo += fmt.Sprintf(" *%d", item.Git.Dirty)
+				}
+				suffix = " " + footerDescStyle.Render(gitInfo) + suffix
 			}
 
 			right.WriteString(cursor + dot + " " + styledName + suffix + "\n")
@@ -1068,16 +1133,37 @@ func (m Model) renderFooter(bindings []footerBinding) string {
 	return footerStyle.Width(m.width).Render(line)
 }
 
+// strayLive describes a live claude session whose CWD doesn't match any
+// scanned workspace project. Git-backed strays render in the "Projects"
+// section (with a synthetic project row); non-git strays render in the
+// "External" section of the dashboard and sidebar.
+type strayLive struct {
+	SessionID string
+	PID       int
+	CWD       string
+	RepoRoot  string // "" means non-git (CWD isn't inside any git repo)
+	Name      string // repo basename if git-backed, else CWD basename
+	Status    SessionStatus
+}
+
 // sessionRefreshMsg carries the detected status for each project path with a
 // live session. External (outside-tmux) sessions also carry their PID + sessionID
 // so the "import into mo" flow can kill the orphan and resume the conversation.
+// Strays are sessions whose CWD doesn't map to any known project.
 type sessionRefreshMsg struct {
 	statuses         map[string]SessionStatus
-	externalPIDs     map[string]int    // cwd → orphan PID to kill on import
-	externalSessions map[string]string // cwd → sessionID to resume
+	externalPIDs     map[string]int    // path → orphan PID to kill on import
+	externalSessions map[string]string // path → sessionID to resume
+	strays           []strayLive
 }
 
 func (m Model) refreshSessions() tea.Cmd {
+	knownPaths := make(map[string]bool)
+	for _, item := range m.list.Items() {
+		if pi, ok := item.(ProjectItem); ok {
+			knownPaths[pi.project.Path] = true
+		}
+	}
 	return func() tea.Msg {
 		sessions, _ := claude.LiveSessions()
 		var hostPIDs map[int]bool
@@ -1087,23 +1173,68 @@ func (m Model) refreshSessions() tea.Cmd {
 		statuses := make(map[string]SessionStatus)
 		externalPIDs := make(map[string]int)
 		externalSessions := make(map[string]string)
+		var strays []strayLive
 		for _, s := range sessions {
-			// Any claude not descended from one of our tmux panes is external:
-			// it's a live session the user started elsewhere (e.g. VS Code
-			// terminal) and "join" would fail because no tmux window hosts it.
-			if len(hostPIDs) > 0 && !claude.IsDescendantOf(s.PID, hostPIDs) {
-				statuses[s.CWD] = StatusExternal
-				externalPIDs[s.CWD] = s.PID
-				externalSessions[s.CWD] = s.SessionID
+			isExternal := len(hostPIDs) > 0 && !claude.IsDescendantOf(s.PID, hostPIDs)
+
+			status := StatusActive
+			if isExternal {
+				status = StatusExternal
+			} else if claude.IsSessionIdle(s.CWD, s.SessionID) {
+				status = StatusIdle
+			}
+
+			// Known project or worktree dir → record status by CWD so
+			// updateProjectStatuses can attach it to the right row.
+			if _, known := knownPaths[s.CWD]; known || strings.Contains(s.CWD, ".worktrees/") {
+				statuses[s.CWD] = status
+				if isExternal {
+					externalPIDs[s.CWD] = s.PID
+					externalSessions[s.CWD] = s.SessionID
+				}
 				continue
 			}
-			if claude.IsSessionIdle(s.CWD, s.SessionID) {
-				statuses[s.CWD] = StatusIdle
-			} else {
-				statuses[s.CWD] = StatusActive
+
+			// Stray session: classify as git-backed or not and emit a row.
+			// Key externalPIDs/Sessions by the session's CWD so the import
+			// flow launches the new tmux window at the exact directory the
+			// original claude was running in (not the repo root).
+			repoRoot := project.FindGitRoot(s.CWD)
+			// If the repo root matches a scanned project, attribute to that
+			// project rather than duplicating it as a stray row.
+			if repoRoot != "" {
+				if _, known := knownPaths[repoRoot]; known {
+					statuses[repoRoot] = status
+					if isExternal {
+						externalPIDs[repoRoot] = s.PID
+						externalSessions[repoRoot] = s.SessionID
+					}
+					continue
+				}
+			}
+			name := filepath.Base(s.CWD)
+			if repoRoot != "" {
+				name = filepath.Base(repoRoot)
+			}
+			strays = append(strays, strayLive{
+				SessionID: s.SessionID,
+				PID:       s.PID,
+				CWD:       s.CWD,
+				RepoRoot:  repoRoot,
+				Name:      name,
+				Status:    status,
+			})
+			if isExternal {
+				externalPIDs[s.CWD] = s.PID
+				externalSessions[s.CWD] = s.SessionID
 			}
 		}
-		return sessionRefreshMsg{statuses: statuses, externalPIDs: externalPIDs, externalSessions: externalSessions}
+		return sessionRefreshMsg{
+			statuses:         statuses,
+			externalPIDs:     externalPIDs,
+			externalSessions: externalSessions,
+			strays:           strays,
+		}
 	}
 }
 
@@ -1125,6 +1256,7 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	// Stash external-session metadata so the import prompt can reach it later.
 	m.externalPIDs = polled.externalPIDs
 	m.externalSessions = polled.externalSessions
+	m.strays = polled.strays
 
 	// Detect worktree sessions: CWDs containing ".worktrees/" that map to a known project
 	worktrees := make(map[string][]WorktreeStatus)
@@ -1219,6 +1351,7 @@ func (m *Model) writeStateFile() {
 			Path:       pi.project.Path,
 			WindowName: pi.project.Name,
 			Status:     statusStr,
+			Section:    "projects",
 		})
 
 		// Append worktree entries for this project
@@ -1236,6 +1369,42 @@ func (m *Model) writeStateFile() {
 				WindowName: wt.WindowName,
 				Status:     wtStatus,
 				Parent:     pi.project.Name,
+				Section:    "projects",
+			})
+		}
+	}
+
+	// Strays: git-backed go into the projects section with branch info;
+	// non-git strays go into a dedicated external section so the sidebar
+	// can group them below known projects.
+	for _, sr := range m.strays {
+		status := "active"
+		switch sr.Status {
+		case StatusIdle:
+			status = "idle"
+		case StatusPermission:
+			status = "permission"
+		case StatusExternal:
+			status = "external"
+		}
+		if sr.RepoRoot != "" {
+			gs := project.GetGitStatus(sr.RepoRoot)
+			projects = append(projects, state.ProjectState{
+				Name:       sr.Name,
+				Path:       sr.CWD, // launch path on import, not the repo root
+				WindowName: sr.Name,
+				Status:     status,
+				Section:    "projects",
+				Branch:     gs.Branch,
+				Dirty:      gs.Dirty,
+			})
+		} else {
+			projects = append(projects, state.ProjectState{
+				Name:       sr.Name,
+				Path:       sr.CWD,
+				WindowName: sr.Name,
+				Status:     status,
+				Section:    "external",
 			})
 		}
 	}

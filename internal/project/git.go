@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// FindGitRoot walks up from cwd to find the enclosing git repository's
+// top-level directory. Returns "" if cwd is not inside any git repo (or
+// git isn't installed). Delegates to `git rev-parse` rather than walking
+// `.git` manually, which also handles worktrees correctly.
+func FindGitRoot(cwd string) string {
+	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // GitStatus holds the current git state of a project.
 type GitStatus struct {
 	Branch string

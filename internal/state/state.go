@@ -11,8 +11,11 @@ type ProjectState struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	WindowName string `json:"window_name"`
-	Status     string `json:"status"`           // "none", "active", "idle", "permission"
-	Parent     string `json:"parent,omitempty"` // non-empty for worktree entries
+	Status     string `json:"status"`            // "none", "active", "idle", "permission", "external"
+	Parent     string `json:"parent,omitempty"`  // non-empty for worktree entries
+	Section    string `json:"section,omitempty"` // "projects" (default) or "external" — for stray-session grouping
+	Branch     string `json:"branch,omitempty"`  // git branch (populated for git-backed strays)
+	Dirty      int    `json:"dirty,omitempty"`   // dirty file count (populated for git-backed strays)
 }
 
 // StateFile is the shared state written by the main TUI and read by sidebar instances.
