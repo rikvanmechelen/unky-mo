@@ -12,13 +12,20 @@ import (
 //go:generate mockgen -destination=mocks/mock_deps.go -package=mock_sidebar github.com/rvanmech/unky-mo/internal/tui/sidebar TmuxClient,ClaudeReader,WindowResolver
 type TmuxClient interface {
 	SessionName() string
+	BindKey(table, key, command string, args ...string) error
 	BreakPane(paneID string) error
+	BreakPaneToSession(paneID, session string) error
 	ConfigureStatusFormat()
+	DisplayPopupAttach(session, cwd, title string) error
 	IsPaneAlive(paneID string) bool
 	JoinPaneConsolidate(srcPaneID, dstPaneID string) error
 	JoinPaneVertical(srcPaneID, dstTarget string) error
 	KillPane(paneID string) error
+	NewDetachedSession(name, cwd string) error
 	SelectPane(target string) error
+	SelectWindowByPane(paneID string) error
+	SessionExistsNamed(name string) bool
+	SetSessionOption(session, option, value string) error
 	SetWindowOption(target, option, value string) error
 	SplitWindowHorizontal(target, cwd string) (string, error)
 	SwitchToWindow(target string) error
@@ -74,10 +81,19 @@ type tmuxClientAdapter struct {
 func newTmuxClientAdapter(c *ttmux.Client) TmuxClient { return &tmuxClientAdapter{c: c} }
 
 func (a *tmuxClientAdapter) SessionName() string { return a.c.SessionName }
+func (a *tmuxClientAdapter) BindKey(table, key, command string, args ...string) error {
+	return a.c.BindKey(table, key, command, args...)
+}
 func (a *tmuxClientAdapter) BreakPane(paneID string) error {
 	return a.c.BreakPane(paneID)
 }
+func (a *tmuxClientAdapter) BreakPaneToSession(paneID, session string) error {
+	return a.c.BreakPaneToSession(paneID, session)
+}
 func (a *tmuxClientAdapter) ConfigureStatusFormat() { a.c.ConfigureStatusFormat() }
+func (a *tmuxClientAdapter) DisplayPopupAttach(session, cwd, title string) error {
+	return a.c.DisplayPopupAttach(session, cwd, title)
+}
 func (a *tmuxClientAdapter) IsPaneAlive(paneID string) bool {
 	return a.c.IsPaneAlive(paneID)
 }
@@ -90,8 +106,20 @@ func (a *tmuxClientAdapter) JoinPaneVertical(src, dst string) error {
 func (a *tmuxClientAdapter) KillPane(paneID string) error {
 	return a.c.KillPane(paneID)
 }
+func (a *tmuxClientAdapter) NewDetachedSession(name, cwd string) error {
+	return a.c.NewDetachedSession(name, cwd)
+}
 func (a *tmuxClientAdapter) SelectPane(target string) error {
 	return a.c.SelectPane(target)
+}
+func (a *tmuxClientAdapter) SelectWindowByPane(paneID string) error {
+	return a.c.SelectWindowByPane(paneID)
+}
+func (a *tmuxClientAdapter) SessionExistsNamed(name string) bool {
+	return a.c.SessionExistsNamed(name)
+}
+func (a *tmuxClientAdapter) SetSessionOption(session, option, value string) error {
+	return a.c.SetSessionOption(session, option, value)
 }
 func (a *tmuxClientAdapter) SetWindowOption(target, option, value string) error {
 	return a.c.SetWindowOption(target, option, value)

@@ -39,7 +39,7 @@ test-expectfail:
 # the claude session-detection + tmux-pane attribution code end-to-end.
 # Requires tmux.
 test-integration:
-	go test -tags integration ./internal/tmux/... ./internal/integration/...
+	go test -tags integration ./internal/tmux/... ./internal/integration/... ./internal/tui/sidebar/...
 
 # Regenerate all gomock mocks. Requires mockgen — `go install go.uber.org/mock/mockgen@latest`.
 mocks:

@@ -1288,35 +1288,35 @@ func (m *Model) closeTerminal() tea.Cmd {
 	return statusCmd(name + " closed")
 }
 
-// hidePane moves a terminal pane out of the main window into hidden storage.
-// If other hidden panes exist, consolidates into the same hidden window.
-// The hidden window is marked with @mo_hidden so ConfigureStatusFormat filters
-// it from the tmux status bar.
-func (m *Model) hidePane(paneID string) error {
-	// Find another hidden pane to consolidate with
-	for i, t := range m.terminals {
-		if t.PaneID == paneID {
-			continue
-		}
-		// Check if this pane is hidden (not the active visible one)
-		isActive := m.drawerOpen && i == m.activeTermIdx
-		if !isActive {
-			if err := m.tmux.JoinPaneConsolidate(paneID, t.PaneID); err != nil {
-				return err
-			}
-			// Mark using the destination pane ID — tmux resolves it to the
-			// containing window.
-			m.tmux.SetWindowOption(t.PaneID, "@mo_hidden", "1")
-			return nil
-		}
+// ensureMoTerms lazily creates the dedicated mo-terms session that holds
+// terminal tabs when they're not displayed in the drawer. The session is
+// configured so clients attached to it (i.e. the popup) use the popup-keys
+// key table, and backtick is bound there to detach-client. Safe to call on
+// every hide/popup — the fast path is a single has-session check.
+func (m *Model) ensureMoTerms() error {
+	if m.tmux.SessionExistsNamed(ttmux.MoTermsSession) {
+		return nil
 	}
-	// No other hidden panes — break into a new window and mark it hidden.
-	if err := m.tmux.BreakPane(paneID); err != nil {
+	if err := m.tmux.NewDetachedSession(ttmux.MoTermsSession, m.windowPath); err != nil {
 		return err
 	}
-	// The pane is now in its new window — mark it directly via pane ID.
-	m.tmux.SetWindowOption(paneID, "@mo_hidden", "1")
+	if err := m.tmux.SetSessionOption(ttmux.MoTermsSession, "key-table", "popup-keys"); err != nil {
+		return err
+	}
+	_ = m.tmux.BindKey("popup-keys", "`", "detach-client")
+	_ = m.tmux.BindKey("popup-keys", "Tab", "next-window")
+	_ = m.tmux.BindKey("popup-keys", "BTab", "previous-window")
 	return nil
+}
+
+// hidePane parks a terminal pane in the mo-terms session so it survives
+// drawer close and remains reachable by the backtick popup (which attaches
+// to that session).
+func (m *Model) hidePane(paneID string) error {
+	if err := m.ensureMoTerms(); err != nil {
+		return err
+	}
+	return m.tmux.BreakPaneToSession(paneID, ttmux.MoTermsSession)
 }
 
 // refreshTerminals verifies tracked terminals are still alive and appends
@@ -1470,12 +1470,33 @@ func (m Model) syncPush() tea.Cmd {
 	}
 }
 
-func (m Model) openPopup() tea.Cmd {
+// openPopup opens a floating popup that attaches to the mo-terms session so
+// the drawer's terminal tabs are visible. Backtick inside the popup is
+// bound (in the popup-keys key table on mo-terms) to detach-client, so
+// closing the popup preserves the shells. If the drawer is currently open,
+// the active tab is parked in mo-terms first so it shows up in the popup.
+func (m *Model) openPopup() tea.Cmd {
 	if m.windowPath == "" {
 		return func() tea.Msg { return sidebarStatusMsg("no project path") }
 	}
+	if m.drawerOpen && m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
+		if err := m.hidePane(m.terminals[m.activeTermIdx].PaneID); err != nil {
+			return func() tea.Msg { return sidebarStatusMsg(fmt.Sprintf("err: %v", err)) }
+		}
+		m.drawerOpen = false
+	}
+	if err := m.ensureMoTerms(); err != nil {
+		return func() tea.Msg { return sidebarStatusMsg(fmt.Sprintf("err: %v", err)) }
+	}
+	if m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
+		_ = m.tmux.SelectWindowByPane(m.terminals[m.activeTermIdx].PaneID)
+	}
 	title := fmt.Sprintf(" %s ", m.windowName)
-	c := exec.Command("tmux", "display-popup", "-E", "-d", m.windowPath, "-w", "80%", "-h", "80%", "-T", title)
+	c := exec.Command("tmux", "display-popup", "-E",
+		"-w", "80%", "-h", "80%",
+		"-d", m.windowPath,
+		"-T", title,
+		"tmux", "attach-session", "-t", ttmux.MoTermsSession)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("err: %v", err))

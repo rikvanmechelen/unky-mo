@@ -104,6 +104,96 @@ func TestIntegrationRefreshTerminalsPrunesRealPane(t *testing.T) {
 	}
 }
 
+// TestIntegrationDrawerRoundTrip — open the drawer (real split under
+// Claude), close it (pane parks in mo-terms, confirmed via list-panes),
+// reopen (pane joins back into the project window). The pane ID must
+// remain stable through the round trip.
+func TestIntegrationDrawerRoundTrip(t *testing.T) {
+	tc := newSidebarIntegTmux(t)
+
+	if _, err := tc.CreateWindow("alpha", "/tmp"); err != nil {
+		t.Fatalf("CreateWindow: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	ctrl := gomock.NewController(t)
+	claude := mock_sidebar.NewMockClaudeReader(ctrl)
+	claude.EXPECT().ActiveShellsForSession(gomock.Any()).Return(nil).AnyTimes()
+
+	m := &Model{
+		tmux:          newTmuxClientAdapter(tc),
+		claude:        claude,
+		resolver:      FakeWindowResolver{Name: "alpha", ID: "@1"},
+		windowName:    "alpha",
+		windowPath:    "/tmp",
+		activeTermIdx: -1,
+		items:         []SidebarItem{{Name: "Unky Mo Home", IsHome: true}},
+	}
+
+	// Open drawer — creates the first tab and leaves the pane split under
+	// Claude (window 'alpha' on the 'test' session).
+	if cmd := m.openDrawer(); cmd == nil {
+		t.Fatal("openDrawer returned nil")
+	}
+	if !m.drawerOpen || len(m.terminals) != 1 {
+		t.Fatalf("drawer state after open: open=%v, terminals=%d", m.drawerOpen, len(m.terminals))
+	}
+	paneID := m.terminals[0].PaneID
+	if paneID == "" {
+		t.Fatal("no pane id recorded after open")
+	}
+
+	// Close the drawer — the pane should be parked in mo-terms.
+	if cmd := m.closeDrawer(); cmd == nil {
+		t.Fatal("closeDrawer returned nil")
+	}
+	if m.drawerOpen {
+		t.Error("drawerOpen should be false after closeDrawer")
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	if !tc.SessionExistsNamed(ttmux.MoTermsSession) {
+		t.Fatal("mo-terms session should exist after first hide")
+	}
+	out, err := exec.Command("tmux", "-L", tc.SocketName,
+		"list-panes", "-s", "-t", ttmux.MoTermsSession, "-F", "#{pane_id}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list-panes on mo-terms: %v (%s)", err, out)
+	}
+	if !contains(string(out), paneID) {
+		t.Errorf("pane %q not found in mo-terms after close:\n%s", paneID, out)
+	}
+
+	// Reopen — pane should return to the project window under the same id.
+	if cmd := m.openDrawer(); cmd == nil {
+		t.Fatal("openDrawer (reopen) returned nil")
+	}
+	if !m.drawerOpen || len(m.terminals) != 1 || m.terminals[0].PaneID != paneID {
+		t.Fatalf("pane id changed across round trip: %+v", m.terminals)
+	}
+
+	// Verify the pane is now back on the 'test' session.
+	out, err = exec.Command("tmux", "-L", tc.SocketName,
+		"list-panes", "-s", "-t", "test", "-F", "#{pane_id}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list-panes on test: %v (%s)", err, out)
+	}
+	if !contains(string(out), paneID) {
+		t.Errorf("pane %q not back on test session after reopen:\n%s", paneID, out)
+	}
+}
+
+// contains is a local alias to keep the round-trip test readable without
+// importing strings just for one check.
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
 // TestIntegrationWindowIDStableAcrossRename — tmux window IDs don't change
 // on rename. This verifies the sidebar's WindowID-based own-window match
 // strategy is actually sound against a real tmux server.

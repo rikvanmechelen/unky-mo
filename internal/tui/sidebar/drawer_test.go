@@ -8,6 +8,25 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// expectEnsureMoTermsFirstTime sets up the full lazy-creation sequence that
+// ensureMoTerms performs when mo-terms does not yet exist. Callers whose
+// test already brought mo-terms into existence should use
+// expectEnsureMoTermsExists instead.
+func expectEnsureMoTermsFirstTime(tmux *mock_sidebar.MockTmuxClient, cwd string) {
+	tmux.EXPECT().SessionExistsNamed("mo-terms").Return(false)
+	tmux.EXPECT().NewDetachedSession("mo-terms", cwd).Return(nil)
+	tmux.EXPECT().SetSessionOption("mo-terms", "key-table", "popup-keys").Return(nil)
+	tmux.EXPECT().BindKey("popup-keys", "`", "detach-client").Return(nil)
+	tmux.EXPECT().BindKey("popup-keys", "Tab", "next-window").Return(nil)
+	tmux.EXPECT().BindKey("popup-keys", "BTab", "previous-window").Return(nil)
+}
+
+// expectEnsureMoTermsExists is the fast path — mo-terms is already around,
+// so ensure just confirms and returns.
+func expectEnsureMoTermsExists(tmux *mock_sidebar.MockTmuxClient) {
+	tmux.EXPECT().SessionExistsNamed("mo-terms").Return(true)
+}
+
 // newDrawerModel builds a minimal Model for drawer-state tests — a mocked
 // tmux client and just enough state to exercise openDrawer/closeDrawer/etc.
 func newDrawerModel(t *testing.T) (*Model, *mock_sidebar.MockTmuxClient) {
@@ -90,9 +109,9 @@ func TestCloseDrawerHidesActivePane(t *testing.T) {
 	m.activeTermIdx = 0
 	m.drawerOpen = true
 
-	// hidePane with one terminal → BreakPane path (no other panes to consolidate with).
-	tmux.EXPECT().BreakPane("%10").Return(nil)
-	tmux.EXPECT().SetWindowOption("%10", "@mo_hidden", "1").Return(nil)
+	// First hide — mo-terms is lazily created, then %10 is parked there.
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+	tmux.EXPECT().BreakPaneToSession("%10", "mo-terms").Return(nil)
 
 	m.closeDrawer()
 	if m.drawerOpen {
@@ -111,9 +130,9 @@ func TestNewTerminalHidesCurrentAndCreatesFresh(t *testing.T) {
 	m.drawerOpen = true
 	m.termCounter = 1
 
-	// Hide %10 (only one pane → BreakPane branch).
-	tmux.EXPECT().BreakPane("%10").Return(nil)
-	tmux.EXPECT().SetWindowOption("%10", "@mo_hidden", "1").Return(nil)
+	// Hide %10 into mo-terms (lazy-create session on first call).
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+	tmux.EXPECT().BreakPaneToSession("%10", "mo-terms").Return(nil)
 	// Then create new.
 	tmux.EXPECT().SplitWindowHorizontal("mo:alpha.0", "/ws/alpha").Return("%11", nil)
 	tmux.EXPECT().SelectPane("%11").Return(nil)
@@ -185,9 +204,9 @@ func TestCycleTerminalMovesToNext(t *testing.T) {
 	m.activeTermIdx = 0
 	m.drawerOpen = true
 
-	// Hide %10 via consolidate onto %11 (the other hidden pane).
-	tmux.EXPECT().JoinPaneConsolidate("%10", "%11").Return(nil)
-	tmux.EXPECT().SetWindowOption("%11", "@mo_hidden", "1").Return(nil)
+	// Hide %10 by parking it in mo-terms (lazy-create on first call).
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+	tmux.EXPECT().BreakPaneToSession("%10", "mo-terms").Return(nil)
 	// Then join %11.
 	tmux.EXPECT().JoinPaneVertical("%11", "mo:alpha.0").Return(nil)
 	tmux.EXPECT().SelectPane("%11").Return(nil)
@@ -291,6 +310,79 @@ func TestCreateTerminalPaneSplitFailure(t *testing.T) {
 	}
 	if m.drawerOpen {
 		t.Error("drawer should not be marked open on split failure")
+	}
+}
+
+func TestEnsureMoTermsFirstTimeCreatesSession(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+
+	if err := m.ensureMoTerms(); err != nil {
+		t.Fatalf("ensureMoTerms: %v", err)
+	}
+}
+
+func TestEnsureMoTermsIdempotent(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	// Second call with an existing session must not re-create or re-bind.
+	expectEnsureMoTermsExists(tmux)
+
+	if err := m.ensureMoTerms(); err != nil {
+		t.Fatalf("ensureMoTerms: %v", err)
+	}
+}
+
+func TestOpenPopupClosesDrawerFirst(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	m.terminals = []TerminalTab{{PaneID: "%10", Name: "term-1"}}
+	m.activeTermIdx = 0
+	m.drawerOpen = true
+
+	// hidePane on the active tab — mo-terms gets created here.
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+	tmux.EXPECT().BreakPaneToSession("%10", "mo-terms").Return(nil)
+	// openPopup's own ensureMoTerms call is now the fast path.
+	expectEnsureMoTermsExists(tmux)
+	// Pre-select the active tab's window inside mo-terms.
+	tmux.EXPECT().SelectWindowByPane("%10").Return(nil)
+
+	cmd := m.openPopup()
+	if cmd == nil {
+		t.Fatal("openPopup returned nil")
+	}
+	if m.drawerOpen {
+		t.Error("openPopup should have auto-closed the drawer")
+	}
+	// The returned tea.Cmd would exec tmux display-popup — we deliberately
+	// don't invoke it here so tests don't shell out.
+}
+
+func TestOpenPopupWithoutDrawer(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	m.terminals = []TerminalTab{{PaneID: "%10", Name: "term-1"}}
+	m.activeTermIdx = 0
+	m.drawerOpen = false
+
+	// No hidePane because the drawer is already closed.
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+	tmux.EXPECT().SelectWindowByPane("%10").Return(nil)
+
+	cmd := m.openPopup()
+	if cmd == nil {
+		t.Fatal("openPopup returned nil")
+	}
+	if m.drawerOpen {
+		t.Error("drawerOpen should remain false")
+	}
+}
+
+func TestOpenPopupNoTerminalsSkipsSelect(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	// No terminals tracked — the SelectWindowByPane step is skipped.
+	expectEnsureMoTermsFirstTime(tmux, "/ws/alpha")
+
+	if cmd := m.openPopup(); cmd == nil {
+		t.Fatal("openPopup returned nil")
 	}
 }
 

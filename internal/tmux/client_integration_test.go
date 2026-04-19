@@ -126,6 +126,93 @@ func TestIntegrationRenameWindow(t *testing.T) {
 	}
 }
 
+func TestIntegrationBreakPaneToSession(t *testing.T) {
+	c := newTestClient(t)
+
+	// Create a window on the default "test" session so we have a pane to
+	// move, and a second session (mo-terms-ish) to move it into.
+	if _, err := c.CreateWindow("donor", "/tmp"); err != nil {
+		t.Fatalf("CreateWindow: %v", err)
+	}
+	// Split that window so we can break a pane off without killing the window.
+	paneID, err := c.SplitWindowHorizontal("test:donor", "/tmp")
+	if err != nil {
+		t.Fatalf("SplitWindowHorizontal: %v", err)
+	}
+
+	if err := c.NewDetachedSession("mo-terms", "/tmp"); err != nil {
+		t.Fatalf("NewDetachedSession: %v", err)
+	}
+	if !c.SessionExistsNamed("mo-terms") {
+		t.Fatal("mo-terms should exist after NewDetachedSession")
+	}
+
+	if err := c.BreakPaneToSession(paneID, "mo-terms"); err != nil {
+		t.Fatalf("BreakPaneToSession: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify the pane now lives in mo-terms.
+	out, err := c.tmuxCmd("list-panes", "-s", "-t", "mo-terms", "-F", "#{pane_id}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list-panes -s -t mo-terms: %v (%s)", err, out)
+	}
+	if !strings.Contains(string(out), paneID) {
+		t.Errorf("pane %q not found under mo-terms:\n%s", paneID, out)
+	}
+}
+
+func TestIntegrationPopupKeyTableBindings(t *testing.T) {
+	c := newTestClient(t)
+
+	// Create mo-terms, flip its key-table to popup-keys, and bind the three
+	// popup shortcuts. A client that later attaches to this session will
+	// look up key presses in popup-keys — but we don't need a real client
+	// here, tmux records the bindings server-side regardless.
+	if err := c.NewDetachedSession("mo-terms", "/tmp"); err != nil {
+		t.Fatalf("NewDetachedSession: %v", err)
+	}
+	if err := c.SetSessionOption("mo-terms", "key-table", "popup-keys"); err != nil {
+		t.Fatalf("SetSessionOption: %v", err)
+	}
+	if err := c.BindKey("popup-keys", "`", "detach-client"); err != nil {
+		t.Fatalf("BindKey backtick: %v", err)
+	}
+	if err := c.BindKey("popup-keys", "Tab", "next-window"); err != nil {
+		t.Fatalf("BindKey Tab: %v", err)
+	}
+	if err := c.BindKey("popup-keys", "BTab", "previous-window"); err != nil {
+		t.Fatalf("BindKey BTab: %v", err)
+	}
+
+	// Verify the session option landed.
+	out, err := c.tmuxCmd("show-option", "-v", "-t", "mo-terms", "key-table").CombinedOutput()
+	if err != nil {
+		t.Fatalf("show-option: %v (%s)", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "popup-keys" {
+		t.Errorf("key-table: got %q, want popup-keys", got)
+	}
+
+	// Verify the three bindings are registered in the popup-keys table.
+	listOut, err := c.tmuxCmd("list-keys", "-T", "popup-keys").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list-keys: %v (%s)", err, listOut)
+	}
+	body := string(listOut)
+	for _, snippet := range []string{"detach-client", "next-window", "previous-window"} {
+		if !strings.Contains(body, snippet) {
+			t.Errorf("popup-keys missing %q:\n%s", snippet, body)
+		}
+	}
+
+	// The session must still exist — binding the key table should not have
+	// killed it.
+	if !c.SessionExistsNamed("mo-terms") {
+		t.Error("mo-terms should survive key-table setup")
+	}
+}
+
 // Docstring check: a test that runs with no SocketName (SocketName="") and
 // therefore would touch the host tmux server is intentionally absent —
 // tests that need real tmux state MUST use newTestClient.

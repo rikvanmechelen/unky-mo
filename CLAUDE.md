@@ -98,7 +98,9 @@ Plumbing: `project.RemoveWorktree` (runs `git worktree remove --force`) + `proje
 
 ### Terminal Drawer
 
-The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.0`). Only one terminal tab is visible at a time — inactive tabs are stored in hidden tmux windows via `break-pane`/`join-pane` and swapped in on demand. The sidebar tracks terminal pane IDs (`%N` format, stable across moves) and prunes dead panes on each 1s refresh tick.
+The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.0`). Only one terminal tab is visible at a time — inactive tabs are parked in a dedicated `mo-terms` tmux session (see `tmux.MoTermsSession`), moved in and out of the project window via cross-session `break-pane`/`join-pane`. The sidebar tracks terminal pane IDs (`%N` format, stable across moves) and prunes dead panes on each 1s refresh tick.
+
+Backtick (`` ` ``) opens a floating popup that attaches a nested tmux client to `mo-terms` — so the popup shows the same shells as the drawer. `mo-terms` sets its `key-table` session option to `popup-keys`, where the sidebar binds `` ` `` → `detach-client`, `Tab` → `next-window`, and `BTab` → `previous-window`. That makes backtick close the popup without killing the shell, and lets Tab/Shift+Tab cycle tabs inside it. The outer `mo` client stays on the default `root` table, so backticks remain typeable in Claude panes. If the drawer is open when `` ` `` is pressed, the active tab is first parked in `mo-terms` so it shows up in the popup; the drawer is not auto-restored on popup close (the user can hit `t` to reopen).
 
 ## TUI Key Handling
 

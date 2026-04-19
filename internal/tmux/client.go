@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// MoTermsSession is the dedicated tmux session that holds the sidebar
+// terminal tabs when they are not displayed in a project window's drawer.
+// A tmux popup can attach to it to show the shells floating, and backtick
+// inside that popup is bound (in the popup-keys key table, see
+// NewDetachedSession callers) to detach-client — so closing the popup
+// preserves the shells.
+const MoTermsSession = "mo-terms"
+
 // Client wraps tmux commands for session/window management.
 type Client struct {
 	SessionName string
@@ -50,6 +58,73 @@ func (c *Client) runTmux(args ...string) error {
 // SessionExists checks if the tmux session exists.
 func (c *Client) SessionExists() bool {
 	return c.tmuxCmd("has-session", "-t", c.SessionName).Run() == nil
+}
+
+// SessionExistsNamed checks whether an arbitrary tmux session exists on the
+// same socket as this client. SessionExists hardcodes c.SessionName (always
+// "mo"); this variant is used for auxiliary sessions like mo-terms.
+func (c *Client) SessionExistsNamed(name string) bool {
+	return c.tmuxCmd("has-session", "-t", name).Run() == nil
+}
+
+// NewDetachedSession creates a new detached tmux session with the given
+// name and starting cwd. Unlike CreateSession it does not enable mouse or
+// any other mo-session-specific options — the caller configures whatever
+// the session needs.
+func (c *Client) NewDetachedSession(name, cwd string) error {
+	args := []string{"new-session", "-d", "-s", name}
+	if cwd != "" {
+		args = append(args, "-c", cwd)
+	}
+	return c.runTmux(args...)
+}
+
+// SetSessionOption sets a tmux session option (set-option -t <session>).
+func (c *Client) SetSessionOption(session, option, value string) error {
+	return c.runTmux("set-option", "-t", session, option, value)
+}
+
+// BindKey binds a key in the given key table to a tmux command. key is
+// passed raw so callers can use tmux notation like "Tab", "BTab", or a
+// literal backtick. Extra args go through unchanged.
+func (c *Client) BindKey(table, key, command string, args ...string) error {
+	full := []string{"bind-key", "-T", table, key, command}
+	full = append(full, args...)
+	return c.runTmux(full...)
+}
+
+// BreakPaneToSession moves a pane into a new window in the named session,
+// without switching focus. Used by the sidebar to park terminal tabs in
+// mo-terms when the drawer closes.
+func (c *Client) BreakPaneToSession(paneID, sessionName string) error {
+	return c.runTmux("break-pane", "-d", "-s", paneID, "-t", sessionName+":")
+}
+
+// SelectWindowByPane selects the window containing the given pane. tmux
+// resolves pane targets (%N) to the containing window automatically.
+func (c *Client) SelectWindowByPane(paneID string) error {
+	return c.runTmux("select-window", "-t", paneID)
+}
+
+// DisplayPopupAttach opens a floating popup that attaches a nested tmux
+// client to the named session. Used by the sidebar's backtick popup so the
+// popup renders the persistent mo-terms shells instead of spawning a fresh
+// one. The inner tmux invocation inherits this client's SocketName so
+// isolated-socket tests stay isolated.
+func (c *Client) DisplayPopupAttach(session, cwd, title string) error {
+	args := []string{"display-popup", "-E", "-w", "80%", "-h", "80%"}
+	if cwd != "" {
+		args = append(args, "-d", cwd)
+	}
+	if title != "" {
+		args = append(args, "-T", title)
+	}
+	args = append(args, "tmux")
+	if c.SocketName != "" {
+		args = append(args, "-L", c.SocketName)
+	}
+	args = append(args, "attach-session", "-t", session)
+	return c.runTmux(args...)
 }
 
 // CreateSession creates a new tmux session (detached) with mouse support enabled.
