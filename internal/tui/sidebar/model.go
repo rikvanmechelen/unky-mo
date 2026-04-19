@@ -1330,8 +1330,6 @@ func (m *Model) ensureMoTerms() (string, error) {
 		return "", err
 	}
 	_ = m.tmux.BindKey("popup-keys", "`", "detach-client")
-	_ = m.tmux.BindKey("popup-keys", "Tab", "next-window")
-	_ = m.tmux.BindKey("popup-keys", "BTab", "previous-window")
 	return ghost, nil
 }
 
