@@ -1381,6 +1381,15 @@ func (m *Model) refreshTerminals() {
 	}
 }
 
+// execWithMouseRestore wraps tea.ExecProcess so mouse mode is re-enabled
+// after the popup closes. bubbletea's RestoreTerminal (exercised by
+// ExecProcess) does not replay the mouse-tracking escape sequences, so
+// without this the sidebar silently stops receiving tea.MouseMsg events
+// until the process is restarted.
+func execWithMouseRestore(c *exec.Cmd, fn func(error) tea.Msg) tea.Cmd {
+	return tea.Sequence(tea.ExecProcess(c, fn), tea.EnableMouseCellMotion)
+}
+
 func (m Model) showShellOutput(shell claude.ActiveShell) tea.Cmd {
 	if shell.OutputFile == "" {
 		return func() tea.Msg { return sidebarStatusMsg("no output file found") }
@@ -1398,7 +1407,7 @@ func (m Model) showShellOutput(shell claude.ActiveShell) tea.Cmd {
 		"-w", "95%", "-h", "95%",
 		"-T", title,
 		"sh", "-c", script)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
+	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("shell view err: %v", err))
 		}
@@ -1417,7 +1426,7 @@ func (m Model) showDiffPopup(file string) tea.Cmd {
 		"-d", m.windowPath,
 		"-T", title,
 		"sh", "-c", diffCmd)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
+	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("diff err: %v", err))
 		}
@@ -1440,7 +1449,7 @@ func (m Model) openFileInEditor(file string) tea.Cmd {
 		"-d", m.windowPath,
 		"-T", title,
 		editor, absPath)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
+	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("editor err: %v", err))
 		}
@@ -1519,7 +1528,7 @@ func (m *Model) openPopup() tea.Cmd {
 		"-d", m.windowPath,
 		"-T", title,
 		"tmux", "attach-session", "-t", ttmux.MoTermsSession)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
+	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("err: %v", err))
 		}
