@@ -118,6 +118,31 @@ func TestRenderFileTreeProducesNonEmpty(t *testing.T) {
 	}
 }
 
+func TestTermSessionScopedPerWindow(t *testing.T) {
+	cases := []struct {
+		name       string
+		windowID   string
+		windowName string
+		want       string
+	}{
+		{"windowID preferred", "@5", "moma-chatbot", "mo-terms-5"},
+		{"windowName fallback", "", "moma-chatbot", "mo-terms-moma-chatbot"},
+		{"sanitize bracket-and-space", "", "moma-chatbot [2]", "mo-terms-moma-chatbot-[2]"},
+		{"sanitize colon", "", "foo:bar", "mo-terms-foo-bar"},
+		{"sanitize dot", "", "foo.bar", "mo-terms-foo-bar"},
+		{"bare fallback", "", "", "mo-terms"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := Model{windowID: c.windowID, windowName: c.windowName}
+			if got := m.termSession(); got != c.want {
+				t.Errorf("termSession(id=%q, name=%q) = %q, want %q",
+					c.windowID, c.windowName, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRenderFileTreeRespectsMaxLines(t *testing.T) {
 	files := []string{}
 	for i := 0; i < 20; i++ {

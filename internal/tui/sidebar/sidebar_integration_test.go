@@ -152,11 +152,12 @@ func TestIntegrationDrawerRoundTrip(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 
-	if !tc.SessionExistsNamed(ttmux.MoTermsSession) {
-		t.Fatal("mo-terms session should exist after first hide")
+	termSession := m.termSession()
+	if !tc.SessionExistsNamed(termSession) {
+		t.Fatalf("%s session should exist after first hide", termSession)
 	}
 	out, err := exec.Command("tmux", "-L", tc.SocketName,
-		"list-panes", "-s", "-t", ttmux.MoTermsSession, "-F", "#{pane_id}").CombinedOutput()
+		"list-panes", "-s", "-t", termSession, "-F", "#{pane_id}").CombinedOutput()
 	if err != nil {
 		t.Fatalf("list-panes on mo-terms: %v (%s)", err, out)
 	}

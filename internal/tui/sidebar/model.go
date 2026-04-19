@@ -1282,7 +1282,32 @@ func (m *Model) closeTerminal() tea.Cmd {
 	return statusCmd(name + " closed")
 }
 
-// ensureMoTerms lazily creates the dedicated mo-terms session that holds
+// termSession returns the mo-terms session name scoped to this sidebar's
+// window. Each project window gets its own parking session so terminals
+// opened from one window (via `t` or backtick) don't leak into other
+// windows' drawers or backtick popups. Keyed on windowID (stable tmux
+// "@N") when available, falling back to a sanitized windowName, and
+// finally to the bare global name for unit tests that don't set either.
+func (m Model) termSession() string {
+	switch {
+	case m.windowID != "":
+		return ttmux.MoTermsSession + "-" + strings.TrimPrefix(m.windowID, "@")
+	case m.windowName != "":
+		return ttmux.MoTermsSession + "-" + sanitizeTermSessionSuffix(m.windowName)
+	default:
+		return ttmux.MoTermsSession
+	}
+}
+
+// sanitizeTermSessionSuffix replaces characters that tmux treats specially
+// in session names (':', '.', whitespace) with '-' so arbitrary window
+// names produce a valid session target.
+func sanitizeTermSessionSuffix(s string) string {
+	r := strings.NewReplacer(":", "-", ".", "-", " ", "-", "\t", "-")
+	return r.Replace(s)
+}
+
+// ensureMoTerms lazily creates the per-window mo-terms session that holds
 // terminal tabs when they're not displayed in the drawer. Returns the pane
 // ID of the session's initial window when this call actually creates the
 // session — callers decide whether to track that pane as a tab (popup
@@ -1293,14 +1318,15 @@ func (m *Model) closeTerminal() tea.Cmd {
 // popup) use the popup-keys key table, where backtick is bound to
 // detach-client.
 func (m *Model) ensureMoTerms() (string, error) {
-	if m.tmux.SessionExistsNamed(ttmux.MoTermsSession) {
+	name := m.termSession()
+	if m.tmux.SessionExistsNamed(name) {
 		return "", nil
 	}
-	ghost, err := m.tmux.NewDetachedSession(ttmux.MoTermsSession, m.windowPath)
+	ghost, err := m.tmux.NewDetachedSession(name, m.windowPath)
 	if err != nil {
 		return "", err
 	}
-	if err := m.tmux.SetSessionOption(ttmux.MoTermsSession, "key-table", "popup-keys"); err != nil {
+	if err := m.tmux.SetSessionOption(name, "key-table", "popup-keys"); err != nil {
 		return "", err
 	}
 	_ = m.tmux.BindKey("popup-keys", "`", "detach-client")
@@ -1319,7 +1345,7 @@ func (m *Model) hidePane(paneID string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.tmux.BreakPaneToSession(paneID, ttmux.MoTermsSession); err != nil {
+	if err := m.tmux.BreakPaneToSession(paneID, m.termSession()); err != nil {
 		return err
 	}
 	if ghost != "" {
@@ -1527,7 +1553,7 @@ func (m *Model) openPopup() tea.Cmd {
 		"-w", "80%", "-h", "80%",
 		"-d", m.windowPath,
 		"-T", title,
-		"tmux", "attach-session", "-t", ttmux.MoTermsSession)
+		"tmux", "attach-session", "-t", m.termSession())
 	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("err: %v", err))
