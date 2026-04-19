@@ -165,9 +165,9 @@ func (m Model) renderTicketDetailScreen() string {
 		footer = m.renderPrompt(
 			fmt.Sprintf("Remember %s → %s for future tickets?", m.pickerForJiraKey, m.pickerPendingMo),
 			[]footerBinding{
-				{"r", "remember"},
-				{"n", "just this once"},
-				{"esc", "cancel"},
+				{"y", "remember"},
+				{"o", "just this once"},
+				{"n", "cancel"},
 			})
 	} else if m.pickerActive {
 		footer = m.renderFooter([]footerBinding{
@@ -434,15 +434,16 @@ func (m Model) handleTicketPickerActive(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// handleTicketPickerRemember handles r / n keys on the remember-or-not
-// prompt after a pick. Persists (or not) then kicks off the branch flow.
+// handleTicketPickerRemember handles keys on the remember-or-not prompt
+// after a pick. y = remember, o = just-this-once, n/esc = cancel back to
+// the picker. See CLAUDE.md → Prompt conventions.
 func (m Model) handleTicketPickerRemember(msg tea.KeyMsg) (Model, tea.Cmd) {
 	provider := m.pickerForProvider
 	jiraKey := m.pickerForJiraKey
 	pickedMo := m.pickerPendingMo
 
 	switch msg.String() {
-	case "r":
+	case "y", "Y":
 		if err := tickets.SaveProjectMapEntry(provider, jiraKey, pickedMo); err != nil {
 			return m, func() tea.Msg { return statusMsgEvent(fmt.Sprintf("save mapping failed: %v", err)) }
 		}
@@ -450,7 +451,7 @@ func (m Model) handleTicketPickerRemember(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if reloaded, err := tickets.LoadCompanionProjectMap(); err == nil {
 			m.ticketProjectMap = reloaded
 		}
-	case "n":
+	case "o", "O":
 		// One-time use: stash the mapping only for this session so the
 		// start flow that follows can find it. Safe because we only ever
 		// read ticketProjectMap here and in resolvedMoProjectForTicket.
@@ -461,8 +462,14 @@ func (m Model) handleTicketPickerRemember(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.ticketProjectMap[provider] = map[string]string{}
 		}
 		m.ticketProjectMap[provider][jiraKey] = pickedMo
+	case "n", "N", "esc", "escape":
+		// Cancel: drop the pending pick and reopen the picker so the user
+		// can choose differently (or esc again to leave the flow).
+		m.pickerRememberActive = false
+		m.pickerPendingMo = ""
+		m.pickerActive = true
+		return m, nil
 	default:
-		// Any other key (except esc, handled via Back earlier) is a no-op.
 		return m, nil
 	}
 

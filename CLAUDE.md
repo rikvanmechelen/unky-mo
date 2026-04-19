@@ -111,6 +111,20 @@ Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When d
 
 `t`, `T`, `tab`, `x`, `s`, `d`, `v`, and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
 
+### Prompt conventions
+
+Every interactive prompt in the TUI follows one of three shapes. New prompts MUST pick a shape — don't invent bespoke letter schemes.
+
+The capital letter in the `[y/N]` label is the **default**, and a bare `enter` takes that default. Because every yes/no prompt in Mo is destructive (kills sessions, deletes branches, kills external processes), the default is always N — `enter` cancels. We don't currently have any `[Y/n]` default-yes prompts; if one is ever added, it can accept `enter` as confirm.
+
+- **Yes/no confirmations** — destructive, e.g. cleanup kill, delete branch, import external. Question ends with `[y/N]`. Renderer uses `yesNoBindings("<verb>")` (`internal/tui/app.go`). Handler accepts **only** `y`/`Y` → confirm; `n`/`N`/`enter`/`esc`/`escape` → cancel. No mnemonic letters — if you're tempted to add `k` for "kill" or `b` for "delete branch", it's a y/N.
+- **Multi-option menus** — 2+ non-cancel outcomes. Renderer wraps the action bindings with `withCancel([]footerBinding{...})` so `[n] cancel` is always appended. Handler accepts each mnemonic letter (lower + upper case), and `n`/`N`/`enter`/`esc`/`escape` → cancel.
+  - **Destructive menus** (e.g. cleanup worktree `[w]/[b]`) require an explicit letter for every action; `enter` cancels along with n/esc.
+  - **Non-destructive menus** (e.g. new-session `[s]/[p]/[c]` where `s` just switches panes) may bind `enter` → the safest/least-destructive primary option (here `s`).
+- **Free-text input prompts** (e.g. `W` new branch, `mo jira setup`). `enter` submits, `esc` cancels. No special rendering.
+
+Exception: the ticket picker's remember prompt uses `y` remember / `o` just-this-once / `n` cancel to preserve the three distinct outcomes without overloading `n`. `enter` is not bound — the prompt isn't destructive, but there's no obvious default.
+
 ## tmux Gotchas
 
 - **`split-window` without `-c` does not inherit the target pane's cwd.** Modern tmux (3.2+) uses the session's launch directory instead. Always pass `-c <path>` explicitly when creating panes that need a specific cwd. See `internal/tmux/client.go:SplitWindow`.

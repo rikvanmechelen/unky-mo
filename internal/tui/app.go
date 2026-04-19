@@ -468,8 +468,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// New-session menu captures all input while active.
 		if m.pendingNewMenuActive {
+			// Multi-option menu. Primary = switch (least destructive: no kill,
+			// no spawn). enter fires the primary; n/N/esc cancel.
 			switch msg.String() {
-			case "s", "S":
+			case "s", "S", "enter":
 				primary := m.pendingNewPrimaryWin
 				m.clearPendingNewMenu()
 				return m, func() tea.Msg {
@@ -495,7 +497,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cwd := m.pendingNewCwd
 				m.clearPendingNewMenu()
 				return m, m.launchSiblingSession(project, branch, cwd, resumeID)
-			case "esc", "escape":
+			case "n", "N", "esc", "escape":
 				m.clearPendingNewMenu()
 				return m, nil
 			}
@@ -506,32 +508,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingCleanupActive {
 			switch m.pendingCleanupStage {
 			case "kill":
+				// Destructive [y/N] confirm: only y/Y confirms. Enter matches
+				// the default (N) and cancels, same as n/esc.
 				switch msg.String() {
-				case "k", "K":
+				case "y", "Y":
 					sessions := m.pendingCleanupSessions
 					m.pendingCleanupStage = "action"
 					return m, m.killCleanupSessions(sessions)
-				case "esc", "escape":
+				case "n", "N", "enter", "esc", "escape":
 					m.clearPendingCleanupMenu()
 					return m, nil
 				}
 				return m, nil
 			case "action":
-				switch msg.String() {
-				case "w", "W":
-					if m.pendingCleanupWorktreePath == "" {
+				if m.pendingCleanupWorktreePath != "" {
+					// Destructive multi-option: no enter-as-primary. Every
+					// action requires an explicit letter; enter cancels.
+					switch msg.String() {
+					case "w", "W":
+						projectPath := m.pendingCleanupProjectPath
+						branch := m.pendingCleanupBranch
+						m.clearPendingCleanupMenu()
+						return m, m.runCleanup(projectPath, branch, false)
+					case "b", "B":
+						projectPath := m.pendingCleanupProjectPath
+						branch := m.pendingCleanupBranch
+						m.clearPendingCleanupMenu()
+						return m, m.runCleanup(projectPath, branch, true)
+					case "n", "N", "enter", "esc", "escape":
+						m.clearPendingCleanupMenu()
 						return m, nil
 					}
-					projectPath := m.pendingCleanupProjectPath
-					branch := m.pendingCleanupBranch
-					m.clearPendingCleanupMenu()
-					return m, m.runCleanup(projectPath, branch, false)
-				case "b", "B":
+					return m, nil
+				}
+				// Plain-branch row: destructive [y/N] confirm.
+				switch msg.String() {
+				case "y", "Y":
 					projectPath := m.pendingCleanupProjectPath
 					branch := m.pendingCleanupBranch
 					m.clearPendingCleanupMenu()
 					return m, m.runCleanup(projectPath, branch, true)
-				case "esc", "escape":
+				case "n", "N", "enter", "esc", "escape":
 					m.clearPendingCleanupMenu()
 					return m, nil
 				}
@@ -541,9 +558,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Import-external-session prompt captures all input while active.
+		// Destructive [y/N] (kills the external claude): only y/Y confirms.
 		if m.pendingImportSessionID != "" {
 			switch msg.String() {
-			case "y", "Y", "enter":
+			case "y", "Y":
 				sessionID := m.pendingImportSessionID
 				pid := m.pendingImportPID
 				path := m.pendingImportPath
@@ -554,7 +572,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingImportWindow = ""
 				m.pendingImportProject = ""
 				return m, m.importExternalSession(pid, sessionID, path, window)
-			case "n", "N", "esc", "escape":
+			case "n", "N", "enter", "esc", "escape":
 				m.pendingImportSessionID = ""
 				m.pendingImportPID = 0
 				m.pendingImportPath = ""
@@ -1605,18 +1623,14 @@ func (m Model) dashboardView() string {
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
 	} else if m.pendingNewMenuActive {
-		footer = m.renderPrompt(m.newMenuPromptText(), []footerBinding{
+		footer = m.renderPrompt(m.newMenuPromptText(), withCancel([]footerBinding{
 			{"s", "switch"},
 			{"p", "park+new"},
 			{"c", "concurrent"},
-			{"esc", "cancel"},
-		})
+		}))
 	} else if m.pendingImportSessionID != "" {
-		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here)", m.pendingImportProject)
-		footer = m.renderPrompt(question, []footerBinding{
-			{"y", "yes"},
-			{"n", "no"},
-		})
+		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here) [y/N]", m.pendingImportProject)
+		footer = m.renderPrompt(question, yesNoBindings("import"))
 	} else {
 		footer = m.renderFooter([]footerBinding{
 			{"↑↓", "navigate"},
@@ -1758,6 +1772,30 @@ func (m Model) renderFooter(bindings []footerBinding) string {
 	}
 	line := strings.Join(parts, "  ")
 	return footerStyle.Width(m.width).Render(line)
+}
+
+// yesNoBindings is the canonical footer-binding slice for every yes/no
+// confirmation prompt — keeps the visual form identical across screens.
+// Convention: question text ends with " [y/N]"; y/Y/enter confirm,
+// n/N/esc/escape cancel. See CLAUDE.md → Prompt conventions.
+func yesNoBindings(yesDesc string) []footerBinding {
+	return []footerBinding{
+		{"y", yesDesc},
+		{"n", "cancel"},
+	}
+}
+
+// withCancel appends a "[n] cancel" binding to a multi-option menu's
+// binding list unless one is already present. Multi-option menus accept
+// n/N as cancel alongside esc/escape; this helper guarantees the hint
+// always shows in the footer.
+func withCancel(binds []footerBinding) []footerBinding {
+	for _, b := range binds {
+		if b.key == "n" {
+			return binds
+		}
+	}
+	return append(binds, footerBinding{"n", "cancel"})
 }
 
 // sessionView is one row per live Claude session — the unit every consumer
@@ -3192,29 +3230,24 @@ func (m Model) launchSession() tea.Cmd {
 
 // cleanupPrompt returns the stage-appropriate question + bindings for the
 // `x` cleanup menu (kill-sessions confirmation first, then action menu).
+// Follows the prompt convention: yes/no uses [y/N]; multi-option menus end
+// with a [n] cancel hint.
 func (m Model) cleanupPrompt() (string, []footerBinding) {
 	switch m.pendingCleanupStage {
 	case "kill":
 		n := len(m.pendingCleanupSessions)
-		q := fmt.Sprintf("⚠ %d live session(s) in %s — kill them?", n, m.pendingCleanupBranch)
-		return q, []footerBinding{
-			{"k", "kill + continue"},
-			{"esc", "cancel"},
-		}
+		q := fmt.Sprintf("⚠ %d live session(s) in %s — kill them? [y/N]", n, m.pendingCleanupBranch)
+		return q, yesNoBindings("kill + continue")
 	case "action":
 		if m.pendingCleanupWorktreePath != "" {
 			q := fmt.Sprintf("Remove worktree %s?", m.pendingCleanupBranch)
-			return q, []footerBinding{
+			return q, withCancel([]footerBinding{
 				{"w", "worktree only"},
 				{"b", "worktree + branch"},
-				{"esc", "cancel"},
-			}
+			})
 		}
-		q := fmt.Sprintf("Delete branch %s?", m.pendingCleanupBranch)
-		return q, []footerBinding{
-			{"b", "delete branch"},
-			{"esc", "cancel"},
-		}
+		q := fmt.Sprintf("Delete branch %s? [y/N]", m.pendingCleanupBranch)
+		return q, yesNoBindings("delete branch")
 	}
 	return "", nil
 }

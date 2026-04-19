@@ -6,6 +6,38 @@ import (
 	"github.com/rvanmech/unky-mo/internal/state"
 )
 
+func TestYesNoBindings(t *testing.T) {
+	got := yesNoBindings("kill + continue")
+	if len(got) != 2 {
+		t.Fatalf("want 2 bindings, got %d", len(got))
+	}
+	if got[0].key != "y" || got[0].desc != "kill + continue" {
+		t.Errorf("first binding = %+v, want {y, kill + continue}", got[0])
+	}
+	if got[1].key != "n" || got[1].desc != "cancel" {
+		t.Errorf("second binding = %+v, want {n, cancel}", got[1])
+	}
+}
+
+func TestWithCancelAppends(t *testing.T) {
+	in := []footerBinding{{"w", "worktree only"}, {"b", "worktree + branch"}}
+	got := withCancel(in)
+	if len(got) != 3 {
+		t.Fatalf("want 3 bindings, got %d", len(got))
+	}
+	if got[2].key != "n" || got[2].desc != "cancel" {
+		t.Errorf("last binding = %+v, want {n, cancel}", got[2])
+	}
+}
+
+func TestWithCancelIdempotent(t *testing.T) {
+	in := []footerBinding{{"s", "switch"}, {"n", "cancel"}}
+	got := withCancel(in)
+	if len(got) != 2 {
+		t.Errorf("want 2 bindings (unchanged), got %d: %+v", len(got), got)
+	}
+}
+
 func TestRankOrderingPriority(t *testing.T) {
 	// Permission > Idle > Active > External > None.
 	want := []SessionStatus{StatusPermission, StatusIdle, StatusActive, StatusExternal, StatusNone}
