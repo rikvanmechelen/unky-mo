@@ -140,8 +140,12 @@ func TestIntegrationBreakPaneToSession(t *testing.T) {
 		t.Fatalf("SplitWindowHorizontal: %v", err)
 	}
 
-	if err := c.NewDetachedSession("mo-terms", "/tmp"); err != nil {
+	ghost, err := c.NewDetachedSession("mo-terms", "/tmp")
+	if err != nil {
 		t.Fatalf("NewDetachedSession: %v", err)
+	}
+	if ghost == "" || !strings.HasPrefix(ghost, "%") {
+		t.Errorf("ghost pane id should be a tmux pane id; got %q", ghost)
 	}
 	if !c.SessionExistsNamed("mo-terms") {
 		t.Fatal("mo-terms should exist after NewDetachedSession")
@@ -169,7 +173,7 @@ func TestIntegrationPopupKeyTableBindings(t *testing.T) {
 	// popup shortcuts. A client that later attaches to this session will
 	// look up key presses in popup-keys — but we don't need a real client
 	// here, tmux records the bindings server-side regardless.
-	if err := c.NewDetachedSession("mo-terms", "/tmp"); err != nil {
+	if _, err := c.NewDetachedSession("mo-terms", "/tmp"); err != nil {
 		t.Fatalf("NewDetachedSession: %v", err)
 	}
 	if err := c.SetSessionOption("mo-terms", "key-table", "popup-keys"); err != nil {

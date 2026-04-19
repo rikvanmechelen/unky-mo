@@ -1289,34 +1289,49 @@ func (m *Model) closeTerminal() tea.Cmd {
 }
 
 // ensureMoTerms lazily creates the dedicated mo-terms session that holds
-// terminal tabs when they're not displayed in the drawer. The session is
-// configured so clients attached to it (i.e. the popup) use the popup-keys
-// key table, and backtick is bound there to detach-client. Safe to call on
-// every hide/popup — the fast path is a single has-session check.
-func (m *Model) ensureMoTerms() error {
+// terminal tabs when they're not displayed in the drawer. Returns the pane
+// ID of the session's initial window when this call actually creates the
+// session — callers decide whether to track that pane as a tab (popup
+// entry point) or kill it (drawer hide path). Returns "" when the session
+// already existed.
+//
+// The new session is configured so clients attached to it (i.e. the
+// popup) use the popup-keys key table, where backtick is bound to
+// detach-client.
+func (m *Model) ensureMoTerms() (string, error) {
 	if m.tmux.SessionExistsNamed(ttmux.MoTermsSession) {
-		return nil
+		return "", nil
 	}
-	if err := m.tmux.NewDetachedSession(ttmux.MoTermsSession, m.windowPath); err != nil {
-		return err
+	ghost, err := m.tmux.NewDetachedSession(ttmux.MoTermsSession, m.windowPath)
+	if err != nil {
+		return "", err
 	}
 	if err := m.tmux.SetSessionOption(ttmux.MoTermsSession, "key-table", "popup-keys"); err != nil {
-		return err
+		return "", err
 	}
 	_ = m.tmux.BindKey("popup-keys", "`", "detach-client")
 	_ = m.tmux.BindKey("popup-keys", "Tab", "next-window")
 	_ = m.tmux.BindKey("popup-keys", "BTab", "previous-window")
-	return nil
+	return ghost, nil
 }
 
 // hidePane parks a terminal pane in the mo-terms session so it survives
-// drawer close and remains reachable by the backtick popup (which attaches
-// to that session).
+// drawer close and remains reachable by the backtick popup. If this call
+// lazily created mo-terms, tmux will have spawned a default initial window
+// alongside the parked pane — kill it so the session only contains real
+// tabs.
 func (m *Model) hidePane(paneID string) error {
-	if err := m.ensureMoTerms(); err != nil {
+	ghost, err := m.ensureMoTerms()
+	if err != nil {
 		return err
 	}
-	return m.tmux.BreakPaneToSession(paneID, ttmux.MoTermsSession)
+	if err := m.tmux.BreakPaneToSession(paneID, ttmux.MoTermsSession); err != nil {
+		return err
+	}
+	if ghost != "" {
+		_ = m.tmux.KillPane(ghost)
+	}
+	return nil
 }
 
 // refreshTerminals verifies tracked terminals are still alive and appends
@@ -1485,8 +1500,21 @@ func (m *Model) openPopup() tea.Cmd {
 		}
 		m.drawerOpen = false
 	}
-	if err := m.ensureMoTerms(); err != nil {
+	ghost, err := m.ensureMoTerms()
+	if err != nil {
 		return func() tea.Msg { return sidebarStatusMsg(fmt.Sprintf("err: %v", err)) }
+	}
+	// First-popup path: the session we just created came with a default
+	// shell window. Track it as a terminal tab so it shows up in the
+	// sidebar's terminal list; without this the user would see a shell in
+	// the popup that the drawer doesn't know about.
+	if ghost != "" {
+		m.termCounter++
+		m.terminals = append(m.terminals, TerminalTab{
+			PaneID: ghost,
+			Name:   fmt.Sprintf("term-%d", m.termCounter),
+		})
+		m.activeTermIdx = len(m.terminals) - 1
 	}
 	if m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
 		_ = m.tmux.SelectWindowByPane(m.terminals[m.activeTermIdx].PaneID)

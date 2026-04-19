@@ -68,15 +68,27 @@ func (c *Client) SessionExistsNamed(name string) bool {
 }
 
 // NewDetachedSession creates a new detached tmux session with the given
-// name and starting cwd. Unlike CreateSession it does not enable mouse or
-// any other mo-session-specific options — the caller configures whatever
-// the session needs.
-func (c *Client) NewDetachedSession(name, cwd string) error {
+// name and starting cwd, and returns the pane ID (%N) of its initial
+// window. Callers that don't care about that initial pane can ignore the
+// returned id. Unlike CreateSession it does not enable mouse or any other
+// mo-session-specific options — the caller configures whatever the session
+// needs.
+func (c *Client) NewDetachedSession(name, cwd string) (string, error) {
 	args := []string{"new-session", "-d", "-s", name}
 	if cwd != "" {
 		args = append(args, "-c", cwd)
 	}
-	return c.runTmux(args...)
+	args = append(args, "-P", "-F", "#{pane_id}")
+	cmd := c.tmuxCmd(args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("new-session: %s", msg)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // SetSessionOption sets a tmux session option (set-option -t <session>).

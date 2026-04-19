@@ -21,7 +21,7 @@ type TmuxClient interface {
 	JoinPaneConsolidate(srcPaneID, dstPaneID string) error
 	JoinPaneVertical(srcPaneID, dstTarget string) error
 	KillPane(paneID string) error
-	NewDetachedSession(name, cwd string) error
+	NewDetachedSession(name, cwd string) (string, error)
 	SelectPane(target string) error
 	SelectWindowByPane(paneID string) error
 	SessionExistsNamed(name string) bool
@@ -106,7 +106,7 @@ func (a *tmuxClientAdapter) JoinPaneVertical(src, dst string) error {
 func (a *tmuxClientAdapter) KillPane(paneID string) error {
 	return a.c.KillPane(paneID)
 }
-func (a *tmuxClientAdapter) NewDetachedSession(name, cwd string) error {
+func (a *tmuxClientAdapter) NewDetachedSession(name, cwd string) (string, error) {
 	return a.c.NewDetachedSession(name, cwd)
 }
 func (a *tmuxClientAdapter) SelectPane(target string) error {
