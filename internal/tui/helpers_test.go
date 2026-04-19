@@ -4,7 +4,46 @@ import (
 	"testing"
 
 	"github.com/rvanmech/unky-mo/internal/state"
+	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 )
+
+func TestOrphanedTermSessions(t *testing.T) {
+	windows := []ttmux.Window{
+		{ID: "@5", Name: "moma-apps-rails"},
+		{ID: "@17", Name: "unky-mo [extra-terminal]"},
+	}
+	sessions := []string{
+		"mo",                // not a mo-terms session, ignored
+		"mo-terms-5",        // paired with @5 → keep
+		"mo-terms-17",       // paired with @17 → keep
+		"mo-terms-14",       // no paired window → orphan
+		"mo-terms-1",        // no paired window → orphan
+		"mo-terms-alpha",    // non-digit suffix, left alone
+		"mo-terms",          // empty suffix, ignored
+		"some-other-server", // unrelated, ignored
+	}
+	got := orphanedTermSessions(sessions, windows)
+	want := []string{"mo-terms-14", "mo-terms-1"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, s := range got {
+		if s != want[i] {
+			t.Errorf("orphan[%d] = %q, want %q", i, s, want[i])
+		}
+	}
+}
+
+func TestOrphanedTermSessionsEmptyInputs(t *testing.T) {
+	if got := orphanedTermSessions(nil, nil); len(got) != 0 {
+		t.Errorf("nil inputs should produce no orphans, got %v", got)
+	}
+	// No windows alive — every mo-terms-N becomes an orphan.
+	got := orphanedTermSessions([]string{"mo-terms-1", "mo-terms-2"}, nil)
+	if len(got) != 2 {
+		t.Errorf("expected 2 orphans with no live windows, got %v", got)
+	}
+}
 
 func TestYesNoBindings(t *testing.T) {
 	got := yesNoBindings("kill + continue")

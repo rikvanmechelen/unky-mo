@@ -995,6 +995,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sessionTickMsg:
+		m.pruneOrphanedTermSessions()
 		return m, tea.Batch(sessionTick(), m.refreshSessions(), m.refreshGitStatuses())
 
 	case sessionRefreshMsg:
@@ -1385,6 +1386,63 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// pruneOrphanedTermSessions kills "mo-terms-<N>" tmux sessions whose
+// paired project window (@N) no longer exists. Without this, closing a
+// project window leaks its per-window mo-terms session so its parked
+// shells stay alive forever. Runs on every sessionTick from the main
+// goroutine — tmux list/kill calls are fast enough not to stall.
+func (m *Model) pruneOrphanedTermSessions() {
+	if m.tmux == nil {
+		return
+	}
+	sessions, err := m.tmux.ListSessions()
+	if err != nil || len(sessions) == 0 {
+		return
+	}
+	windows, err := m.tmux.ListWindows()
+	if err != nil {
+		return
+	}
+	for _, name := range orphanedTermSessions(sessions, windows) {
+		_ = m.tmux.KillSession(name)
+	}
+}
+
+// orphanedTermSessions returns the mo-terms-<N> session names in sessions
+// whose numeric suffix doesn't correspond to any window ID (@N) in
+// windows. Extracted for testability — pure function over strings/windows.
+// Only digit-suffix sessions are considered; anything else (user-created
+// sessions that happen to share the prefix, fallback windowName-based
+// names from unit tests) is left alone.
+func orphanedTermSessions(sessions []string, windows []ttmux.Window) []string {
+	liveSuffix := make(map[string]bool, len(windows))
+	for _, w := range windows {
+		if w.ID != "" {
+			liveSuffix[strings.TrimPrefix(w.ID, "@")] = true
+		}
+	}
+	var orphans []string
+	for _, s := range sessions {
+		suffix, ok := strings.CutPrefix(s, "mo-terms-")
+		if !ok || suffix == "" || !allDigits(suffix) {
+			continue
+		}
+		if !liveSuffix[suffix] {
+			orphans = append(orphans, s)
+		}
+	}
+	return orphans
+}
+
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // sessionToWindowMap returns a map from Claude session ID to the tmux window

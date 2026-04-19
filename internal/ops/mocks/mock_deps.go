@@ -70,6 +70,20 @@ func (mr *MockTmuxClientMockRecorder) DetachClient() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DetachClient", reflect.TypeOf((*MockTmuxClient)(nil).DetachClient))
 }
 
+// KillSession mocks base method.
+func (m *MockTmuxClient) KillSession(name string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "KillSession", name)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// KillSession indicates an expected call of KillSession.
+func (mr *MockTmuxClientMockRecorder) KillSession(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KillSession", reflect.TypeOf((*MockTmuxClient)(nil).KillSession), name)
+}
+
 // KillWindow mocks base method.
 func (m *MockTmuxClient) KillWindow(target string) error {
 	m.ctrl.T.Helper()
@@ -82,6 +96,21 @@ func (m *MockTmuxClient) KillWindow(target string) error {
 func (mr *MockTmuxClientMockRecorder) KillWindow(target any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KillWindow", reflect.TypeOf((*MockTmuxClient)(nil).KillWindow), target)
+}
+
+// ListSessions mocks base method.
+func (m *MockTmuxClient) ListSessions() ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListSessions")
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListSessions indicates an expected call of ListSessions.
+func (mr *MockTmuxClientMockRecorder) ListSessions() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSessions", reflect.TypeOf((*MockTmuxClient)(nil).ListSessions))
 }
 
 // ListWindows mocks base method.

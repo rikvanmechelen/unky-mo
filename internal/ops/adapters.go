@@ -42,7 +42,9 @@ func (a *tmuxClientAdapter) CreateWindow(name, cwd string) (string, error) {
 	return a.c.CreateWindow(name, cwd)
 }
 func (a *tmuxClientAdapter) DetachClient() error              { return a.c.DetachClient() }
+func (a *tmuxClientAdapter) KillSession(name string) error    { return a.c.KillSession(name) }
 func (a *tmuxClientAdapter) KillWindow(target string) error   { return a.c.KillWindow(target) }
+func (a *tmuxClientAdapter) ListSessions() ([]string, error)  { return a.c.ListSessions() }
 func (a *tmuxClientAdapter) ListWindows() ([]ttmux.Window, error) {
 	return a.c.ListWindows()
 }

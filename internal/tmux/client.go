@@ -209,6 +209,34 @@ func (c *Client) KillWindow(target string) error {
 	return c.runTmux("kill-window", "-t", target)
 }
 
+// ListSessions returns the names of all tmux sessions on this client's
+// socket. Used by the main TUI to sweep orphaned mo-terms-* sessions
+// whose paired project window no longer exists.
+func (c *Client) ListSessions() ([]string, error) {
+	cmd := c.tmuxCmd("list-sessions", "-F", "#{session_name}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "no server running on "+c.SocketName || strings.Contains(msg, "no server running") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			names = append(names, line)
+		}
+	}
+	return names, nil
+}
+
+// KillSession kills a tmux session by name. Returns nil if the session
+// doesn't exist (tmux prints to stderr but the caller shouldn't care).
+func (c *Client) KillSession(name string) error {
+	return c.runTmux("kill-session", "-t", name)
+}
+
 // RenameWindow renames an existing tmux window. Target can be any tmux
 // target (window id @N, session:name, etc.).
 func (c *Client) RenameWindow(target, newName string) error {

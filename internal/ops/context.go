@@ -36,7 +36,9 @@ type TmuxClient interface {
 	SessionName() string
 	CreateWindow(name, cwd string) (string, error)
 	DetachClient() error
+	KillSession(name string) error
 	KillWindow(target string) error
+	ListSessions() ([]string, error)
 	ListWindows() ([]ttmux.Window, error)
 	PaneID(target string) (string, error)
 	PanePIDs() (map[int]bool, error)
