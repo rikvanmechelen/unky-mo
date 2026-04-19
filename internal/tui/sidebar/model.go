@@ -1492,11 +1492,18 @@ func (m Model) switchToSelected() tea.Cmd {
 
 		item := m.items[m.cursor]
 		var target string
-		if item.IsHome {
+		switch {
+		case item.IsHome:
 			target = fmt.Sprintf("%s:0", m.tmux.SessionName())
-		} else if item.WindowName != "" {
+		case item.WindowID != "":
+			// Prefer WindowID — stable across tmux rename. Targeting a raw
+			// @N always resolves to the containing window, so a sidebar click
+			// succeeds even mid-rename, before the state file has caught up.
+			target = item.WindowID
+		case item.WindowName != "":
+			// Fallback for cold rows that don't yet carry a WindowID.
 			target = fmt.Sprintf("%s:%s", m.tmux.SessionName(), item.WindowName)
-		} else {
+		default:
 			return nil
 		}
 
