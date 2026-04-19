@@ -55,6 +55,7 @@ type Model struct {
 	viewportStart int // for scrolling
 	tmux          TmuxClient
 	claude        ClaudeReader
+	resolver      WindowResolver
 	stateFile     string
 	statusMsg     string
 	cursorSetOnce bool // true after initial cursor placement
@@ -90,27 +91,30 @@ type Model struct {
 }
 
 func NewModel(sessionName, stateFile string) Model {
-	// Resolve this pane's own window via TMUX_PANE, not the client's current
-	// focus. Using `display-message -p` without a target returns the attached
-	// client's focused window, which is racy right after a new pane is created
-	// (e.g. when launching a worktree session: the pane is split before the
-	// client switches focus). For worktree windows this is especially broken
-	// because the window name (<project>@<branch>) isn't in the state file.
-	windowName := resolveOwnWindowName()
-	windowID := resolveOwnWindowID()
+	tc := ttmux.NewClient(sessionName)
+	tmuxAdapter := newTmuxClientAdapter(tc)
+	tmuxAdapter.ConfigureStatusFormat()
+	return NewModelWithDeps(sessionName, stateFile, tmuxAdapter, defaultClaudeReader{}, NewDefaultWindowResolver())
+}
+
+// NewModelWithDeps is the test-friendly constructor. Callers supply the
+// tmux + claude seams plus a window resolver. Production callers use
+// NewModel, which wires up the real implementations.
+func NewModelWithDeps(sessionName, stateFile string, tmux TmuxClient, claude ClaudeReader, resolver WindowResolver) Model {
+	if resolver == nil {
+		resolver = NewDefaultWindowResolver()
+	}
+	windowName, windowID := resolver.ResolveOwnWindow()
 
 	// The sidebar process's cwd is its pane's cwd at startup; it's a Go
 	// program with no shell that could cd elsewhere, so this is always the
 	// right path for the window we're in — including worktrees.
 	windowPath, _ := os.Getwd()
 
-	tc := ttmux.NewClient(sessionName)
-	tmuxAdapter := newTmuxClientAdapter(tc)
-	tmuxAdapter.ConfigureStatusFormat()
-
 	m := Model{
-		tmux:          tmuxAdapter,
-		claude:        defaultClaudeReader{},
+		tmux:          tmux,
+		claude:        claude,
+		resolver:      resolver,
 		stateFile:     stateFile,
 		windowName:    windowName,
 		windowID:      windowID,
@@ -685,12 +689,17 @@ func resolveOwnWindowID() string {
 }
 
 func (m *Model) refreshState() {
-	if name := resolveOwnWindowName(); name != "" {
+	resolver := m.resolver
+	if resolver == nil {
+		resolver = NewDefaultWindowResolver()
+	}
+	name, id := resolver.ResolveOwnWindow()
+	if name != "" {
 		m.windowName = name
 	}
-	if m.windowID == "" {
+	if m.windowID == "" && id != "" {
 		// NewModel ran before TMUX_PANE was available (rare); retry.
-		m.windowID = resolveOwnWindowID()
+		m.windowID = id
 	}
 	sf, err := state.Read(m.stateFile)
 	if err != nil {

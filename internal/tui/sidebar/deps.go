@@ -9,7 +9,7 @@ import (
 // an interface so tests can inject a mock without spinning up a real tmux
 // server.
 //
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_sidebar github.com/rvanmech/unky-mo/internal/tui/sidebar TmuxClient,ClaudeReader
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_sidebar github.com/rvanmech/unky-mo/internal/tui/sidebar TmuxClient,ClaudeReader,WindowResolver
 type TmuxClient interface {
 	SessionName() string
 	BreakPane(paneID string) error
@@ -35,6 +35,35 @@ type ClaudeReader interface {
 	SessionsForPath(path string) []claude.Session
 	ProjectsDirForPath(projectPath string) string
 }
+
+// WindowResolver answers "what tmux window is this sidebar running in?". The
+// production impl reads $TMUX_PANE + shells out to `tmux display-message`.
+// Tests provide a FakeWindowResolver that returns a fixed (name, id) pair so
+// they don't need a live tmux server.
+type WindowResolver interface {
+	ResolveOwnWindow() (name, id string)
+}
+
+// defaultWindowResolver wraps the real tmux + env lookups used by
+// resolveOwnWindowName and resolveOwnWindowID. It is the production impl
+// wired into NewModel.
+type defaultWindowResolver struct{}
+
+// NewDefaultWindowResolver returns the production WindowResolver.
+func NewDefaultWindowResolver() WindowResolver { return defaultWindowResolver{} }
+
+func (defaultWindowResolver) ResolveOwnWindow() (name, id string) {
+	return resolveOwnWindowName(), resolveOwnWindowID()
+}
+
+// FakeWindowResolver is a static implementation for tests.
+type FakeWindowResolver struct {
+	Name string
+	ID   string
+}
+
+// ResolveOwnWindow satisfies WindowResolver.
+func (f FakeWindowResolver) ResolveOwnWindow() (string, string) { return f.Name, f.ID }
 
 // tmuxClientAdapter wraps *ttmux.Client to satisfy TmuxClient (primarily
 // because SessionName is a struct field and interfaces need methods).
