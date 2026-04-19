@@ -297,6 +297,20 @@ func (mr *MockTmuxClientMockRecorder) SwitchToWindow(target any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchToWindow", reflect.TypeOf((*MockTmuxClient)(nil).SwitchToWindow), target)
 }
 
+// UnbindKey mocks base method.
+func (m *MockTmuxClient) UnbindKey(table, key string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnbindKey", table, key)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnbindKey indicates an expected call of UnbindKey.
+func (mr *MockTmuxClientMockRecorder) UnbindKey(table, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnbindKey", reflect.TypeOf((*MockTmuxClient)(nil).UnbindKey), table, key)
+}
+
 // WindowPanePIDs mocks base method.
 func (m *MockTmuxClient) WindowPanePIDs(target string) (map[int]bool, error) {
 	m.ctrl.T.Helper()

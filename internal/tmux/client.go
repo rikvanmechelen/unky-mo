@@ -105,6 +105,13 @@ func (c *Client) BindKey(table, key, command string, args ...string) error {
 	return c.runTmux(full...)
 }
 
+// UnbindKey removes a key binding from the given key table. Idempotent —
+// unbinding a key that was never bound is a no-op. Used to clean up
+// legacy bindings left over by older sidebar versions.
+func (c *Client) UnbindKey(table, key string) error {
+	return c.runTmux("unbind-key", "-T", table, key)
+}
+
 // BreakPaneToSession moves a pane into a new window in the named session,
 // without switching focus. Used by the sidebar to park terminal tabs in
 // mo-terms when the drawer closes.

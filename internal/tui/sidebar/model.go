@@ -1318,6 +1318,15 @@ func sanitizeTermSessionSuffix(s string) string {
 // popup) use the popup-keys key table, where backtick is bound to
 // detach-client.
 func (m *Model) ensureMoTerms() (string, error) {
+	// Clear legacy Tab/BTab bindings that older sidebar versions installed
+	// on the popup-keys table. tmux key tables are server-global and
+	// persist across sidebar restarts until the tmux server dies, so a
+	// fresh binary cannot rely on "we just didn't rebind them" — we have
+	// to actively unbind to reach a clean state. Unbind is idempotent, so
+	// running it every time is safe.
+	_ = m.tmux.UnbindKey("popup-keys", "Tab")
+	_ = m.tmux.UnbindKey("popup-keys", "BTab")
+
 	name := m.termSession()
 	if m.tmux.SessionExistsNamed(name) {
 		return "", nil

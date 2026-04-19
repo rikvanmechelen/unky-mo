@@ -20,6 +20,7 @@ const drawerModelTermSession = "mo-terms-1"
 // track it as a tab (popup path). Callers whose test already brought
 // mo-terms into existence should use expectEnsureMoTermsExists instead.
 func expectEnsureMoTermsFirstTime(tmux *mock_sidebar.MockTmuxClient, cwd, ghostPaneID string) {
+	expectLegacyTabUnbind(tmux)
 	tmux.EXPECT().SessionExistsNamed(drawerModelTermSession).Return(false)
 	tmux.EXPECT().NewDetachedSession(drawerModelTermSession, cwd).Return(ghostPaneID, nil)
 	tmux.EXPECT().SetSessionOption(drawerModelTermSession, "key-table", "popup-keys").Return(nil)
@@ -29,7 +30,16 @@ func expectEnsureMoTermsFirstTime(tmux *mock_sidebar.MockTmuxClient, cwd, ghostP
 // expectEnsureMoTermsExists is the fast path — mo-terms is already around,
 // so ensure just confirms and returns.
 func expectEnsureMoTermsExists(tmux *mock_sidebar.MockTmuxClient) {
+	expectLegacyTabUnbind(tmux)
 	tmux.EXPECT().SessionExistsNamed(drawerModelTermSession).Return(true)
+}
+
+// expectLegacyTabUnbind matches the Tab/BTab cleanup that ensureMoTerms
+// runs on every call to purge bindings left over by older sidebar
+// versions that bound Tab → next-window inside the backtick popup.
+func expectLegacyTabUnbind(tmux *mock_sidebar.MockTmuxClient) {
+	tmux.EXPECT().UnbindKey("popup-keys", "Tab").Return(nil)
+	tmux.EXPECT().UnbindKey("popup-keys", "BTab").Return(nil)
 }
 
 // newDrawerModel builds a minimal Model for drawer-state tests — a mocked

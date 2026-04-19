@@ -13,6 +13,7 @@ import (
 type TmuxClient interface {
 	SessionName() string
 	BindKey(table, key, command string, args ...string) error
+	UnbindKey(table, key string) error
 	BreakPane(paneID string) error
 	BreakPaneToSession(paneID, session string) error
 	ConfigureStatusFormat()
@@ -83,6 +84,9 @@ func newTmuxClientAdapter(c *ttmux.Client) TmuxClient { return &tmuxClientAdapte
 func (a *tmuxClientAdapter) SessionName() string { return a.c.SessionName }
 func (a *tmuxClientAdapter) BindKey(table, key, command string, args ...string) error {
 	return a.c.BindKey(table, key, command, args...)
+}
+func (a *tmuxClientAdapter) UnbindKey(table, key string) error {
+	return a.c.UnbindKey(table, key)
 }
 func (a *tmuxClientAdapter) BreakPane(paneID string) error {
 	return a.c.BreakPane(paneID)
