@@ -8,6 +8,17 @@ import (
 	"strings"
 )
 
+// ErrWorktreeExists is returned when a worktree for the requested branch
+// already exists.
+type ErrWorktreeExists struct {
+	Branch       string
+	WorktreePath string
+}
+
+func (e *ErrWorktreeExists) Error() string {
+	return fmt.Sprintf("worktree for branch %q already exists at %s", e.Branch, e.WorktreePath)
+}
+
 // Worktree represents a git worktree for a project.
 type Worktree struct {
 	Path   string
@@ -59,6 +70,28 @@ func ListWorktrees(projectPath string) ([]Worktree, error) {
 	return worktrees, nil
 }
 
+// FindWorktreeForBranch returns the existing Worktree for the given branch,
+// or nil if no worktree is checked out on that branch. Does not count the
+// main checkout — only sibling worktrees.
+func FindWorktreeForBranch(projectPath, branch string) (*Worktree, error) {
+	wts, err := ListWorktrees(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	// Resolve projectPath so the comparison handles symlinks (e.g. macOS
+	// /var → /private/var vs git's resolved path).
+	resolved, _ := filepath.EvalSymlinks(projectPath)
+	if resolved == "" {
+		resolved = projectPath
+	}
+	for _, wt := range wts {
+		if wt.Branch == branch && wt.Path != projectPath && wt.Path != resolved {
+			return &wt, nil
+		}
+	}
+	return nil, nil
+}
+
 // WorktreesDir returns the sibling directory that holds worktrees for the
 // given project (e.g. /workspace/unky-mo → /workspace/unky-mo.worktrees).
 func WorktreesDir(projectPath string) string {
@@ -93,6 +126,13 @@ func CreateWorktree(projectPath, branch string) (string, error) {
 	if err2 == nil {
 		return wtPath, nil
 	}
+
+	// Both attempts failed. Check if a worktree already exists for this
+	// branch so callers can offer recovery options.
+	if existing, findErr := FindWorktreeForBranch(projectPath, branch); findErr == nil && existing != nil {
+		return "", &ErrWorktreeExists{Branch: branch, WorktreePath: existing.Path}
+	}
+
 	return "", fmt.Errorf("git worktree add: %s / %s", strings.TrimSpace(string(out2)), firstErr)
 }
 

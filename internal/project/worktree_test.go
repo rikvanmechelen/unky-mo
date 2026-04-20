@@ -1,6 +1,7 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,5 +204,71 @@ func TestCreateWorktreeNewBranch(t *testing.T) {
 func TestCreateWorktreeEmptyBranch(t *testing.T) {
 	if _, err := CreateWorktree("/tmp", ""); err == nil {
 		t.Error("empty branch should error")
+	}
+}
+
+func TestCreateWorktreeReturnsErrWorktreeExists(t *testing.T) {
+	repo := newGitRepo(t)
+	// Create a worktree the first time — should succeed.
+	_, err := CreateWorktree(repo, "feat")
+	if err != nil {
+		t.Fatalf("first CreateWorktree: %v", err)
+	}
+	// Second attempt for the same branch should return ErrWorktreeExists.
+	_, err = CreateWorktree(repo, "feat")
+	if err == nil {
+		t.Fatal("expected error on duplicate worktree")
+	}
+	var existsErr *ErrWorktreeExists
+	if !errors.As(err, &existsErr) {
+		t.Fatalf("want *ErrWorktreeExists, got %T: %v", err, err)
+	}
+	if existsErr.Branch != "feat" {
+		t.Errorf("Branch: want %q, got %q", "feat", existsErr.Branch)
+	}
+	if existsErr.WorktreePath == "" {
+		t.Error("WorktreePath should be set")
+	}
+}
+
+func TestFindWorktreeForBranchFound(t *testing.T) {
+	repo := newGitRepo(t)
+	gitRun(t, repo, "branch", "feat")
+	wtPath := repo + "-feat"
+	gitRun(t, repo, "worktree", "add", wtPath, "feat")
+
+	wt, err := FindWorktreeForBranch(repo, "feat")
+	if err != nil {
+		t.Fatalf("FindWorktreeForBranch: %v", err)
+	}
+	if wt == nil {
+		t.Fatal("expected non-nil worktree")
+	}
+	if wt.Branch != "feat" {
+		t.Errorf("Branch: want feat, got %q", wt.Branch)
+	}
+}
+
+func TestFindWorktreeForBranchNotFound(t *testing.T) {
+	repo := newGitRepo(t)
+	wt, err := FindWorktreeForBranch(repo, "nonexistent")
+	if err != nil {
+		t.Fatalf("FindWorktreeForBranch: %v", err)
+	}
+	if wt != nil {
+		t.Errorf("expected nil for nonexistent branch, got %+v", wt)
+	}
+}
+
+func TestFindWorktreeForBranchIgnoresMainCheckout(t *testing.T) {
+	repo := newGitRepo(t)
+	// The main checkout is on "main" — FindWorktreeForBranch should NOT
+	// return it (it only returns sibling worktrees).
+	wt, err := FindWorktreeForBranch(repo, "main")
+	if err != nil {
+		t.Fatalf("FindWorktreeForBranch: %v", err)
+	}
+	if wt != nil {
+		t.Error("should not return the main checkout as a worktree")
 	}
 }

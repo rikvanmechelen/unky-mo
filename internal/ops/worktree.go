@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,10 +18,11 @@ type WorktreeParams struct {
 
 // WorktreeResult reports the outcome.
 type WorktreeResult struct {
-	WorktreePath string
-	WindowName   string
-	Launched     bool // true if a new Claude session was spawned (vs focused existing)
-	Status       string
+	WorktreePath   string
+	WindowName     string
+	Launched       bool // true if a new Claude session was spawned (vs focused existing)
+	Status         string
+	ExistsConflict bool // true when the worktree already existed for this branch
 }
 
 // CreateWorktreeAndLaunch creates a git worktree for the branch (creating
@@ -38,6 +40,15 @@ func CreateWorktreeAndLaunch(ctx *Context, p WorktreeParams) (*WorktreeResult, e
 
 	wtPath, err := project.CreateWorktree(p.ProjectPath, p.Branch)
 	if err != nil {
+		var existsErr *project.ErrWorktreeExists
+		if errors.As(err, &existsErr) {
+			return &WorktreeResult{
+				WorktreePath:   existsErr.WorktreePath,
+				WindowName:     p.ProjectName + "@" + p.Branch,
+				ExistsConflict: true,
+				Status:         existsErr.Error(),
+			}, nil
+		}
 		return nil, fmt.Errorf("create worktree: %w", err)
 	}
 	windowName := p.ProjectName + "@" + p.Branch

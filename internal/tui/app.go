@@ -250,6 +250,14 @@ type Model struct {
 	pendingCleanupBranch       string
 	pendingCleanupWorktreePath string            // "" for plain-branch rows
 	pendingCleanupSessions     []claude.Session  // live sessions to kill, captured at entry
+	// Worktree-exists prompt: shown when creating a worktree for a branch
+	// that already has one. Options: focus existing, remove + recreate, cancel.
+	pendingWTExistsActive      bool
+	pendingWTExistsBranch      string
+	pendingWTExistsProjectPath string
+	pendingWTExistsProjectName string
+	pendingWTExistsWTPath      string
+	pendingWTExistsPRBranch    bool   // true when triggered from a PR (needs git fetch + reset on recreate)
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
 	// CWD currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
@@ -610,6 +618,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Worktree-exists prompt: non-destructive multi-option menu.
+		if m.pendingWTExistsActive {
+			switch msg.String() {
+			case "f", "F":
+				projectName := m.pendingWTExistsProjectName
+				branch := m.pendingWTExistsBranch
+				wtPath := m.pendingWTExistsWTPath
+				m.clearPendingWTExists()
+				return m, m.focusExistingWorktree(projectName, branch, wtPath)
+			case "r", "R":
+				projectPath := m.pendingWTExistsProjectPath
+				projectName := m.pendingWTExistsProjectName
+				branch := m.pendingWTExistsBranch
+				prBranch := m.pendingWTExistsPRBranch
+				m.clearPendingWTExists()
+				return m, m.removeAndRecreateWorktree(projectPath, projectName, branch, prBranch)
+			case "n", "N", "enter", "esc", "escape":
+				m.clearPendingWTExists()
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// Import-external-session prompt captures all input while active.
 		// Destructive [y/N] (kills the external claude): only y/Y confirms.
 		if m.pendingImportSessionID != "" {
@@ -924,8 +955,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.Checkout):
-			if m.screen == ScreenProject && !m.detailFocusLeft && m.detailPRExpanded >= 0 && m.detailPRExpanded < len(m.detailPRs) {
-				pr := m.detailPRs[m.detailPRExpanded]
+			if m.screen == ScreenProject && !m.detailFocusLeft && len(m.detailPRs) > 0 && m.detailPRCursor >= 0 && m.detailPRCursor < len(m.detailPRs) {
+				pr := m.detailPRs[m.detailPRCursor]
 				projectPath := m.detailProject.Path
 				return m, func() tea.Msg {
 					if err := gh.CheckoutPRBranch(projectPath, pr.Number); err != nil {
@@ -937,9 +968,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.NewWorktree):
 			if m.screen == ScreenProject && m.detailProject != nil {
-				// If a PR is expanded on the right panel, create worktree from its branch.
-				if !m.detailFocusLeft && m.detailPRExpanded >= 0 && m.detailPRExpanded < len(m.detailPRs) {
-					pr := m.detailPRs[m.detailPRExpanded]
+				// If focus is on the right panel, create worktree from the highlighted PR.
+				if !m.detailFocusLeft && len(m.detailPRs) > 0 && m.detailPRCursor >= 0 && m.detailPRCursor < len(m.detailPRs) {
+					pr := m.detailPRs[m.detailPRCursor]
 					return m, m.createWorktreeFromPR(pr)
 				}
 				// Session row: open the lift-to-new-worktree flow. Captures the
@@ -1191,6 +1222,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return statusMsgEvent("sync failed: " + msg.err.Error())
 			}
+		}
+		return m, nil
+
+	case worktreeExistsMsg:
+		if m.detailProject != nil {
+			m.pendingWTExistsActive = true
+			m.pendingWTExistsBranch = msg.branch
+			m.pendingWTExistsProjectPath = m.detailProject.Path
+			m.pendingWTExistsProjectName = m.detailProject.Name
+			m.pendingWTExistsWTPath = msg.worktreePath
+			m.pendingWTExistsPRBranch = msg.prBranch
 		}
 		return m, nil
 
@@ -2798,6 +2840,12 @@ func (m Model) projectDetailView() string {
 			{"s", "stash + pop"},
 			{"l", "leave in source"},
 		}))
+	case m.pendingWTExistsActive:
+		q := fmt.Sprintf("Worktree for %s already exists", m.pendingWTExistsBranch)
+		footer = m.renderPrompt(q, withCancel([]footerBinding{
+			{"f", "focus existing"},
+			{"r", "remove + recreate"},
+		}))
 	case m.pendingCleanupActive:
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
@@ -2810,12 +2858,16 @@ func (m Model) projectDetailView() string {
 		})
 	default:
 		var bindings []footerBinding
-		if !m.detailFocusLeft && m.detailPRExpanded >= 0 {
+		if !m.detailFocusLeft && len(m.detailPRs) > 0 {
+			enterLabel := "expand"
+			if m.detailPRExpanded >= 0 {
+				enterLabel = "close"
+			}
 			bindings = []footerBinding{
 				{"o", "github"},
 				{"w", "worktree"},
 				{"c", "checkout"},
-				{"enter", "close"},
+				{"enter", enterLabel},
 				{"←→", "switch panel"},
 				{"esc", "back"},
 			}
@@ -3131,6 +3183,15 @@ func (m Model) restartSidebars() {
 type statusMsgEvent string
 type clearStatusMsg struct{}
 
+// worktreeExistsMsg signals that a worktree for the requested branch already
+// exists. The TUI opens a multi-option prompt so the user can choose to focus
+// the existing session, remove and recreate, or cancel.
+type worktreeExistsMsg struct {
+	branch       string
+	worktreePath string
+	prBranch     bool // true when triggered from a PR (needs git fetch + reset on recreate)
+}
+
 // worktreeCreatedMsg signals that a new worktree was created; Update refreshes
 // detailWorktrees and surfaces the carried status string.
 type worktreeCreatedMsg struct{ status string }
@@ -3204,6 +3265,14 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 		// Create the worktree for the PR branch
 		wtPath, err := project.CreateWorktree(p.Path, pr.Branch)
 		if err != nil {
+			var existsErr *project.ErrWorktreeExists
+			if errors.As(err, &existsErr) {
+				return worktreeExistsMsg{
+					branch:       pr.Branch,
+					worktreePath: existsErr.WorktreePath,
+					prBranch:     true,
+				}
+			}
 			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
 		}
 
@@ -3460,6 +3529,77 @@ func (m *Model) clearPendingCleanupMenu() {
 	m.pendingCleanupSessions = nil
 }
 
+func (m *Model) clearPendingWTExists() {
+	m.pendingWTExistsActive = false
+	m.pendingWTExistsBranch = ""
+	m.pendingWTExistsProjectPath = ""
+	m.pendingWTExistsProjectName = ""
+	m.pendingWTExistsWTPath = ""
+	m.pendingWTExistsPRBranch = false
+}
+
+// focusExistingWorktree tries to switch to the existing worktree's session
+// window. If no live session exists, launches a new one in the worktree dir.
+func (m Model) focusExistingWorktree(projectName, branch, wtPath string) tea.Cmd {
+	return func() tea.Msg {
+		windowName := projectName + "@" + branch
+		if attempted, realWin, err := m.focusPrimaryIfLive(projectName, branch, wtPath); attempted {
+			if err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + realWin)
+		}
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + windowName)
+		}
+		return m.launchClaudeInWindow(windowName, wtPath, "claude")
+	}
+}
+
+// removeAndRecreateWorktree removes the existing worktree and recreates it.
+// For PR branches, re-fetches and resets to the remote branch.
+func (m Model) removeAndRecreateWorktree(projectPath, projectName, branch string, prBranch bool) tea.Cmd {
+	return func() tea.Msg {
+		if err := project.RemoveWorktree(projectPath, branch); err != nil {
+			return statusMsgEvent(fmt.Sprintf("Remove failed: %v", err))
+		}
+		if prBranch {
+			_ = exec.Command("git", "-C", projectPath, "fetch", "origin", branch).Run()
+		}
+		wtPath, err := project.CreateWorktree(projectPath, branch)
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Recreate failed: %v", err))
+		}
+		if prBranch {
+			_ = exec.Command("git", "-C", wtPath, "reset", "--hard", "origin/"+branch).Run()
+		}
+		windowName := projectName + "@" + branch
+		var status string
+		if attempted, realWin, err := m.focusPrimaryIfLive(projectName, branch, wtPath); attempted {
+			if err != nil {
+				status = fmt.Sprintf("Recreated worktree but failed to switch: %v", err)
+			} else {
+				status = "Switched to " + realWin
+			}
+		} else if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
+				status = fmt.Sprintf("Recreated worktree but failed to switch: %v", err)
+			} else {
+				status = "Switched to " + windowName
+			}
+		} else {
+			launch := m.launchClaudeInWindow(windowName, wtPath, "claude")
+			if se, ok := launch.(statusMsgEvent); ok {
+				status = string(se)
+			}
+		}
+		return worktreeCreatedMsg{status: status}
+	}
+}
+
 // killCleanupSessions is a thin TUI adapter over ops.CleanupWorktree's
 // kill-only mode (DeleteBranch=false, no worktree removal — just the kill
 // step). We pass an empty branch to skip the worktree removal; the callers
@@ -3643,6 +3783,13 @@ func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
 		})
 		if err != nil {
 			return worktreeCreatedMsg{status: err.Error()}
+		}
+		if res.ExistsConflict {
+			return worktreeExistsMsg{
+				branch:       branch,
+				worktreePath: res.WorktreePath,
+				prBranch:     false,
+			}
 		}
 		return worktreeCreatedMsg{status: res.Status}
 	}
