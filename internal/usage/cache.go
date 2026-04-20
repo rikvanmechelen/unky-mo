@@ -59,11 +59,20 @@ func (cacheOnDisk) save(c cached) error {
 	return os.Rename(tmp, cachePath)
 }
 
+// tokenReader returns an OAuth access token. The real implementation reads
+// ~/.claude/.credentials.json; tests inject a stub.
+type tokenReader func() (string, error)
+
 // fetchWithDeps implements Fetch's decision tree against pluggable deps.
 // The real entry point (Fetch) wires in on-disk cache + real HTTP client;
 // tests wire in fakes.
-func fetchWithDeps(ctx context.Context, cs cacheStore, c apiClient) (Snapshot, error) {
+func fetchWithDeps(ctx context.Context, cs cacheStore, c apiClient, opts ...tokenReader) (Snapshot, error) {
 	now := time.Now()
+
+	readToken := readAccessToken
+	if len(opts) > 0 && opts[0] != nil {
+		readToken = opts[0]
+	}
 
 	prev, hasPrev, _ := cs.load() // read errors fall through to a refetch
 
@@ -77,7 +86,7 @@ func fetchWithDeps(ctx context.Context, cs cacheStore, c apiClient) (Snapshot, e
 		return toSnapshot(prev.Body, prev.FetchedAt, "cache"), nil
 	}
 
-	token, err := readAccessToken()
+	token, err := readToken()
 	if err != nil {
 		if hasPrev {
 			return toSnapshot(prev.Body, prev.FetchedAt, "stale"), nil

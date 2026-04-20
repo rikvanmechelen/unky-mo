@@ -225,6 +225,8 @@ func (f *fakeClient) call(ctx context.Context, token string) httpStatus {
 	return f.next
 }
 
+func fakeToken() (string, error) { return "fake-token", nil }
+
 func makeBody(fiveHourUtil float64, resetsAt time.Time) apiResponse {
 	return apiResponse{
 		FiveHour: apiWindow{Utilization: fiveHourUtil, ResetsAt: resetsAt},
@@ -299,7 +301,7 @@ func TestFetchRefetchesAfterWindowReset(t *testing.T) {
 	}
 	client := &fakeClient{next: httpStatus{code: 200, body: makeBody(0.01, now.Add(5*time.Hour))}}
 
-	snap, err := fetchWithDeps(context.Background(), cache, client)
+	snap, err := fetchWithDeps(context.Background(), cache, client, fakeToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -323,7 +325,7 @@ func TestFetch429ServesStaleAndSetsCooldown(t *testing.T) {
 	}
 	client := &fakeClient{next: httpStatus{code: http.StatusTooManyRequests}}
 
-	snap, err := fetchWithDeps(context.Background(), cache, client)
+	snap, err := fetchWithDeps(context.Background(), cache, client, fakeToken)
 	if err != nil {
 		t.Fatalf("unexpected error on 429: %v", err)
 	}
@@ -342,7 +344,7 @@ func TestFetch401ReturnsAuthError(t *testing.T) {
 	cache := &fakeCache{}
 	client := &fakeClient{next: httpStatus{code: http.StatusUnauthorized, err: ErrAuthExpired}}
 
-	_, err := fetchWithDeps(context.Background(), cache, client)
+	_, err := fetchWithDeps(context.Background(), cache, client, fakeToken)
 	if !errors.Is(err, ErrAuthExpired) {
 		t.Fatalf("err = %v, want ErrAuthExpired", err)
 	}

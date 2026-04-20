@@ -120,27 +120,19 @@ func TestClaudeSessionDetectionViaTmuxPane(t *testing.T) {
 		t.Fatalf("SendKeys: %v", err)
 	}
 
-	// Wait for the fake's session-marker file to land.
+	// Wait for LiveSessions to discover the fake-claude. Don't just check
+	// for a directory entry — there's a race between the file being created
+	// and its JSON content being fully written, and ReadSessions silently
+	// skips files it can't parse.
+	var sessions []claude.Session
 	waited := waitForOk(5*time.Second, func() bool {
-		entries, err := os.ReadDir(filepath.Join(home, ".claude", "sessions"))
-		if err != nil {
-			return false
-		}
-		return len(entries) > 0
+		var err error
+		sessions, err = claude.LiveSessions()
+		return err == nil && len(sessions) > 0
 	})
 	if !waited {
-		// Dump pane contents to help diagnose.
 		pane, _ := exec.Command("tmux", "-L", tc.SocketName, "capture-pane", "-t", "test:myproj", "-p").CombinedOutput()
-		t.Fatalf("session file never appeared.\nfake path: %s\ncmd: %s\npane:\n%s", fake, cmdLine, pane)
-	}
-
-	// LiveSessions should now find at least one live session.
-	sessions, err := claude.LiveSessions()
-	if err != nil {
-		t.Fatalf("LiveSessions: %v", err)
-	}
-	if len(sessions) == 0 {
-		t.Fatal("expected at least one live session")
+		t.Fatalf("LiveSessions never found a session.\nfake path: %s\ncmd: %s\npane:\n%s", fake, cmdLine, pane)
 	}
 	// Locate the session whose CWD matches our project dir.
 	var sess *claude.Session
@@ -166,22 +158,21 @@ func TestClaudeSessionDetectionViaTmuxPane(t *testing.T) {
 		t.Errorf("fake-claude pid %d should be a descendant of pane pids %v", sess.PID, panePIDs)
 	}
 
-	// Kill the window. Fake-claude's TERM trap removes the session marker,
-	// so the next LiveSessions poll should return one fewer entry.
+	// Kill the window. The fake-claude process dies (SIGHUP from PTY close
+	// or explicit signal), so LiveSessions — which filters by IsAlive —
+	// should no longer include it.
 	if err := tc.KillWindow("test:myproj"); err != nil {
 		t.Fatalf("KillWindow: %v", err)
 	}
-	waitFor(t, 3*time.Second, "session file to disappear", func() bool {
-		entries, _ := os.ReadDir(filepath.Join(home, ".claude", "sessions"))
-		return len(entries) == 0
-	})
-
-	after, _ := claude.LiveSessions()
-	for _, s := range after {
-		if s.CWD == projectDir {
-			t.Errorf("session for %s should be gone after KillWindow, still found: %+v", projectDir, s)
+	waitFor(t, 5*time.Second, "session to drop from LiveSessions", func() bool {
+		after, _ := claude.LiveSessions()
+		for _, s := range after {
+			if s.CWD == projectDir {
+				return false
+			}
 		}
-	}
+		return true
+	})
 }
 
 func TestClaudeSessionIdleDetectionOnSpawnedSession(t *testing.T) {
@@ -203,15 +194,16 @@ func TestClaudeSessionIdleDetectionOnSpawnedSession(t *testing.T) {
 		t.Fatalf("SendKeys: %v", err)
 	}
 
-	// Wait for session + JSONL to land.
-	waitFor(t, 3*time.Second, "session JSONL to appear", func() bool {
+	// Wait for session + JSONL to be fully written. Just checking os.Stat
+	// isn't enough — there's a race between file creation and content being
+	// flushed, and IsSessionIdle needs parseable content.
+	waitFor(t, 5*time.Second, "session JSONL to appear with content", func() bool {
 		sessions, _ := claude.LiveSessions()
 		for _, s := range sessions {
 			if s.CWD == projectDir {
-				// JSONL should exist at the encoded projects path.
 				dir := claude.ProjectsDirForPath(projectDir)
-				_, err := os.Stat(filepath.Join(dir, s.SessionID+".jsonl"))
-				return err == nil
+				info, err := os.Stat(filepath.Join(dir, s.SessionID+".jsonl"))
+				return err == nil && info.Size() > 0
 			}
 		}
 		return false

@@ -61,11 +61,16 @@ func TestNotificationTypeConstantsMatchWire(t *testing.T) {
 	}
 }
 
-// startServer runs a Server against a socket in t.TempDir(); callers must call
-// Stop before the test ends.
+// startServer runs a Server against a short socket path under /tmp (macOS caps
+// Unix socket paths at 104 bytes; t.TempDir() paths exceed that).
 func startServer(t *testing.T) (*Server, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "notify.sock")
+	dir, err := os.MkdirTemp("/tmp", "mo-notify-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "n.sock")
 	srv := NewServer(path)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -177,7 +182,12 @@ func TestServerDropsMalformedLine(t *testing.T) {
 }
 
 func TestServerCleansUpSocketOnStop(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "notify.sock")
+	dir, err := os.MkdirTemp("/tmp", "mo-notify-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "n.sock")
 	srv := NewServer(path)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
