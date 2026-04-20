@@ -96,6 +96,34 @@ func CreateWorktree(projectPath, branch string) (string, error) {
 	return "", fmt.Errorf("git worktree add: %s / %s", strings.TrimSpace(string(out2)), firstErr)
 }
 
+// CreateNewBranchWorktree is like CreateWorktree but refuses when the branch
+// already exists: it only runs `git worktree add -b`, never the existing-branch
+// fallback. Used by the lift-session flow, where reusing an existing branch
+// would silently diverge from the user's "new branch" intent.
+func CreateNewBranchWorktree(projectPath, branch string) (string, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return "", fmt.Errorf("branch name is required")
+	}
+
+	// Pre-flight: refuse if the branch already exists.
+	check := exec.Command("git", "-C", projectPath, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	if err := check.Run(); err == nil {
+		return "", fmt.Errorf("branch %q already exists", branch)
+	}
+
+	siblingDir := WorktreesDir(projectPath)
+	if err := os.MkdirAll(siblingDir, 0755); err != nil {
+		return "", fmt.Errorf("creating %s: %w", siblingDir, err)
+	}
+	wtPath := filepath.Join(siblingDir, branch)
+	out, err := exec.Command("git", "-C", projectPath, "worktree", "add", "-b", branch, wtPath).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
+	}
+	return wtPath, nil
+}
+
 // RemoveWorktree removes the worktree for the given branch under projectPath.
 // Uses --force so untracked files or local modifications do not block removal;
 // callers are expected to confirm with the user first.

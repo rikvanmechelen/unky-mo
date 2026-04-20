@@ -12,6 +12,74 @@ func writeFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0644)
 }
 
+func TestCreateNewBranchWorktreeHappyPath(t *testing.T) {
+	repo := newGitRepo(t)
+	wtPath, err := CreateNewBranchWorktree(repo, "feat-new")
+	if err != nil {
+		t.Fatalf("CreateNewBranchWorktree: %v", err)
+	}
+	if !strings.HasSuffix(wtPath, ".worktrees/feat-new") {
+		t.Errorf("unexpected worktree path: %q", wtPath)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Errorf("worktree dir should exist, got %v", err)
+	}
+	// The branch must now exist.
+	branches, _ := ListBranches(repo)
+	var found bool
+	for _, b := range branches {
+		if b.Name == "feat-new" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("feat-new branch should exist after CreateNewBranchWorktree")
+	}
+}
+
+func TestCreateNewBranchWorktreeRefusesExistingBranch(t *testing.T) {
+	repo := newGitRepo(t)
+	gitRun(t, repo, "branch", "taken")
+
+	_, err := CreateNewBranchWorktree(repo, "taken")
+	if err == nil {
+		t.Fatal("expected error when branch already exists")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "already") &&
+		!strings.Contains(strings.ToLower(err.Error()), "exists") {
+		t.Errorf("error should mention existing branch, got %q", err)
+	}
+	// No worktree should have been created on disk.
+	wts, _ := ListWorktrees(repo)
+	for _, wt := range wts {
+		if wt.Branch == "taken" {
+			t.Error("no worktree for the refused branch should exist")
+		}
+	}
+}
+
+func TestCreateNewBranchWorktreeRefusesEmptyName(t *testing.T) {
+	repo := newGitRepo(t)
+	_, err := CreateNewBranchWorktree(repo, "")
+	if err == nil {
+		t.Error("empty branch name should error")
+	}
+}
+
+// Regression: even when the main checkout's branch exists (it always does),
+// CreateNewBranchWorktree must refuse rather than falling back to checkout.
+// This is the invariant that matters for the lift flow — a user typing `main`
+// as the new branch on a session row should NOT re-checkout main into a
+// sibling worktree.
+func TestCreateNewBranchWorktreeRefusesMainBranchName(t *testing.T) {
+	repo := newGitRepo(t)
+	_, err := CreateNewBranchWorktree(repo, "main")
+	if err == nil {
+		t.Error("should refuse to recreate the main branch")
+	}
+}
+
 func TestListWorktreesMainOnly(t *testing.T) {
 	repo := newGitRepo(t)
 	wts, err := ListWorktrees(repo)

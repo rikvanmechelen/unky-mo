@@ -96,6 +96,25 @@ The `x` key on a branch row in the project detail view removes the worktree and/
 
 Plumbing: `project.RemoveWorktree` (runs `git worktree remove --force`) + `project.DeleteBranch` (runs `git branch -D`, refuses on main). Branch rows carry `Merged` / `RemoteGone` flags populated by `ListBranches` via batched `git branch --merged` + `git for-each-ref` (upstream track), shown as dim `[merged]` / `[gone]` tags next to the branch name. The SIGINT-and-wait loop is shared with `parkAndLaunchPrimary` via the `signalAndWaitExit` helper.
 
+## Lift session into a new worktree
+
+The `w` key on a `br-session` row on the project detail screen moves the selected session — live or historical — to a fresh new branch + worktree off the source's HEAD. Plain `branch` / `br-empty` / `br-remote` rows keep today's `w` behavior (worktree for that existing branch, immediate launch, no prompt). State fields and helpers live in `internal/tui/app.go` (`liftSession*`, `pendingLiftDirtyActive`, `pendingLiftBranch`).
+
+Flow (see `startLiftSessionPrompt` → `decideLiftDirty` → `runLiftSession`):
+
+1. **Branch-name input** — free-text prompt, same shape as `W`. `enter` submits, `esc` cancels.
+2. **Dirty-state prompt** — only shown when the source cwd has uncommitted changes. `[s] stash + pop / [l] leave in source / [n] cancel`. Non-destructive menu, so `enter` defaults to `s`.
+3. **Execution** — `ops.LiftSessionToWorktree` (`internal/ops/lift.go`): optional stash at source → `project.CreateNewBranchWorktree` off source HEAD → optional pop in new worktree → SIGTERM live PID + wait → `tmux kill-window` → **rename the JSONL** from `~/.claude/projects/<encoded-sourceCwd>/<id>.jsonl` to `~/.claude/projects/<encoded-newCwd>/<id>.jsonl`. No auto-launch. User presses `enter` on the relocated `br-session` row to resume via the regular `resumeInDir` path.
+
+Key invariants:
+
+- **No auto-launch.** Earlier versions ran `claude --resume <id>` in a fresh tmux window as the last step. That hid launch errors behind the `pane-exited` hook (the window closed before the user could read the red flash), and raced with claude's own JSONL write at the new encoded-cwd. The simpler "move the JSONL, let the user resume" flow reuses the known-good resume path.
+- **SIGTERM before the move.** Claude must release its file handle before `os.Rename` — otherwise writes race with the rename.
+- **New branch must not already exist.** `project.CreateNewBranchWorktree` pre-flights with `git rev-parse --verify` and refuses up front. Stash is rolled back if the pre-flight fails so no user work is orphaned.
+- **Missing JSONL is non-fatal.** `LiftResult.MovedJSONL` reports whether a JSONL was found and moved; false is acceptable (e.g. synced-but-not-pulled rows).
+- **Old worktree is left in place.** Cleanup is an explicit `x` afterwards.
+- **Source PID is recovered at prompt entry.** `RecentSession` doesn't carry PID, so `startLiftSessionPrompt` iterates `LiveSessions()` to match by SessionID. PID=0 and `SourceWindow=""` on historical rows mean the SIGTERM/kill-window steps are skipped.
+
 ### Terminal Drawer
 
 The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.0`). Only one terminal tab is visible at a time — inactive tabs are parked in a dedicated mo-terms tmux session (`tmux.MoTermsSession` is the base name; each sidebar scopes it per-window via `Model.termSession()` → `mo-terms-<windowID>` so tabs from `moma-chatbot` don't show up in `moma-apps-rails`'s backtick popup). Panes are moved in and out of the project window via cross-session `break-pane`/`join-pane`. The sidebar tracks terminal pane IDs (`%N` format, stable across moves) and prunes dead panes on each 1s refresh tick. The main TUI runs a parallel sweep on each 5s `sessionTick` (`pruneOrphanedTermSessions` → `orphanedTermSessions`) that kills `mo-terms-<N>` sessions whose window `@N` no longer exists, so closing a project window doesn't leak its parked shells.
@@ -106,7 +125,7 @@ Backtick (`` ` ``) opens a floating popup that attaches a nested tmux client to 
 
 Keys in `mo` are handled by **two separate Bubbletea programs**, not one. When debugging a keystroke, first identify which program was focused when the key was pressed.
 
-- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Three screens: `ScreenDashboard` (50/50 split: project list left, sessions-on-top / tickets-below right; right-panel focus has two sub-sections via `dashRightFocus` and up/down crosses the boundary), `ScreenProject` (branches list left, PRs right; branch rows marked `●` main / `⎇` worktree / `·` neither with optional `[merged]`/`[gone]` tags), `ScreenTicket` (ticket detail popup — see Tickets section). `←`/`→` switch panels on dashboard / project detail. Dashboard/project-detail keys: `enter` (smart resume / open ticket detail popup when on tickets section), `w` (worktree), `m`/`M` (checkout in main; `M` stashes first), `W` (new branch prompt), `n` (new session; prompts switch/park+new/concurrent), `x` (cleanup — see Cleanup), `a`, `r`, `o` (open PR or ticket URL), `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client), `esc`, `q`. On `ScreenTicket`: `s` = start working, `o` = open URL, `y` = yank branch name, `esc` = back (unwinds remember-prompt → picker → screen).
+- **Main TUI** (`internal/tui/app.go`) — runs in tmux window 0. Three screens: `ScreenDashboard` (50/50 split: project list left, sessions-on-top / tickets-below right; right-panel focus has two sub-sections via `dashRightFocus` and up/down crosses the boundary), `ScreenProject` (branches list left, PRs right; branch rows marked `●` main / `⎇` worktree / `·` neither with optional `[merged]`/`[gone]` tags), `ScreenTicket` (ticket detail popup — see Tickets section). `←`/`→` switch panels on dashboard / project detail. Dashboard/project-detail keys: `enter` (smart resume / open ticket detail popup when on tickets section), `w` (worktree on a branch row; **lift-to-new-worktree** on a `br-session` row — see Lift), `m`/`M` (checkout in main; `M` stashes first), `W` (new branch prompt), `n` (new session; prompts switch/park+new/concurrent), `x` (cleanup — see Cleanup), `a`, `r`, `o` (open PR or ticket URL), `c`, `?`, `ctrl+r`, `s` (suspend — tmux detach-client), `esc`, `q`. On `ScreenTicket`: `s` = start working, `o` = open URL, `y` = yank branch name, `esc` = back (unwinds remember-prompt → picker → screen).
 - **Sidebar** (`internal/tui/sidebar/model.go`) — runs as pane `.1` in each project window. Has two focus sections:
   - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
   - **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).

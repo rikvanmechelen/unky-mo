@@ -261,6 +261,18 @@ type Model struct {
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
+	// Lift-session flow: `w` on a br-session row opens a text input for the
+	// new branch name, then (if the source is dirty) a multi-option menu to
+	// decide whether to carry the dirty state into the new worktree. The
+	// source session info is captured at prompt entry so cursor movement
+	// can't invalidate the target.
+	liftSessionInput        *textinput.Model
+	liftSessionSessionID    string
+	liftSessionSourcePath   string
+	liftSessionSourcePID    int    // 0 when the source session is historical
+	liftSessionSourceWindow string // tmux window to kill after SIGTERM; "" skips
+	pendingLiftDirtyActive  bool
+	pendingLiftBranch       string // branch name from the input prompt
 	// Pull requests panel (right side of project detail)
 	detailPRs        []gh.PullRequest
 	detailPRCursor   int
@@ -464,6 +476,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := m.worktreeInput.Update(msg)
 			m.worktreeInput = &updated
 			return m, cmd
+		}
+
+		// Lift-session branch-name input captures all input while active.
+		if m.liftSessionInput != nil && m.screen == ScreenProject {
+			switch msg.String() {
+			case "enter":
+				branch := strings.TrimSpace(m.liftSessionInput.Value())
+				m.liftSessionInput = nil
+				if branch == "" {
+					m.clearLiftSessionState()
+					return m, nil
+				}
+				return m.decideLiftDirty(branch)
+			case "esc", "escape":
+				m.liftSessionInput = nil
+				m.clearLiftSessionState()
+				return m, nil
+			}
+			updated, cmd := m.liftSessionInput.Update(msg)
+			m.liftSessionInput = &updated
+			return m, cmd
+		}
+
+		// Lift-session dirty-state menu: [s]tash+pop / [l]eave / [n]cancel.
+		// Non-destructive (creating a new worktree doesn't delete anything), so
+		// enter binds to the recommended primary `s` (carry the changes).
+		if m.pendingLiftDirtyActive {
+			switch msg.String() {
+			case "s", "S", "enter":
+				cmd := m.runLiftSession(true)
+				m.clearLiftSessionState()
+				return m, cmd
+			case "l", "L":
+				cmd := m.runLiftSession(false)
+				m.clearLiftSessionState()
+				return m, cmd
+			case "n", "N", "esc", "escape":
+				m.clearLiftSessionState()
+				return m, nil
+			}
+			return m, nil
 		}
 
 		// New-session menu captures all input while active.
@@ -889,7 +942,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					pr := m.detailPRs[m.detailPRExpanded]
 					return m, m.createWorktreeFromPR(pr)
 				}
-				// Left panel: create/open a worktree for the branch under cursor.
+				// Session row: open the lift-to-new-worktree flow. Captures the
+				// source session info up front so later cursor moves can't
+				// change the target mid-flow.
+				if row := m.currentDetailRow(); row != nil && row.kind == "br-session" && row.session != nil {
+					return m.startLiftSessionPrompt(row)
+				}
+				// Left panel, plain branch row: today's behavior — worktree for that branch.
 				if b := m.currentBranchRow(); b != nil {
 					return m, m.createWorktreeAndLaunch(b.Name)
 				}
@@ -1000,6 +1059,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionRefreshMsg:
 		m.updateProjectStatuses(msg)
+		// Rebuild the detail view so session rows reflect fresh live data
+		// (needed e.g. after a lift, where a refresh kicked off by the handler
+		// must land without the user leaving + re-entering the screen).
+		if m.screen == ScreenProject && m.detailProject != nil {
+			m.buildDetailRows()
+		}
 		return m, nil
 
 	case usageTickMsg:
@@ -1137,6 +1202,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		status := msg.status
 		return m, func() tea.Msg { return statusMsgEvent(status) }
+
+	case sessionLiftedMsg:
+		// Rebuild branches + worktrees + rows so the new session row lands on
+		// the new branch, and kick off a session refresh so live-status data
+		// (the old PID is now gone) is up to date.
+		if m.detailProject != nil {
+			m.detailWorktrees, _ = project.ListWorktrees(m.detailProject.Path)
+			m.detailBranches, _ = project.ListBranches(m.detailProject.Path)
+			m.buildDetailRows()
+		}
+		status := msg.status
+		return m, tea.Batch(
+			m.refreshSessions(),
+			func() tea.Msg { return statusMsgEvent(status) },
+		)
 
 	case branchesChangedMsg:
 		if m.detailProject != nil {
@@ -2702,6 +2782,18 @@ func (m Model) projectDetailView() string {
 			{"enter", "create"},
 			{"esc", "cancel"},
 		})
+	case m.liftSessionInput != nil:
+		question := fmt.Sprintf("Lift session into new worktree — branch name:")
+		footer = m.renderInputPrompt(question, m.liftSessionInput.View(), []footerBinding{
+			{"enter", "continue"},
+			{"esc", "cancel"},
+		})
+	case m.pendingLiftDirtyActive:
+		q := fmt.Sprintf("Source has uncommitted changes — carry into %s?", m.pendingLiftBranch)
+		footer = m.renderPrompt(q, withCancel([]footerBinding{
+			{"s", "stash + pop"},
+			{"l", "leave in source"},
+		}))
 	case m.pendingCleanupActive:
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
@@ -3552,6 +3644,38 @@ func (m Model) createWorktreeAndLaunch(branch string) tea.Cmd {
 	}
 }
 
+// sessionLiftedMsg signals a completed lift. Distinct from worktreeCreatedMsg
+// because its handler also kicks off a session refresh so the newly-relocated
+// JSONL (now under the new worktree's encoded-cwd dir) attributes to the new
+// branch immediately, without the user having to leave and re-enter
+// ScreenProject.
+type sessionLiftedMsg struct{ status string }
+
+// liftSessionToWorktree is a thin TUI adapter over ops.LiftSessionToWorktree.
+// Triggered by `w` on a br-session row once the user has picked a new branch
+// name and decided what to do with any dirty state at the source.
+func (m Model) liftSessionToWorktree(sessionID, sourcePath, sourceWindow string, sourcePID int, newBranch string, stashAndPop bool) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		res, err := ops.LiftSessionToWorktree(m.ops, ops.LiftParams{
+			ProjectName:  p.Name,
+			SourcePath:   sourcePath,
+			SessionID:    sessionID,
+			SourcePID:    sourcePID,
+			SourceWindow: sourceWindow,
+			NewBranch:    newBranch,
+			StashAndPop:  stashAndPop,
+		})
+		if err != nil {
+			return sessionLiftedMsg{status: fmt.Sprintf("Lift failed: %v", err)}
+		}
+		return sessionLiftedMsg{status: res.Status}
+	}
+}
+
 func (m Model) resumeSession() tea.Cmd {
 	return func() tea.Msg {
 		if m.tmux == nil {
@@ -3686,6 +3810,100 @@ func (m Model) currentBranchRow() *project.Branch {
 		return nil
 	}
 	return m.detailRows[m.detailCursor].branch
+}
+
+// currentDetailRow returns the full detail row under the cursor (branch,
+// session, kind, tmuxWindow) or nil if out of range. Used by `w` to tell a
+// session row apart from a plain branch row so they can route to different
+// flows.
+func (m Model) currentDetailRow() *detailRow {
+	if m.detailCursor < 0 || m.detailCursor >= len(m.detailRows) {
+		return nil
+	}
+	return &m.detailRows[m.detailCursor]
+}
+
+// startLiftSessionPrompt opens the new-branch text input for the lift flow
+// and snapshots the source session (PID, window) so later cursor moves can't
+// invalidate the target.
+func (m Model) startLiftSessionPrompt(row *detailRow) (tea.Model, tea.Cmd) {
+	if row == nil || row.session == nil {
+		return m, nil
+	}
+	pid := 0
+	window := ""
+	if row.session.IsLive {
+		// Recover the live PID by matching SessionID against LiveSessions().
+		// RecentSession itself only carries IsLive/SessionID; the PID + pane
+		// window live on the live-session record.
+		if live, err := m.claude.LiveSessions(); err == nil {
+			for i := range live {
+				if live[i].SessionID == row.session.SessionID {
+					pid = live[i].PID
+					break
+				}
+			}
+		}
+		window = row.tmuxWindow
+	}
+	m.liftSessionSessionID = row.session.SessionID
+	m.liftSessionSourcePath = row.path
+	m.liftSessionSourcePID = pid
+	m.liftSessionSourceWindow = window
+
+	ti := textinput.New()
+	ti.Placeholder = "new branch name"
+	ti.Focus()
+	ti.CharLimit = 128
+	ti.Width = 40
+	m.liftSessionInput = &ti
+	return m, textinput.Blink
+}
+
+// decideLiftDirty runs after the user submits a branch name. If the source
+// is dirty, we open the [s]/[l]/[n] menu; otherwise we run the lift directly.
+func (m Model) decideLiftDirty(newBranch string) (tea.Model, tea.Cmd) {
+	m.pendingLiftBranch = newBranch
+	dirty, err := project.IsDirty(m.liftSessionSourcePath)
+	if err != nil {
+		// Surface the error and bail — don't press on with an uncertain state.
+		cmd := func() tea.Msg {
+			return statusMsgEvent(fmt.Sprintf("Lift failed: %v", err))
+		}
+		m.clearLiftSessionState()
+		return m, cmd
+	}
+	if dirty {
+		m.pendingLiftDirtyActive = true
+		return m, nil
+	}
+	cmd := m.runLiftSession(false)
+	return m, cmd
+}
+
+// runLiftSession hands control to the ops adapter with the captured source
+// info and the user's stash-or-leave decision.
+func (m Model) runLiftSession(stashAndPop bool) tea.Cmd {
+	return m.liftSessionToWorktree(
+		m.liftSessionSessionID,
+		m.liftSessionSourcePath,
+		m.liftSessionSourceWindow,
+		m.liftSessionSourcePID,
+		m.pendingLiftBranch,
+		stashAndPop,
+	)
+}
+
+// clearLiftSessionState resets every field touched by the lift flow so a
+// fresh invocation starts from a clean slate.
+func (m *Model) clearLiftSessionState() {
+	m.liftSessionInput = nil
+	m.liftSessionSessionID = ""
+	m.liftSessionSourcePath = ""
+	m.liftSessionSourcePID = 0
+	m.liftSessionSourceWindow = ""
+	m.pendingLiftDirtyActive = false
+	m.pendingLiftBranch = ""
 }
 
 // resumeBranchSmart picks the most natural action for the given branch:

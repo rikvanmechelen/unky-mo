@@ -187,7 +187,25 @@ func CheckoutInMain(projectPath, branch string) error {
 // the user can find it later with `git stash list`.
 func StashMain(projectPath, branch string) error {
 	msg := fmt.Sprintf("unky-mo: before switching to %s", branch)
-	cmd := exec.Command("git", "-C", projectPath, "stash", "push", "-u", "-m", msg)
+	return Stash(projectPath, msg)
+}
+
+// Stash runs `git stash push -u -m <msg>` at path. Returns nil when there
+// were no local changes — git exits 0 with a "No local changes to save"
+// notice, which is expected for callers that opt in without pre-checking.
+func Stash(path, msg string) error {
+	cmd := exec.Command("git", "-C", path, "stash", "push", "-u", "-m", msg)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// StashPop runs `git stash pop` at path. Errors carry git's stderr verbatim
+// so conflict messages can be surfaced to the user.
+func StashPop(path string) error {
+	cmd := exec.Command("git", "-C", path, "stash", "pop")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))

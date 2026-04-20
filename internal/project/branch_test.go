@@ -156,6 +156,80 @@ func TestListBranchesDetectsRemoteGone(t *testing.T) {
 	}
 }
 
+func TestStashAndStashPopRoundTrip(t *testing.T) {
+	repo := newGitRepo(t)
+	// Dirty the repo.
+	if err := writeFile(repo+"/a.txt", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "add", "a.txt")
+	if err := writeFile(repo+"/b.txt", "world"); err != nil {
+		t.Fatal(err)
+	}
+
+	dirty, _ := IsDirty(repo)
+	if !dirty {
+		t.Fatal("repo should be dirty before stash")
+	}
+	if err := Stash(repo, "mo test"); err != nil {
+		t.Fatalf("Stash: %v", err)
+	}
+	dirty, _ = IsDirty(repo)
+	if dirty {
+		t.Error("repo should be clean after stash")
+	}
+
+	// Pop in the same repo — round-trip should restore dirtiness.
+	if err := StashPop(repo); err != nil {
+		t.Fatalf("StashPop: %v", err)
+	}
+	dirty, _ = IsDirty(repo)
+	if !dirty {
+		t.Error("repo should be dirty after stash pop")
+	}
+}
+
+func TestStashNoChangesIsSilent(t *testing.T) {
+	repo := newGitRepo(t)
+	// Clean repo, nothing to stash. Stash should not error.
+	if err := Stash(repo, "mo test"); err != nil {
+		t.Errorf("Stash on clean repo should be a no-op, got %v", err)
+	}
+}
+
+func TestStashPopAcrossWorktrees(t *testing.T) {
+	// The lift-session flow stashes in the source path and pops in a different
+	// worktree of the same repo. Git's stash is shared across worktrees, so
+	// this should work.
+	repo := newGitRepo(t)
+	// Dirty the main checkout.
+	if err := writeFile(repo+"/lifted.txt", "carry me"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Stash(repo, "mo lift target"); err != nil {
+		t.Fatalf("Stash: %v", err)
+	}
+	// Clean in main now.
+	dirty, _ := IsDirty(repo)
+	if dirty {
+		t.Fatal("main should be clean after stash")
+	}
+	// Create a worktree and pop there.
+	wtPath := repo + "-target"
+	gitRun(t, repo, "worktree", "add", "-b", "target", wtPath)
+	if err := StashPop(wtPath); err != nil {
+		t.Fatalf("StashPop in worktree: %v", err)
+	}
+	dirty, _ = IsDirty(wtPath)
+	if !dirty {
+		t.Error("worktree should be dirty after pop")
+	}
+	dirty, _ = IsDirty(repo)
+	if dirty {
+		t.Error("main should remain clean after pop in worktree")
+	}
+}
+
 func TestListBranchesAnnotatesWorktrees(t *testing.T) {
 	repo := newGitRepo(t)
 	gitRun(t, repo, "branch", "wt-branch")
