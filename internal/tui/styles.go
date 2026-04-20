@@ -9,7 +9,7 @@ var (
 	colorSuccess   = lipgloss.Color("#34D399") // brighter green
 	colorWarning   = lipgloss.Color("#FBBF24") // brighter yellow
 	colorDanger    = lipgloss.Color("#F87171") // brighter red
-	colorMuted     = lipgloss.Color("#6B7280") // subtle but legible gray
+	colorMuted     = lipgloss.Color("#7C8694") // subtle but legible gray
 	colorWhite     = lipgloss.Color("#F3F4F6")
 	colorBg        = lipgloss.Color("#14191E")
 	colorInfo      = lipgloss.Color("#60A5FA") // blue-400 — external / informational

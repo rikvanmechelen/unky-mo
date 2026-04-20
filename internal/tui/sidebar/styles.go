@@ -8,7 +8,7 @@ var (
 	colorSuccess = lipgloss.Color("#34D399")
 	colorWarning = lipgloss.Color("#FBBF24")
 	colorDanger  = lipgloss.Color("#F87171")
-	colorMuted   = lipgloss.Color("#6B7280")
+	colorMuted   = lipgloss.Color("#7C8694")
 	colorWhite   = lipgloss.Color("#F3F4F6")
 	colorDim     = lipgloss.Color("#9CA3AF")
 	colorInfo    = lipgloss.Color("#60A5FA")
