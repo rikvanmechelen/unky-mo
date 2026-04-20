@@ -724,6 +724,23 @@ func syncCmd() *cobra.Command {
 	listSyncCmd.Flags().Bool("no-pull", false, "skip git pull; list only what's already in the local sync clone")
 	cmd.AddCommand(listSyncCmd)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "repair-names",
+		Short: "Fix sessions pushed with bracket-suffixed window names",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := moSync.RepairNames(syncDir)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				fmt.Println("No sessions needed repair")
+			} else {
+				fmt.Printf("Repaired %d session(s)\n", n)
+			}
+			return nil
+		},
+	})
+
 	return cmd
 }
 

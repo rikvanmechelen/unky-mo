@@ -1054,8 +1054,9 @@ func (m *Model) refreshSyncStatus() {
 	if err != nil {
 		return
 	}
+	syncName := m.syncProjectName()
 	for _, s := range sessions {
-		if s.ProjectName == m.windowName {
+		if s.ProjectName == syncName {
 			// Found a synced session — check if local JSONL is newer
 			localDir := m.claude.ProjectsDirForPath(m.windowPath)
 			localPath := localDir + "/" + s.SessionID + ".jsonl"
@@ -1072,6 +1073,20 @@ func (m *Model) refreshSyncStatus() {
 			return
 		}
 	}
+}
+
+// syncProjectName extracts the canonical sync project name from the tmux
+// window name, stripping any suffix (session title or sibling ordinal).
+// For worktree windows ("project@branch [title]") returns "project@branch".
+func (m Model) syncProjectName() string {
+	project, branch, _, ok := ttmux.ParseWindowName(m.windowName)
+	if !ok {
+		return m.windowName
+	}
+	if branch != "" {
+		return project + "@" + branch
+	}
+	return project
 }
 
 func (m Model) selectedItem() *SidebarItem {
@@ -1514,10 +1529,11 @@ func (m Model) syncPush() tea.Cmd {
 			return sidebarStatusMsg("no live session to sync")
 		}
 		syncDir := moSync.DefaultSyncDir()
-		if err := moSync.Push(m.windowName, m.windowPath, syncDir, live.SessionID); err != nil {
+		syncName := m.syncProjectName()
+		if err := moSync.Push(syncName, m.windowPath, syncDir, live.SessionID); err != nil {
 			return sidebarStatusMsg(fmt.Sprintf("sync err: %v", err))
 		}
-		return sidebarStatusMsg("synced " + m.windowName)
+		return sidebarStatusMsg("synced " + syncName)
 	}
 }
 

@@ -380,6 +380,114 @@ func Migrate(syncDir string) (int, error) {
 	return migrated, nil
 }
 
+// RepairNames scans the sync repo for sessions whose ProjectName contains a
+// bracket suffix (e.g. "foo [bar]") left from a bug where the sidebar pushed
+// the tmux window name instead of the bare project name. For each one it
+// re-encrypts the metadata with the stripped name, moves the directory to the
+// correct DirHash, and removes the old directory. Returns the number of
+// repaired sessions.
+func RepairNames(syncDir string) (int, error) {
+	if err := ensureRepo(syncDir); err != nil {
+		return 0, err
+	}
+	key, err := LoadKey()
+	if err != nil {
+		return 0, err
+	}
+	if err := gitRun(syncDir, "pull"); err != nil {
+		return 0, fmt.Errorf("git pull: %w", err)
+	}
+
+	entries, err := os.ReadDir(syncDir)
+	if err != nil {
+		return 0, err
+	}
+
+	repaired := 0
+	for _, e := range entries {
+		if !e.IsDir() || !IsDirHash(e.Name()) {
+			continue
+		}
+		oldHash := e.Name()
+		projectDir := filepath.Join(syncDir, oldHash)
+		migrateUUIDPrefixed(projectDir)
+
+		meta, err := readMeta(key, projectDir, oldHash)
+		if err != nil {
+			continue
+		}
+
+		// Check if the project name contains a bracket suffix.
+		bracketIdx := strings.LastIndex(meta.ProjectName, " [")
+		if bracketIdx < 0 || !strings.HasSuffix(meta.ProjectName, "]") {
+			continue
+		}
+		cleanName := meta.ProjectName[:bracketIdx]
+		newHash := DirHash(key, cleanName)
+		if newHash == oldHash {
+			continue // already correct
+		}
+
+		// Decrypt the session file so we can re-encrypt with new AD.
+		sessionSrc := filepath.Join(projectDir, sessionFilename)
+		tmpJSONL := filepath.Join(syncDir, ".repair-tmp.jsonl")
+		if err := DecryptFile(key, sessionSrc, tmpJSONL, adSession(oldHash)); err != nil {
+			fmt.Fprintf(os.Stderr, "skipping %s (%s): decrypt session: %v\n", oldHash, meta.ProjectName, err)
+			continue
+		}
+
+		// Create new directory and re-encrypt with correct DirHash.
+		newDir := filepath.Join(syncDir, newHash)
+		if err := os.MkdirAll(newDir, 0755); err != nil {
+			os.Remove(tmpJSONL)
+			return repaired, err
+		}
+		if err := EncryptFile(key, tmpJSONL, filepath.Join(newDir, sessionFilename), adSession(newHash)); err != nil {
+			os.Remove(tmpJSONL)
+			return repaired, fmt.Errorf("encrypt session %s: %w", cleanName, err)
+		}
+		os.Remove(tmpJSONL)
+
+		// Write corrected metadata.
+		meta.ProjectName = cleanName
+		metaBytes, err := json.Marshal(meta)
+		if err != nil {
+			return repaired, err
+		}
+		envelope, err := Encrypt(key, metaBytes, adMeta(newHash))
+		if err != nil {
+			return repaired, fmt.Errorf("encrypt meta %s: %w", cleanName, err)
+		}
+		if err := os.WriteFile(filepath.Join(newDir, metaFilename), envelope, 0644); err != nil {
+			return repaired, err
+		}
+
+		// Remove old directory.
+		if err := os.RemoveAll(projectDir); err != nil {
+			return repaired, err
+		}
+
+		fmt.Printf("  %q → %q\n", meta.ProjectName+" [...]", cleanName)
+		repaired++
+	}
+
+	if repaired == 0 {
+		return 0, nil
+	}
+	if err := gitRun(syncDir, "add", "-A"); err != nil {
+		return repaired, fmt.Errorf("git add: %w", err)
+	}
+	if err := gitRun(syncDir, "commit", "-m", "sync: repair bracket-suffixed project names"); err != nil {
+		if !strings.Contains(err.Error(), "nothing to commit") {
+			return repaired, fmt.Errorf("git commit: %w", err)
+		}
+	}
+	if err := gitRun(syncDir, "push"); err != nil {
+		return repaired, fmt.Errorf("git push: %w", err)
+	}
+	return repaired, nil
+}
+
 func readMeta(key Key, projectDir, dirHash string) (*SessionMeta, error) {
 	envelope, err := os.ReadFile(filepath.Join(projectDir, metaFilename))
 	if err != nil {
@@ -445,19 +553,28 @@ func readAllMeta(key Key, syncDir string) ([]SessionMeta, error) {
 	if err != nil {
 		return nil, err
 	}
+	anyMigrated := false
 	var out []SessionMeta
 	for _, e := range entries {
 		if !e.IsDir() || !IsDirHash(e.Name()) {
 			continue
 		}
 		projectDir := filepath.Join(syncDir, e.Name())
-		migrateUUIDPrefixed(projectDir)
+		if migrateUUIDPrefixed(projectDir) {
+			anyMigrated = true
+		}
 		meta, err := readMeta(key, projectDir, e.Name())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", e.Name(), err)
 			continue
 		}
 		out = append(out, *meta)
+	}
+	if anyMigrated {
+		// Stage + commit the renames so subsequent git-pull doesn't fail
+		// on a dirty working tree.
+		_ = gitRun(syncDir, "add", "-A")
+		_ = gitRun(syncDir, "commit", "-m", "sync: migrate UUID-prefixed filenames")
 	}
 	return out, nil
 }

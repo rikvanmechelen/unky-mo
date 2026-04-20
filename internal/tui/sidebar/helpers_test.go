@@ -143,6 +143,29 @@ func TestTermSessionScopedPerWindow(t *testing.T) {
 	}
 }
 
+func TestSyncProjectName(t *testing.T) {
+	cases := []struct {
+		name       string
+		windowName string
+		want       string
+	}{
+		{"bare project", "moma-chatbot", "moma-chatbot"},
+		{"with session title", "moma-chatbot [setup-scaffold]", "moma-chatbot"},
+		{"with ordinal", "moma-chatbot [2]", "moma-chatbot"},
+		{"worktree bare", "unky-mo@feat-auth", "unky-mo@feat-auth"},
+		{"worktree with suffix", "unky-mo@feat-auth [debug-oauth]", "unky-mo@feat-auth"},
+		{"empty falls back", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := Model{windowName: c.windowName}
+			if got := m.syncProjectName(); got != c.want {
+				t.Errorf("syncProjectName() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestRenderFileTreeRespectsMaxLines(t *testing.T) {
 	files := []string{}
 	for i := 0; i < 20; i++ {

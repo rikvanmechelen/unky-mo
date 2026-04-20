@@ -78,6 +78,24 @@ func TestSwitchToSelectedHomeStillTargetsWindow0(t *testing.T) {
 	m.switchToSelected()()
 }
 
+// Regression: syncPush and refreshSyncStatus used m.windowName directly as the
+// sync project name. When the window was renamed (e.g. "/rename wip" → "alpha [wip]"),
+// the bracket suffix leaked into the DirHash, making pull impossible. Fixed by
+// introducing syncProjectName() which strips the suffix via ParseWindowName.
+func TestSyncProjectNameSurvivesWindowRename(t *testing.T) {
+	// Simulate: window was "alpha", user renamed to "alpha [wip]".
+	m := Model{windowName: "alpha [wip]"}
+	if got := m.syncProjectName(); got != "alpha" {
+		t.Errorf("syncProjectName() = %q after rename, want %q", got, "alpha")
+	}
+
+	// Worktree variant: "unky-mo@feat [debug]" → "unky-mo@feat".
+	m.windowName = "unky-mo@feat [debug]"
+	if got := m.syncProjectName(); got != "unky-mo@feat" {
+		t.Errorf("syncProjectName() = %q, want %q", got, "unky-mo@feat")
+	}
+}
+
 func TestSwitchToSelectedNoTargetForBlankRow(t *testing.T) {
 	// A row with neither IsHome nor WindowID nor WindowName should no-op.
 	ctrl := gomock.NewController(t)
