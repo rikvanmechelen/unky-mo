@@ -1536,30 +1536,56 @@ func (m *Model) pruneOrphanedTermSessions() {
 	}
 }
 
-// orphanedTermSessions returns the mo-terms-<N> session names in sessions
-// whose numeric suffix doesn't correspond to any window ID (@N) in
-// windows. Extracted for testability — pure function over strings/windows.
-// Only digit-suffix sessions are considered; anything else (user-created
-// sessions that happen to share the prefix, fallback windowName-based
-// names from unit tests) is left alone.
+// orphanedTermSessions returns mo-terms-* session names whose suffix
+// doesn't correspond to any live window. Handles two naming conventions:
+//   - mo-terms-<N> (digit suffix) — legacy, keyed on window ID @N
+//   - mo-terms-<hex12> (12-char hex) — instance-ID-based (new)
+//
+// Extracted for testability — pure function over strings/windows.
 func orphanedTermSessions(sessions []string, windows []ttmux.Window) []string {
-	liveSuffix := make(map[string]bool, len(windows))
+	liveWindowID := make(map[string]bool, len(windows))
+	liveInstanceID := make(map[string]bool, len(windows))
 	for _, w := range windows {
 		if w.ID != "" {
-			liveSuffix[strings.TrimPrefix(w.ID, "@")] = true
+			liveWindowID[strings.TrimPrefix(w.ID, "@")] = true
+		}
+		if w.InstanceID != "" {
+			liveInstanceID[w.InstanceID] = true
 		}
 	}
 	var orphans []string
 	for _, s := range sessions {
 		suffix, ok := strings.CutPrefix(s, "mo-terms-")
-		if !ok || suffix == "" || !allDigits(suffix) {
+		if !ok || suffix == "" {
 			continue
 		}
-		if !liveSuffix[suffix] {
-			orphans = append(orphans, s)
+		if allDigits(suffix) {
+			// Legacy digit-suffix: paired with window @N.
+			if !liveWindowID[suffix] {
+				orphans = append(orphans, s)
+			}
+		} else if isHex12(suffix) {
+			// Instance-ID-based: paired with @mo_instance_id.
+			if !liveInstanceID[suffix] {
+				orphans = append(orphans, s)
+			}
 		}
+		// Other suffixes (windowName-based, etc.) are left alone.
 	}
 	return orphans
+}
+
+// isHex12 returns true if s is exactly 12 lowercase hex characters.
+func isHex12(s string) bool {
+	if len(s) != 12 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func allDigits(s string) bool {
@@ -2003,6 +2029,7 @@ type sessionView struct {
 	Parent      string        // parent project name for worktree/sibling grouping; "" otherwise
 	WindowName  string        // real tmux window name from sessionToWindowMap; composed fallback if unresolved
 	WindowID    string        // stable tmux window id (e.g. "@5"); empty when window couldn't be resolved
+	InstanceID  string        // mo-generated instance ID (from @mo_instance_id window option); empty for pre-refactor windows
 	Index       int           // 0 bare, 2+ ordinal, -1 custom-title (for ordering siblings)
 	Status      SessionStatus // raw status from poll (notif overrides applied in updateProjectStatuses)
 	Section     string        // "projects" | "external"
@@ -2124,6 +2151,7 @@ func (m Model) refreshSessions() tea.Cmd {
 			if w, ok := windowBySession[s.SessionID]; ok {
 				v.WindowName = w.Name
 				v.WindowID = w.ID
+				v.InstanceID = w.InstanceID
 			} else {
 				v.WindowName = composeFallbackWindow(v)
 			}
@@ -2553,6 +2581,7 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 		Path:       v.CWD,
 		WindowName: v.WindowName,
 		WindowID:   v.WindowID,
+		InstanceID: v.InstanceID,
 		Status:     statusToString(v.Status),
 		Section:    v.Section,
 		SessionID:  v.SessionID,
@@ -3170,13 +3199,31 @@ func (m Model) restartSidebars() {
 	if err != nil {
 		return
 	}
+	moBin := m.ops.MoBinaryPath
+	sidebarWidth := m.ops.SidebarWidth
+	if sidebarWidth <= 0 {
+		sidebarWidth = 42
+	}
 	for _, w := range windows {
 		if w.Index == "0" {
 			continue // skip the TUI window itself
 		}
-		target := fmt.Sprintf("%s:%s.1", m.tmux.SessionName(), w.Index)
-		// tmux key-name M-C-r = alt+ctrl+r; the sidebar's handler execs the new binary.
-		m.tmux.SendRawKeys(target, "M-C-r")
+		if moBin != "" && w.InstanceID != "" {
+			// New path: kill the sidebar pane and respawn with the instance ID.
+			// The mo-terms parking session outlives the sidebar, so terminals
+			// survive the restart.
+			target := fmt.Sprintf("%s:%s", m.tmux.SessionName(), w.Index)
+			sidebarCmd := fmt.Sprintf("%s sidebar --instance-id=%s", moBin, w.InstanceID)
+			_ = m.tmux.KillPane(target + ".1")
+			if _, err := m.tmux.SplitWindow(target, sidebarWidth, w.CWD, sidebarCmd); err == nil {
+				_ = m.tmux.SelectPane(target + ".0")
+			}
+		} else {
+			// Legacy fallback: send alt+ctrl+r to the sidebar pane so its
+			// handler execs the new binary.
+			target := fmt.Sprintf("%s:%s.1", m.tmux.SessionName(), w.Index)
+			m.tmux.SendRawKeys(target, "M-C-r")
+		}
 	}
 }
 

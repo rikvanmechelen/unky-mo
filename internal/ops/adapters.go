@@ -42,6 +42,7 @@ func (a *tmuxClientAdapter) CreateWindow(name, cwd string) (string, error) {
 	return a.c.CreateWindow(name, cwd)
 }
 func (a *tmuxClientAdapter) DetachClient() error              { return a.c.DetachClient() }
+func (a *tmuxClientAdapter) KillPane(paneID string) error     { return a.c.KillPane(paneID) }
 func (a *tmuxClientAdapter) KillSession(name string) error    { return a.c.KillSession(name) }
 func (a *tmuxClientAdapter) KillWindow(target string) error   { return a.c.KillWindow(target) }
 func (a *tmuxClientAdapter) ListSessions() ([]string, error)  { return a.c.ListSessions() }
@@ -62,6 +63,9 @@ func (a *tmuxClientAdapter) SendRawKeys(target, keys string) error {
 }
 func (a *tmuxClientAdapter) SetWindowHook(target, hookName, command string) {
 	a.c.SetWindowHook(target, hookName, command)
+}
+func (a *tmuxClientAdapter) SetWindowOption(target, option, value string) error {
+	return a.c.SetWindowOption(target, option, value)
 }
 func (a *tmuxClientAdapter) SplitWindow(target string, cols int, cwd, command string) (string, error) {
 	return a.c.SplitWindow(target, cols, cwd, command)

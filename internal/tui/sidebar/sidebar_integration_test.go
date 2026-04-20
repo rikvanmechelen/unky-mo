@@ -249,7 +249,7 @@ func TestIntegrationWindowIDStableAcrossRename(t *testing.T) {
 		WindowName: "alpha",
 		WindowID:   alphaID,
 	}
-	if !itemMatchesOwnWindow(item, alphaID, "alpha [wip]") {
+	if !itemMatchesOwnWindow(item, "", alphaID, "alpha [wip]") {
 		t.Errorf("itemMatchesOwnWindow should match by WindowID after rename")
 	}
 }

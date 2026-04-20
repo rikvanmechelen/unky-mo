@@ -800,7 +800,8 @@ func debugCmd() *cobra.Command {
 }
 
 func sidebarCmd() *cobra.Command {
-	return &cobra.Command{
+	var instanceID string
+	cmd := &cobra.Command{
 		Use:    "sidebar",
 		Short:  "Run the session status sidebar (used in tmux panes)",
 		Hidden: true, // Internal command, launched automatically
@@ -819,9 +820,15 @@ func sidebarCmd() *cobra.Command {
 				session = cfg.TmuxSession
 			}
 
-			return sidebar.Run(session, cfg.StateFilePath)
+			return sidebar.RunWithOpts(sidebar.RunOpts{
+				SessionName: session,
+				StateFile:   cfg.StateFilePath,
+				InstanceID:  instanceID,
+			})
 		},
 	}
+	cmd.Flags().StringVar(&instanceID, "instance-id", "", "Mo-generated instance ID for this window")
+	return cmd
 }
 
 func hooksCmd() *cobra.Command {

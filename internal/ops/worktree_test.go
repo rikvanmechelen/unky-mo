@@ -122,6 +122,7 @@ func TestCreateWorktreeAndLaunchHappyPath(t *testing.T) {
 	tmux.EXPECT().WindowExists("alpha@feat").Return(false)
 	// LaunchSession ceremony.
 	tmux.EXPECT().CreateWindow("alpha@feat", gomock.Any()).Return("mo:alpha@feat", nil)
+	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude").Return(nil)
 	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())

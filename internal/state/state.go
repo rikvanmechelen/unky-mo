@@ -20,8 +20,9 @@ type ProjectState struct {
 	Section    string `json:"section,omitempty"`    // "projects" (default) or "external" — for stray-session grouping
 	Branch     string `json:"branch,omitempty"`     // git branch (populated for git-backed strays)
 	Dirty      int    `json:"dirty,omitempty"`      // dirty file count (populated for git-backed strays)
-	SessionID  string `json:"session_id,omitempty"` // Claude session ID running in this window (empty if none)
-	Index      int    `json:"index,omitempty"`      // 0 = primary, 2+ = sibling ordinal; for stable sort
+	SessionID  string `json:"session_id,omitempty"`  // Claude session ID running in this window (empty if none)
+	InstanceID string `json:"instance_id,omitempty"` // mo-generated instance ID (from @mo_instance_id window option)
+	Index      int    `json:"index,omitempty"`       // 0 = primary, 2+ = sibling ordinal; for stable sort
 }
 
 // StateFile is the shared state written by the main TUI and read by sidebar instances.

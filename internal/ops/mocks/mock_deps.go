@@ -70,6 +70,20 @@ func (mr *MockTmuxClientMockRecorder) DetachClient() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DetachClient", reflect.TypeOf((*MockTmuxClient)(nil).DetachClient))
 }
 
+// KillPane mocks base method.
+func (m *MockTmuxClient) KillPane(paneID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "KillPane", paneID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// KillPane indicates an expected call of KillPane.
+func (mr *MockTmuxClientMockRecorder) KillPane(paneID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KillPane", reflect.TypeOf((*MockTmuxClient)(nil).KillPane), paneID)
+}
+
 // KillSession mocks base method.
 func (m *MockTmuxClient) KillSession(name string) error {
 	m.ctrl.T.Helper()
@@ -238,6 +252,20 @@ func (m *MockTmuxClient) SetWindowHook(target, hookName, command string) {
 func (mr *MockTmuxClientMockRecorder) SetWindowHook(target, hookName, command any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetWindowHook", reflect.TypeOf((*MockTmuxClient)(nil).SetWindowHook), target, hookName, command)
+}
+
+// SetWindowOption mocks base method.
+func (m *MockTmuxClient) SetWindowOption(target, option, value string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetWindowOption", target, option, value)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetWindowOption indicates an expected call of SetWindowOption.
+func (mr *MockTmuxClientMockRecorder) SetWindowOption(target, option, value any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetWindowOption", reflect.TypeOf((*MockTmuxClient)(nil).SetWindowOption), target, option, value)
 }
 
 // SplitWindow mocks base method.

@@ -36,6 +36,7 @@ type TmuxClient interface {
 	SessionName() string
 	CreateWindow(name, cwd string) (string, error)
 	DetachClient() error
+	KillPane(paneID string) error
 	KillSession(name string) error
 	KillWindow(target string) error
 	ListSessions() ([]string, error)
@@ -47,6 +48,7 @@ type TmuxClient interface {
 	SendKeys(target, keys string) error
 	SendRawKeys(target, keys string) error
 	SetWindowHook(target, hookName, command string)
+	SetWindowOption(target, option, value string) error
 	SplitWindow(target string, cols int, cwd, command string) (string, error)
 	SwitchToWindow(target string) error
 	WindowExists(name string) bool

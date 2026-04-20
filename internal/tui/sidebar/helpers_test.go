@@ -3,6 +3,8 @@ package sidebar
 import (
 	"strings"
 	"testing"
+
+	"github.com/rvanmech/unky-mo/internal/claude"
 )
 
 func TestRenderDotKnownStatuses(t *testing.T) {
@@ -163,6 +165,65 @@ func TestSyncProjectName(t *testing.T) {
 				t.Errorf("syncProjectName() = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// Phase A2: Characterization tests for pickOwnSession — the core
+// disambiguation logic extracted from ownWindowSession.
+
+func TestPickOwnSession_SingleCandidate(t *testing.T) {
+	candidates := []claude.Session{{PID: 100, SessionID: "s1"}}
+	// With a single candidate and no pane PIDs, returns it directly.
+	got := pickOwnSession(candidates, nil, func(int, map[int]bool) bool { return false })
+	if got == nil || got.SessionID != "s1" {
+		t.Errorf("single candidate should return it, got %v", got)
+	}
+}
+
+func TestPickOwnSession_TwoSiblings_PicksPaneDescendant(t *testing.T) {
+	candidates := []claude.Session{
+		{PID: 100, SessionID: "s1"},
+		{PID: 200, SessionID: "s2"},
+	}
+	panePIDs := map[int]bool{50: true, 51: true}
+	// Only PID 200 descends from the pane tree.
+	isDescendant := func(pid int, hosts map[int]bool) bool {
+		return pid == 200
+	}
+	got := pickOwnSession(candidates, panePIDs, isDescendant)
+	if got == nil || got.SessionID != "s2" {
+		t.Errorf("should pick s2 (PID 200 is descendant), got %v", got)
+	}
+}
+
+func TestPickOwnSession_NoMatchingDescendant_ReturnsFirst(t *testing.T) {
+	candidates := []claude.Session{
+		{PID: 100, SessionID: "s1"},
+		{PID: 200, SessionID: "s2"},
+	}
+	panePIDs := map[int]bool{50: true}
+	// Neither PID descends from the pane tree.
+	isDescendant := func(pid int, hosts map[int]bool) bool {
+		return false
+	}
+	got := pickOwnSession(candidates, panePIDs, isDescendant)
+	if got == nil || got.SessionID != "s1" {
+		t.Errorf("no match should fall back to first candidate, got %v", got)
+	}
+}
+
+func TestPickOwnSession_FirstCandidateIsDescendant(t *testing.T) {
+	candidates := []claude.Session{
+		{PID: 100, SessionID: "s1"},
+		{PID: 200, SessionID: "s2"},
+	}
+	panePIDs := map[int]bool{50: true}
+	isDescendant := func(pid int, hosts map[int]bool) bool {
+		return pid == 100
+	}
+	got := pickOwnSession(candidates, panePIDs, isDescendant)
+	if got == nil || got.SessionID != "s1" {
+		t.Errorf("should pick s1, got %v", got)
 	}
 }
 

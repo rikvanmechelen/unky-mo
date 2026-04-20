@@ -21,6 +21,7 @@ type SidebarItem struct {
 	Path       string // project directory path
 	WindowName string // tmux window target; empty for Home (window 0)
 	WindowID   string // stable tmux window id (e.g. "@5"); empty when unresolved
+	InstanceID string // mo-generated instance ID; empty for pre-refactor rows
 	Status     string // "none", "active", "idle", "permission", "external"
 	Parent     string // non-empty for worktree entries (parent project name)
 	Section    string // "projects" (default) or "external" — groups stray sessions
@@ -63,6 +64,7 @@ type Model struct {
 	windowName string
 	windowID   string // stable tmux window id (e.g. "@5"); survives renames
 	windowPath string
+	instanceID string // mo-generated instance ID (from --instance-id flag); the primary key for binding sidebar+terminals
 	width      int
 	height     int
 	// Terminal drawer state
@@ -349,7 +351,7 @@ func (m Model) View() tea.View {
 			line = cursor + homeStyle.Render(name)
 		} else {
 			dot := renderDot(item.Status)
-			isCurrent := itemMatchesOwnWindow(item, m.windowID, m.windowName)
+			isCurrent := itemMatchesOwnWindow(item, m.instanceID, m.windowID, m.windowName)
 
 			// Worktree entries are indented under their parent project
 			indent := ""
@@ -658,11 +660,14 @@ func resolveOwnWindowName() string {
 }
 
 // itemMatchesOwnWindow decides whether a sidebar row belongs to the sidebar's
-// own tmux window. WindowID is the stable key — preferred when both sides
-// populate it — and WindowName is the fallback for cold state rows (placeholder
-// StatusNone entries and sessions still mid-launch, where no window id is
-// resolved yet).
-func itemMatchesOwnWindow(item SidebarItem, ownID, ownName string) bool {
+// own tmux window. InstanceID is the strongest key — when both sidebar and
+// row have it, match on that alone. Fallback to WindowID (stable tmux @N),
+// then WindowName for cold state rows (placeholder StatusNone entries and
+// sessions still mid-launch).
+func itemMatchesOwnWindow(item SidebarItem, ownInstanceID, ownID, ownName string) bool {
+	if ownInstanceID != "" && item.InstanceID != "" {
+		return item.InstanceID == ownInstanceID
+	}
 	if ownID != "" && item.WindowID != "" {
 		return item.WindowID == ownID
 	}
@@ -726,6 +731,7 @@ func (m *Model) refreshState() {
 			Path:       p.Path,
 			WindowName: p.WindowName,
 			WindowID:   p.WindowID,
+			InstanceID: p.InstanceID,
 			Status:     p.Status,
 			Parent:     p.Parent,
 			Section:    p.Section,
@@ -747,8 +753,8 @@ func (m *Model) refreshState() {
 	m.items = items
 	m.usage = sf.Usage
 	m.sessionTokens = 0
-	if live := m.ownWindowSession(); live != nil {
-		jsonl := filepath.Join(m.claude.ProjectsDirForPath(m.windowPath), live.SessionID+".jsonl")
+	if sid := m.ownSessionID(sf); sid != "" {
+		jsonl := filepath.Join(m.claude.ProjectsDirForPath(m.windowPath), sid+".jsonl")
 		m.sessionTokens = usage.SessionTokens(jsonl)
 	}
 	m.refreshTerminals()
@@ -760,7 +766,7 @@ func (m *Model) refreshState() {
 	// Set cursor to own project on first load only
 	if !m.cursorSetOnce {
 		for i, item := range m.items {
-			if itemMatchesOwnWindow(item, m.windowID, m.windowName) {
+			if itemMatchesOwnWindow(item, m.instanceID, m.windowID, m.windowName) {
 				m.cursor = i
 				break
 			}
@@ -771,6 +777,25 @@ func (m *Model) refreshState() {
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1
 	}
+}
+
+// ownSessionID returns the Claude session ID for this sidebar's own window.
+// When the instance ID is set, it looks up the matching state file row
+// directly — no PID descent needed. Falls back to ownWindowSession for
+// pre-refactor windows or stale state.
+func (m *Model) ownSessionID(sf *state.StateFile) string {
+	if m.instanceID != "" && sf != nil {
+		for _, p := range sf.Projects {
+			if p.InstanceID == m.instanceID {
+				return p.SessionID
+			}
+		}
+	}
+	// Fallback: PID-descent discovery for pre-refactor windows.
+	if live := m.ownWindowSession(); live != nil {
+		return live.SessionID
+	}
+	return ""
 }
 
 // ownWindowSession returns the Claude session running in this sidebar's own
@@ -793,8 +818,15 @@ func (m *Model) ownWindowSession() *claude.Session {
 	if err != nil || len(panePIDs) == 0 {
 		return &candidates[0]
 	}
+	return pickOwnSession(candidates, panePIDs, m.claude.IsDescendantOf)
+}
+
+// pickOwnSession selects the session whose PID is a descendant of one of the
+// window's pane PIDs. Falls back to the first candidate if no descendant
+// match is found. Extracted from ownWindowSession for testability.
+func pickOwnSession(candidates []claude.Session, panePIDs map[int]bool, isDescendant func(int, map[int]bool) bool) *claude.Session {
 	for i := range candidates {
-		if m.claude.IsDescendantOf(candidates[i].PID, panePIDs) {
+		if isDescendant(candidates[i].PID, panePIDs) {
 			return &candidates[i]
 		}
 	}
@@ -1302,11 +1334,14 @@ func (m *Model) closeTerminal() tea.Cmd {
 // termSession returns the mo-terms session name scoped to this sidebar's
 // window. Each project window gets its own parking session so terminals
 // opened from one window (via `t` or backtick) don't leak into other
-// windows' drawers or backtick popups. Keyed on windowID (stable tmux
-// "@N") when available, falling back to a sanitized windowName, and
-// finally to the bare global name for unit tests that don't set either.
+// windows' drawers or backtick popups. Prefers instanceID (the mo-generated
+// hex key), falling back to windowID (stable tmux "@N") for pre-refactor
+// windows, then sanitized windowName, and finally the bare global name for
+// unit tests that don't set any.
 func (m Model) termSession() string {
 	switch {
+	case m.instanceID != "":
+		return ttmux.MoTermsSession + "-" + m.instanceID
 	case m.windowID != "":
 		return ttmux.MoTermsSession + "-" + strings.TrimPrefix(m.windowID, "@")
 	case m.windowName != "":

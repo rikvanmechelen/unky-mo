@@ -9,21 +9,22 @@ import "testing"
 
 func TestItemMatchesOwnWindowPrefersID(t *testing.T) {
 	cases := []struct {
-		name     string
-		item     SidebarItem
-		ownID    string
-		ownName  string
-		want     bool
+		name          string
+		item          SidebarItem
+		ownInstanceID string
+		ownID         string
+		ownName       string
+		want          bool
 	}{
 		{
-			name:    "matching ids → match even if names differ",
+			name:    "matching window ids → match even if names differ",
 			item:    SidebarItem{WindowName: "alpha", WindowID: "@5"},
 			ownID:   "@5",
-			ownName: "alpha [wip]", // renamed live; the stale name diverges
+			ownName: "alpha [wip]",
 			want:    true,
 		},
 		{
-			name:    "mismatched ids → no match even if names match",
+			name:    "mismatched window ids → no match even if names match",
 			item:    SidebarItem{WindowName: "alpha", WindowID: "@7"},
 			ownID:   "@5",
 			ownName: "alpha",
@@ -32,14 +33,12 @@ func TestItemMatchesOwnWindowPrefersID(t *testing.T) {
 		{
 			name:    "id unresolved on both sides → fall back to name match",
 			item:    SidebarItem{WindowName: "alpha"},
-			ownID:   "",
 			ownName: "alpha",
 			want:    true,
 		},
 		{
 			name:    "id on row only → fall back to name match on row",
 			item:    SidebarItem{WindowName: "alpha", WindowID: "@9"},
-			ownID:   "",
 			ownName: "alpha",
 			want:    true,
 		},
@@ -53,17 +52,40 @@ func TestItemMatchesOwnWindowPrefersID(t *testing.T) {
 		{
 			name:    "no id, different names → no match",
 			item:    SidebarItem{WindowName: "alpha"},
-			ownID:   "",
 			ownName: "beta",
 			want:    false,
+		},
+		{
+			name:          "instance ID match → strongest key",
+			item:          SidebarItem{WindowName: "beta", WindowID: "@7", InstanceID: "a1b2c3d4e5f6"},
+			ownInstanceID: "a1b2c3d4e5f6",
+			ownID:         "@5",
+			ownName:       "alpha",
+			want:          true,
+		},
+		{
+			name:          "instance ID mismatch → no match even if window id matches",
+			item:          SidebarItem{WindowName: "alpha", WindowID: "@5", InstanceID: "aabbccddeeff"},
+			ownInstanceID: "a1b2c3d4e5f6",
+			ownID:         "@5",
+			ownName:       "alpha",
+			want:          false,
+		},
+		{
+			name:          "instance ID on sidebar only → fall back to window id",
+			item:          SidebarItem{WindowName: "alpha", WindowID: "@5"},
+			ownInstanceID: "a1b2c3d4e5f6",
+			ownID:         "@5",
+			ownName:       "alpha",
+			want:          true,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := itemMatchesOwnWindow(tc.item, tc.ownID, tc.ownName)
+			got := itemMatchesOwnWindow(tc.item, tc.ownInstanceID, tc.ownID, tc.ownName)
 			if got != tc.want {
-				t.Errorf("itemMatchesOwnWindow(%+v, %q, %q) = %v, want %v",
-					tc.item, tc.ownID, tc.ownName, got, tc.want)
+				t.Errorf("itemMatchesOwnWindow(%+v, %q, %q, %q) = %v, want %v",
+					tc.item, tc.ownInstanceID, tc.ownID, tc.ownName, got, tc.want)
 			}
 		})
 	}

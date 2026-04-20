@@ -19,6 +19,7 @@ func TestLaunchSiblingPicksNextOrdinal(t *testing.T) {
 	}, nil)
 	// From there ops.LaunchSibling should call LaunchSession with window "alpha [3]".
 	tmux.EXPECT().CreateWindow("alpha [3]", "/ws/alpha").Return("mo:alpha [3]", nil)
+	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude").Return(nil)
 	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
@@ -43,6 +44,7 @@ func TestLaunchSiblingPassesResumeCommand(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 	tmux.EXPECT().ListWindows().Return(nil, nil)
 	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:alpha [2]", nil)
+	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude --resume sess-abc").Return(nil)
 	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
@@ -94,6 +96,7 @@ func TestParkAndLaunchKillsPrimaryWindowFirst(t *testing.T) {
 	tmux.EXPECT().KillWindow("mo:alpha").Return(nil)
 	// Then LaunchSession ceremony.
 	tmux.EXPECT().CreateWindow("alpha", "/ws/alpha").Return("mo:alpha", nil)
+	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude").Return(nil)
 	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())

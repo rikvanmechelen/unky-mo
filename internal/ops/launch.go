@@ -1,6 +1,10 @@
 package ops
 
-import "fmt"
+import (
+	"fmt"
+
+	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
+)
 
 // LaunchParams controls LaunchSession behaviour.
 type LaunchParams struct {
@@ -19,6 +23,7 @@ type LaunchParams struct {
 type LaunchResult struct {
 	Target       string // "session:window"
 	ClaudePaneID string // "%N" — useful for the pane-exited hook + tests
+	InstanceID   string // mo-generated instance ID stored as @mo_instance_id window option
 	SwitchedTo   bool   // true when SwitchFocus was requested and tmux switched
 }
 
@@ -46,6 +51,14 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 	}
 	res := &LaunchResult{Target: target}
 
+	// Generate and set the instance ID — a stable key for binding sidebar,
+	// terminals, and state file rows to this window. Stored as a tmux window
+	// user-option so it survives renames and is readable via ListWindows.
+	instanceID := ttmux.GenerateInstanceID()
+	if err := ctx.Tmux.SetWindowOption(target, "@mo_instance_id", instanceID); err == nil {
+		res.InstanceID = instanceID
+	}
+
 	// Capture the claude pane ID before we split off the sidebar — once the
 	// split happens, .0 is still the claude pane but grabbing the ID early
 	// makes the pane-exited hook bulletproof.
@@ -71,7 +84,7 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 		if width <= 0 {
 			width = 42
 		}
-		sidebarCmd := fmt.Sprintf("%s sidebar", ctx.MoBinaryPath)
+		sidebarCmd := fmt.Sprintf("%s sidebar --instance-id=%s", ctx.MoBinaryPath, instanceID)
 		if _, err := ctx.Tmux.SplitWindow(target, width, p.Cwd, sidebarCmd); err == nil {
 			// Refocus to the main (left) pane so the claude pane is foregrounded.
 			_ = ctx.Tmux.SelectPane(target + ".0")

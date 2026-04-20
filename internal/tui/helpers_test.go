@@ -9,21 +9,24 @@ import (
 
 func TestOrphanedTermSessions(t *testing.T) {
 	windows := []ttmux.Window{
-		{ID: "@5", Name: "moma-apps-rails"},
-		{ID: "@17", Name: "unky-mo [extra-terminal]"},
+		{ID: "@5", Name: "moma-apps-rails", InstanceID: "a1b2c3d4e5f6"},
+		{ID: "@17", Name: "unky-mo [extra-terminal]", InstanceID: "deadbeef0123"},
 	}
 	sessions := []string{
-		"mo",                // not a mo-terms session, ignored
-		"mo-terms-5",        // paired with @5 → keep
-		"mo-terms-17",       // paired with @17 → keep
-		"mo-terms-14",       // no paired window → orphan
-		"mo-terms-1",        // no paired window → orphan
-		"mo-terms-alpha",    // non-digit suffix, left alone
-		"mo-terms",          // empty suffix, ignored
-		"some-other-server", // unrelated, ignored
+		"mo",                       // not a mo-terms session, ignored
+		"mo-terms-5",               // paired with @5 → keep
+		"mo-terms-17",              // paired with @17 → keep
+		"mo-terms-14",              // no paired window → orphan
+		"mo-terms-1",               // no paired window → orphan
+		"mo-terms-a1b2c3d4e5f6",   // paired with window's instanceID → keep
+		"mo-terms-deadbeef0123",    // paired with window's instanceID → keep
+		"mo-terms-aabbccddeeff",    // no paired instance ID → orphan
+		"mo-terms-alpha",           // non-hex non-digit suffix, left alone
+		"mo-terms",                 // empty suffix, ignored
+		"some-other-server",        // unrelated, ignored
 	}
 	got := orphanedTermSessions(sessions, windows)
-	want := []string{"mo-terms-14", "mo-terms-1"}
+	want := []string{"mo-terms-14", "mo-terms-1", "mo-terms-aabbccddeeff"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -42,6 +45,55 @@ func TestOrphanedTermSessionsEmptyInputs(t *testing.T) {
 	got := orphanedTermSessions([]string{"mo-terms-1", "mo-terms-2"}, nil)
 	if len(got) != 2 {
 		t.Errorf("expected 2 orphans with no live windows, got %v", got)
+	}
+}
+
+// Phase A7: Additional orphan pruning characterization tests.
+
+func TestOrphanedTermSessionsNonHexNonDigitLeftAlone(t *testing.T) {
+	// Suffixes that are neither all-digits nor 12-char hex are left alone
+	// (e.g. windowName-based fallback from unit tests).
+	sessions := []string{
+		"mo-terms-alpha",         // not digits, not hex12 → left alone
+		"mo-terms-a1b2c3d4e5f6", // hex12 — matched against live instance IDs
+		"mo-terms-5",             // digit — window @5 is alive
+	}
+	windows := []ttmux.Window{{ID: "@5", InstanceID: "a1b2c3d4e5f6"}}
+	got := orphanedTermSessions(sessions, windows)
+	if len(got) != 0 {
+		t.Errorf("alive digit + alive hex12 + non-matching suffix should produce no orphans, got %v", got)
+	}
+}
+
+func TestOrphanedTermSessionsAllWindowsAlive(t *testing.T) {
+	sessions := []string{"mo-terms-1", "mo-terms-2", "mo-terms-3"}
+	windows := []ttmux.Window{
+		{ID: "@1"}, {ID: "@2"}, {ID: "@3"},
+	}
+	got := orphanedTermSessions(sessions, windows)
+	if len(got) != 0 {
+		t.Errorf("all windows alive should produce no orphans, got %v", got)
+	}
+}
+
+func TestOrphanedTermSessionsMultiDigitID(t *testing.T) {
+	// Window @17 has a multi-digit ID — ensure the suffix matching works.
+	sessions := []string{"mo-terms-17", "mo-terms-170"}
+	windows := []ttmux.Window{{ID: "@17"}}
+	got := orphanedTermSessions(sessions, windows)
+	if len(got) != 1 || got[0] != "mo-terms-170" {
+		t.Errorf("want [mo-terms-170], got %v", got)
+	}
+}
+
+func TestOrphanedTermSessionsWindowWithEmptyID(t *testing.T) {
+	// Windows without IDs (shouldn't happen in practice) are skipped
+	// gracefully — they don't match any suffix.
+	sessions := []string{"mo-terms-1"}
+	windows := []ttmux.Window{{ID: "", Name: "alpha"}}
+	got := orphanedTermSessions(sessions, windows)
+	if len(got) != 1 || got[0] != "mo-terms-1" {
+		t.Errorf("want [mo-terms-1], got %v", got)
 	}
 }
 
