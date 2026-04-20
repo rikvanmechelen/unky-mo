@@ -17,7 +17,7 @@ type keyMap struct {
 	Checkout         key.Binding
 	Help             key.Binding
 	Refresh          key.Binding // "ctrl+r" — force-refresh in-process state (sessions, branches, state file)
-	Restart          key.Binding // physical ctrl+alt+r (Bubbletea string "alt+ctrl+r") — exec freshly-installed binary + restart sidebars
+	Restart          key.Binding // ctrl+alt+r or ctrl+cmd+r — exec freshly-installed binary + restart sidebars
 	Suspend          key.Binding // "s" — suspend (tmux detach-client); session keeps running
 	Cleanup          key.Binding // "x" — remove the worktree / branch under cursor
 	Quit             key.Binding
@@ -81,11 +81,9 @@ var keys = keyMap{
 		key.WithHelp("ctrl+r", "refresh"),
 	),
 	Restart: key.NewBinding(
-		// Bubbletea stringifies the key as "alt+ctrl+r" (alt prefix
-		// always comes first in Key.String()), even though the user presses
-		// physical ctrl+alt+r. Match that canonical form; render the
-		// human-friendly "ctrl+alt+r" in help text.
-		key.WithKeys("alt+ctrl+r"),
+		// Bubbletea v2 modifier order: ctrl, alt, shift, meta, hyper, super.
+		// "super" is the Command key on macOS.
+		key.WithKeys("ctrl+alt+r", "ctrl+super+r"),
 		key.WithHelp("ctrl+alt+r", "restart"),
 	),
 	Suspend: key.NewBinding(

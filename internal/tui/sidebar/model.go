@@ -271,9 +271,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Force an immediate state refresh instead of waiting for the 1s tick.
 			m.refreshState()
 			return m, func() tea.Msg { return sidebarStatusMsg("Refreshed") }
-		case "alt+ctrl+r":
-			// Bubbletea stringifies physical ctrl+alt+r as "alt+ctrl+r".
+		case "ctrl+alt+r", "ctrl+super+r":
 			// Restart the sidebar process so it picks up a freshly-installed binary.
+			// "super" is the Command key on macOS.
 			self, err := os.Executable()
 			if err == nil {
 				return m, tea.ExecProcess(exec.Command(self, "sidebar"), nil)
