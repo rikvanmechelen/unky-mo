@@ -562,14 +562,40 @@ func syncCmd() *cobra.Command {
 				return err
 			}
 
-			meta, err := moSync.Pull(args[0], projectPath, syncDir)
+			all, err := moSync.List(syncDir)
 			if err != nil {
 				return err
 			}
+			var forProject []moSync.SessionMeta
+			for _, s := range all {
+				if s.ProjectName == args[0] {
+					forProject = append(forProject, s)
+				}
+			}
+			if len(forProject) == 0 {
+				return fmt.Errorf("no synced sessions for %s", args[0])
+			}
 
-			fmt.Printf("Pulled session %q (%s) from %s\n", meta.Title, meta.SessionID[:8], meta.Hostname)
+			var newest *moSync.SessionMeta
+			for i := range forProject {
+				s := &forProject[i]
+				meta, err := moSync.Pull(args[0], s.SessionID, projectPath, syncDir)
+				if err != nil {
+					fmt.Printf("  %s (%s)  error: %v\n", s.Title, s.SessionID[:8], err)
+					continue
+				}
+				fmt.Printf("  %s (%s)  from %s\n", meta.Title, meta.SessionID[:8], meta.Hostname)
+				if newest == nil || meta.PushedAt.After(newest.PushedAt) {
+					cp := *meta
+					newest = &cp
+				}
+			}
+			if newest == nil {
+				return fmt.Errorf("no sessions could be pulled for %s", args[0])
+			}
+			fmt.Printf("\nPulled %d session(s); resuming newest %q\n", len(forProject), newest.Title)
 
-			// Open tmux window and resume
+			// Open tmux window and resume the newest session.
 			tc := tmux.NewClient(cfg.TmuxSession)
 			if err := tc.EnsureSession(); err != nil {
 				return fmt.Errorf("creating tmux session: %w", err)
@@ -586,7 +612,7 @@ func syncCmd() *cobra.Command {
 				return fmt.Errorf("creating window: %w", err)
 			}
 
-			resumeCmd := fmt.Sprintf("exec claude --resume %s", meta.SessionID)
+			resumeCmd := fmt.Sprintf("exec claude --resume %s", newest.SessionID)
 			if err := tc.SendKeys(target, resumeCmd); err != nil {
 				return fmt.Errorf("resuming session: %w", err)
 			}

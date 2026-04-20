@@ -85,7 +85,6 @@ A single project or worktree can host more than one Claude session. The first se
 - **Status attribution**: the 5s poll (`refreshSessions`) emits one `sessionView` per live session with its own `Status`; `updateProjectStatuses` applies `notifState[sessionID]` overrides and stashes the slice on `m.sessionViews`. Both the dashboard and the state file iterate that slice, so every session — primary, sibling, renamed primary, worktree sibling — carries its own status. `notifState` is keyed by session ID so a permission prompt on one sibling never colors its neighbor.
 - **Primary window resolver**: since primaries can now be renamed too, flows that need to act on "the current primary" (`n` menu, `a` attach, `r` resume) call `primaryWindowForTarget(project, branch, cwd)` — it picks the oldest live session at the target and looks up its real window name via `sessionToWindowMap`. Never compose a primary window name from `(project, branch)` alone without this check, or renamed windows won't be found.
 - **Detail-view `enter`**: `detailRow.tmuxWindow` is populated from that map so selecting a live session lands in its real window instead of recomputing `project@branch`.
-- **Sync caveat (known gap)**: `internal/sync/sync.go` hashes the project name to a single directory — pushing a second session for the same project overwrites the first. Multi-session sync is not yet implemented.
 
 ## Cleanup (worktree + branch removal)
 
@@ -196,9 +195,8 @@ A **stray** is a live Claude session whose CWD doesn't map to any known project 
 Per-machine encrypted session sync via a private git repo. **Client never pushes plaintext.**
 
 - **Crypto**: AES-256-GCM for session data + HMAC-SHA256 for directory keying. Key file at `~/.config/unky-mo/sync.key` (32 raw bytes, base64-encoded on disk); `UNKY_MO_SYNC_KEY` env var overrides. See `internal/sync/crypto.go`.
-- **Repo layout**: each project name is HMAC-SHA256'd (with the `"unky-mo-dir-v1:"` prefix) to a 32-char hex directory. Each directory holds exactly two files: `session.enc` (encrypted JSONL) and `meta.enc` (encrypted `SessionMeta` JSON). No plaintext anywhere.
-- **Public API**: `IsConfigured`, `Init(url)` (`git clone`), `Push(projectName, projectPath, syncDir, sessionID)`, `Pull(projectName, localProjectPath, syncDir)`, `PullAll`, `List`, `ListLocal`, `DefaultSyncDir`.
-- **Known multi-session gap**: project name hashes to **one** directory, so pushing a second session for the same project **overwrites** the first. Multi-session sync is not yet implemented — track when extending `Push` / the hash key to include session ID.
+- **Repo layout**: each project name is HMAC-SHA256'd (with the `"unky-mo-dir-v1:"` prefix) to a 32-char hex directory. Inside each directory, every session has its own pair: `<sessionID>.meta.enc` (encrypted `SessionMeta` JSON) and `<sessionID>.session.enc` (encrypted JSONL). Legacy bare `meta.enc` / `session.enc` pairs from the pre-multi-session layout are still read as a fallback and auto-renamed into the prefixed scheme on the next `Push`. `mo sync migrate` performs the same rename across all project dirs on demand. No plaintext anywhere.
+- **Public API**: `IsConfigured`, `Init(url)` (`git clone`), `Push(projectName, projectPath, syncDir, sessionID)`, `Pull(projectName, sessionID, localProjectPath, syncDir)` (empty `sessionID` picks the newest), `PullAll`, `List`, `ListLocal`, `Migrate`, `DefaultSyncDir`.
 
 ## Usage (`internal/usage/`)
 

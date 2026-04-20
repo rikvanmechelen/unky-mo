@@ -1054,23 +1054,35 @@ func (m *Model) refreshSyncStatus() {
 	if err != nil {
 		return
 	}
+	// Multiple sessions per project may be synced. Aggregate across all
+	// matches: any local JSONL newer than its remote counterpart flips the
+	// whole window to stale; otherwise as long as one entry matched we
+	// report synced. Stale wins over synced.
+	localDir := m.claude.ProjectsDirForPath(m.windowPath)
+	anyMatch := false
+	anyStale := false
 	for _, s := range sessions {
-		if s.ProjectName == m.windowName {
-			// Found a synced session — check if local JSONL is newer
-			localDir := m.claude.ProjectsDirForPath(m.windowPath)
-			localPath := localDir + "/" + s.SessionID + ".jsonl"
-			info, err := os.Stat(localPath)
-			if err != nil {
-				m.syncStatus = "stale"
-				return
-			}
-			if info.ModTime().After(s.PushedAt) {
-				m.syncStatus = "stale"
-			} else {
-				m.syncStatus = "synced"
-			}
-			return
+		if s.ProjectName != m.windowName {
+			continue
 		}
+		anyMatch = true
+		localPath := localDir + "/" + s.SessionID + ".jsonl"
+		info, err := os.Stat(localPath)
+		if err != nil {
+			anyStale = true
+			continue
+		}
+		if info.ModTime().After(s.PushedAt) {
+			anyStale = true
+		}
+	}
+	if !anyMatch {
+		return
+	}
+	if anyStale {
+		m.syncStatus = "stale"
+	} else {
+		m.syncStatus = "synced"
 	}
 }
 

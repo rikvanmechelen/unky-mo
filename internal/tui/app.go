@@ -3320,7 +3320,7 @@ func (m Model) autoSyncPull(projectName, projectPath string) tea.Cmd {
 			localDir := m.claude.ProjectsDirForPath(localPath)
 			jsonlPath := filepath.Join(localDir, s.SessionID+".jsonl")
 			if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-				if _, err := moSync.Pull(s.ProjectName, localPath, syncDir); err != nil {
+				if _, err := moSync.Pull(s.ProjectName, s.SessionID, localPath, syncDir); err != nil {
 					if result.err == nil {
 						result.err = fmt.Errorf("%s: %w", s.ProjectName, err)
 					}
@@ -3597,7 +3597,7 @@ func (m Model) pullRemoteSessionAndLaunch(branch string, meta moSync.SessionMeta
 			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
 		}
 		syncDir := moSync.DefaultSyncDir()
-		if _, err := moSync.Pull(meta.ProjectName, wtPath, syncDir); err != nil {
+		if _, err := moSync.Pull(meta.ProjectName, meta.SessionID, wtPath, syncDir); err != nil {
 			return statusMsgEvent(fmt.Sprintf("Pull failed: %v", err))
 		}
 		windowName := p.Name + "@" + branch

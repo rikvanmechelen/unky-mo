@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,9 +26,20 @@ type SessionMeta struct {
 }
 
 const (
-	metaFilename    = "meta.enc"
-	sessionFilename = "session.enc"
+	// Legacy single-session filenames. Readers still accept them as a fallback
+	// when no per-session files exist; writers auto-migrate them on push.
+	legacyMetaFilename    = "meta.enc"
+	legacySessionFilename = "session.enc"
+
+	metaSuffix    = ".meta.enc"
+	sessionSuffix = ".session.enc"
 )
+
+// sessionMetaFilename returns the per-session meta filename for a session ID.
+func sessionMetaFilename(sessionID string) string { return sessionID + metaSuffix }
+
+// sessionBlobFilename returns the per-session encrypted JSONL filename for a session ID.
+func sessionBlobFilename(sessionID string) string { return sessionID + sessionSuffix }
 
 // DefaultSyncDir returns the default path for the sync repo.
 func DefaultSyncDir() string {
@@ -67,6 +79,12 @@ func Init(repoURL, syncDir string) error {
 // and pushes. sessionID must match a JSONL file in the project's Claude
 // sessions directory — callers are responsible for resolving which session
 // they mean (live session for the window, an explicit --session flag, etc.).
+//
+// Multiple sessions per project coexist: each session is written as
+// <sessionID>.meta.enc / <sessionID>.session.enc inside the project's hashed
+// directory. Pushing a new session never disturbs blobs belonging to its
+// siblings. Legacy bare meta.enc / session.enc pairs are auto-migrated into
+// the prefixed layout on first push.
 func Push(projectName, projectPath, syncDir, sessionID string) error {
 	if sessionID == "" {
 		return fmt.Errorf("session id required")
@@ -91,7 +109,16 @@ func Push(projectName, projectPath, syncDir, sessionID string) error {
 		return err
 	}
 
-	if err := EncryptFile(key, srcJSONL, filepath.Join(projectDir, sessionFilename), adSession(dirHash)); err != nil {
+	// Auto-migrate any legacy bare meta.enc / session.enc pair before writing
+	// the new session. Never destroys siblings — only touches the bare pair.
+	if err := migrateLegacyPairInDir(key, projectDir, dirHash, sessionID); err != nil {
+		return fmt.Errorf("migrate legacy layout: %w", err)
+	}
+
+	metaPath := filepath.Join(projectDir, sessionMetaFilename(sessionID))
+	blobPath := filepath.Join(projectDir, sessionBlobFilename(sessionID))
+
+	if err := EncryptFile(key, srcJSONL, blobPath, adSession(dirHash)); err != nil {
 		return fmt.Errorf("encrypt session: %w", err)
 	}
 
@@ -111,18 +138,8 @@ func Push(projectName, projectPath, syncDir, sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("encrypt meta: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, metaFilename), envelope, 0644); err != nil {
+	if err := os.WriteFile(metaPath, envelope, 0644); err != nil {
 		return err
-	}
-
-	// Remove any stray files (legacy plaintext, old session IDs) inside this
-	// project's directory — only the two encrypted files should remain.
-	entries, _ := os.ReadDir(projectDir)
-	for _, e := range entries {
-		if e.Name() == metaFilename || e.Name() == sessionFilename {
-			continue
-		}
-		os.Remove(filepath.Join(projectDir, e.Name()))
 	}
 
 	// Generic commit message so the commit log doesn't leak project names.
@@ -144,7 +161,11 @@ func Push(projectName, projectPath, syncDir, sessionID string) error {
 
 // Pull fetches a project's session from the sync repo and copies it into the
 // local Claude projects directory for localProjectPath.
-func Pull(projectName, localProjectPath, syncDir string) (*SessionMeta, error) {
+//
+// sessionID picks a specific session; if empty, the newest session (by
+// PushedAt) is returned. Works against both the per-session layout and the
+// legacy single-session layout.
+func Pull(projectName, sessionID, localProjectPath, syncDir string) (*SessionMeta, error) {
 	if err := ensureRepo(syncDir); err != nil {
 		return nil, err
 	}
@@ -162,17 +183,18 @@ func Pull(projectName, localProjectPath, syncDir string) (*SessionMeta, error) {
 		return nil, fmt.Errorf("no synced session for %s", projectName)
 	}
 
-	meta, err := readMeta(key, projectDir, dirHash)
+	meta, metaPath, blobPath, err := resolveSession(key, projectDir, dirHash, sessionID)
 	if err != nil {
 		return nil, err
 	}
+	_ = metaPath
 
 	dstDir := claude.ProjectsDirForPath(localProjectPath)
 	if err := os.MkdirAll(dstDir, 0755); err != nil {
 		return nil, err
 	}
 	dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
-	if err := DecryptFile(key, filepath.Join(projectDir, sessionFilename), dstJSONL, adSession(dirHash)); err != nil {
+	if err := DecryptFile(key, blobPath, dstJSONL, adSession(dirHash)); err != nil {
 		return nil, fmt.Errorf("decrypt session: %w", err)
 	}
 	return meta, nil
@@ -242,38 +264,43 @@ func PullAll(syncDir string, resolve ProjectPathResolver) ([]PullResult, error) 
 			continue
 		}
 		projectDir := filepath.Join(syncDir, e.Name())
-		meta, err := readMeta(key, projectDir, e.Name())
+		metas, err := readAllMetaInDir(key, projectDir, e.Name())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", e.Name(), err)
 			continue
 		}
-		res := PullResult{Meta: *meta}
-		dstPath := resolve(meta.ProjectName)
-		if dstPath == "" {
-			res.Skipped = "no local repo"
+		for _, meta := range metas {
+			res := PullResult{Meta: meta}
+			dstPath := resolve(meta.ProjectName)
+			if dstPath == "" {
+				res.Skipped = "no local repo"
+				results = append(results, res)
+				continue
+			}
+			dstDir := claude.ProjectsDirForPath(dstPath)
+			if err := os.MkdirAll(dstDir, 0755); err != nil {
+				res.Skipped = fmt.Sprintf("mkdir: %v", err)
+				results = append(results, res)
+				continue
+			}
+			_, blobPath := sessionFilePaths(projectDir, meta.SessionID)
+			dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
+			if err := DecryptFile(key, blobPath, dstJSONL, adSession(e.Name())); err != nil {
+				res.Skipped = fmt.Sprintf("decrypt: %v", err)
+				results = append(results, res)
+				continue
+			}
+			res.Pulled = true
 			results = append(results, res)
-			continue
 		}
-		dstDir := claude.ProjectsDirForPath(dstPath)
-		if err := os.MkdirAll(dstDir, 0755); err != nil {
-			res.Skipped = fmt.Sprintf("mkdir: %v", err)
-			results = append(results, res)
-			continue
-		}
-		dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
-		if err := DecryptFile(key, filepath.Join(projectDir, sessionFilename), dstJSONL, adSession(e.Name())); err != nil {
-			res.Skipped = fmt.Sprintf("decrypt: %v", err)
-			results = append(results, res)
-			continue
-		}
-		res.Pulled = true
-		results = append(results, res)
 	}
 	return results, nil
 }
 
 // Migrate re-encrypts any legacy plaintext project directories in the sync
-// repo into the hashed/encrypted layout, commits, and pushes.
+// repo into the hashed/encrypted layout, and renames any bare meta.enc /
+// session.enc pairs into the per-session layout. Commits and pushes if any
+// change was made.
 func Migrate(syncDir string) (int, error) {
 	if err := ensureRepo(syncDir); err != nil {
 		return 0, err
@@ -293,7 +320,17 @@ func Migrate(syncDir string) (int, error) {
 
 	migrated := 0
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == ".git" || IsDirHash(e.Name()) {
+		if !e.IsDir() {
+			continue
+		}
+		if IsDirHash(e.Name()) {
+			// Rename legacy bare pair inside an already-hashed dir into the
+			// per-session layout. Pass empty pushingSessionID so the bare pair
+			// is only renamed (never deleted).
+			migrated += migrateLegacyPairInDirCounted(key, filepath.Join(syncDir, e.Name()), e.Name())
+			continue
+		}
+		if e.Name() == ".git" {
 			continue
 		}
 		oldDir := filepath.Join(syncDir, e.Name())
@@ -332,7 +369,8 @@ func Migrate(syncDir string) (int, error) {
 		if err := os.MkdirAll(newDir, 0755); err != nil {
 			return migrated, err
 		}
-		if err := EncryptFile(key, srcJSONL, filepath.Join(newDir, sessionFilename), adSession(dirHash)); err != nil {
+		// Write directly into the per-session layout.
+		if err := EncryptFile(key, srcJSONL, filepath.Join(newDir, sessionBlobFilename(legacy.SessionID)), adSession(dirHash)); err != nil {
 			return migrated, fmt.Errorf("encrypt %s: %w", legacy.ProjectName, err)
 		}
 		newMeta := SessionMeta{
@@ -350,7 +388,7 @@ func Migrate(syncDir string) (int, error) {
 		if err != nil {
 			return migrated, fmt.Errorf("encrypt meta %s: %w", legacy.ProjectName, err)
 		}
-		if err := os.WriteFile(filepath.Join(newDir, metaFilename), envelope, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(newDir, sessionMetaFilename(legacy.SessionID)), envelope, 0644); err != nil {
 			return migrated, err
 		}
 
@@ -380,8 +418,144 @@ func Migrate(syncDir string) (int, error) {
 	return migrated, nil
 }
 
-func readMeta(key Key, projectDir, dirHash string) (*SessionMeta, error) {
-	envelope, err := os.ReadFile(filepath.Join(projectDir, metaFilename))
+// sessionFilePaths returns (metaPath, blobPath) for a session ID in a project
+// dir, assuming the per-session layout. Does not check existence.
+func sessionFilePaths(projectDir, sessionID string) (string, string) {
+	return filepath.Join(projectDir, sessionMetaFilename(sessionID)),
+		filepath.Join(projectDir, sessionBlobFilename(sessionID))
+}
+
+// resolveSession locates the meta + blob file for a specific session in a
+// project dir. Falls back to the legacy bare pair when nothing matches.
+// sessionID == "" picks the newest session in the directory (by PushedAt).
+func resolveSession(key Key, projectDir, dirHash, sessionID string) (*SessionMeta, string, string, error) {
+	if sessionID != "" {
+		metaPath, blobPath := sessionFilePaths(projectDir, sessionID)
+		if _, err := os.Stat(metaPath); err == nil {
+			meta, err := readMetaFile(key, metaPath, dirHash)
+			if err != nil {
+				return nil, "", "", err
+			}
+			return meta, metaPath, blobPath, nil
+		}
+		// Fall through to legacy fallback — might be a pre-migration pair
+		// whose sessionID happens to match.
+		legacyMeta, legacyBlob := legacyPairPaths(projectDir)
+		if _, err := os.Stat(legacyMeta); err == nil {
+			meta, err := readMetaFile(key, legacyMeta, dirHash)
+			if err == nil && meta.SessionID == sessionID {
+				return meta, legacyMeta, legacyBlob, nil
+			}
+		}
+		return nil, "", "", fmt.Errorf("session %s not found", sessionID)
+	}
+
+	// sessionID empty: pick the newest.
+	metas, err := readAllMetaInDir(key, projectDir, dirHash)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if len(metas) == 0 {
+		return nil, "", "", fmt.Errorf("no sessions in %s", projectDir)
+	}
+	sort.Slice(metas, func(i, j int) bool {
+		return metas[i].PushedAt.After(metas[j].PushedAt)
+	})
+	newest := metas[0]
+	// Prefer per-session filenames; fall back to legacy.
+	metaPath, blobPath := sessionFilePaths(projectDir, newest.SessionID)
+	if _, err := os.Stat(metaPath); err != nil {
+		metaPath, blobPath = legacyPairPaths(projectDir)
+	}
+	return &newest, metaPath, blobPath, nil
+}
+
+func legacyPairPaths(projectDir string) (string, string) {
+	return filepath.Join(projectDir, legacyMetaFilename),
+		filepath.Join(projectDir, legacySessionFilename)
+}
+
+// migrateLegacyPairInDir renames a bare meta.enc / session.enc pair (if
+// present) into the per-session layout. If pushingSessionID matches the
+// legacy pair's SessionID, the pair is removed instead (the caller is about
+// to overwrite it with a fresh write). If the legacy meta can't be decrypted,
+// the pair is left untouched — better to preserve an opaque blob than
+// silently destroy it. Returns a non-nil error only on unexpected I/O
+// failures.
+func migrateLegacyPairInDir(key Key, projectDir, dirHash, pushingSessionID string) error {
+	metaPath, blobPath := legacyPairPaths(projectDir)
+	if _, err := os.Stat(metaPath); err != nil {
+		return nil // no legacy pair
+	}
+	legacyMeta, err := readMetaFile(key, metaPath, dirHash)
+	if err != nil {
+		// Undecryptable — leave it alone so a future Migrate/version can deal
+		// with it.
+		return nil
+	}
+	if legacyMeta.SessionID == "" {
+		return nil
+	}
+	if legacyMeta.SessionID == pushingSessionID {
+		// Caller is about to write a new pair for the same session; discard
+		// the legacy pair so we don't end up with both layouts pointing at
+		// the same id.
+		_ = os.Remove(metaPath)
+		_ = os.Remove(blobPath)
+		return nil
+	}
+	// Rename both files to the prefixed layout.
+	newMetaPath, newBlobPath := sessionFilePaths(projectDir, legacyMeta.SessionID)
+	// If the target already exists (both layouts present for the same id),
+	// prefer the prefixed one and drop the legacy pair.
+	if _, err := os.Stat(newMetaPath); err == nil {
+		_ = os.Remove(metaPath)
+		_ = os.Remove(blobPath)
+		return nil
+	}
+	if err := os.Rename(metaPath, newMetaPath); err != nil {
+		return err
+	}
+	if err := os.Rename(blobPath, newBlobPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateLegacyPairInDirCounted is the Migrate-side variant that returns 1
+// when a rename (or cleanup) happened, 0 otherwise. Errors are swallowed and
+// logged to stderr so one bad project doesn't abort the whole migration.
+func migrateLegacyPairInDirCounted(key Key, projectDir, dirHash string) int {
+	metaPath, _ := legacyPairPaths(projectDir)
+	if _, err := os.Stat(metaPath); err != nil {
+		return 0
+	}
+	before := 0
+	if entries, err := os.ReadDir(projectDir); err == nil {
+		for _, e := range entries {
+			if e.Name() == legacyMetaFilename || e.Name() == legacySessionFilename {
+				before++
+			}
+		}
+	}
+	if before == 0 {
+		return 0
+	}
+	if err := migrateLegacyPairInDir(key, projectDir, dirHash, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "migrate %s: %v\n", filepath.Base(projectDir), err)
+		return 0
+	}
+	// Verify the legacy files are gone.
+	if _, err := os.Stat(metaPath); err == nil {
+		// Legacy meta still present (e.g. undecryptable). Not counted.
+		return 0
+	}
+	return 1
+}
+
+// readMetaFile reads and decrypts one meta envelope at an explicit path.
+func readMetaFile(key Key, path, dirHash string) (*SessionMeta, error) {
+	envelope, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read meta: %w", err)
 	}
@@ -396,6 +570,53 @@ func readMeta(key Key, projectDir, dirHash string) (*SessionMeta, error) {
 	return &meta, nil
 }
 
+// readAllMetaInDir returns every SessionMeta in one project directory. When
+// the per-session layout holds at least one .meta.enc file, the legacy bare
+// pair is ignored (the legacy pair is just a pre-migration artifact the
+// sibling entry already covers, or an orphaned blob). When no per-session
+// files exist, a bare meta.enc is read as a single-session fallback.
+func readAllMetaInDir(key Key, projectDir, dirHash string) ([]SessionMeta, error) {
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	var out []SessionMeta
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, metaSuffix) {
+			continue
+		}
+		if name == legacyMetaFilename {
+			// Bare meta.enc is treated only as the legacy fallback (handled
+			// below); skip it here so it doesn't double-count.
+			continue
+		}
+		meta, err := readMetaFile(key, filepath.Join(projectDir, name), dirHash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skipping %s/%s: %v\n", filepath.Base(projectDir), name, err)
+			continue
+		}
+		out = append(out, *meta)
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	// Legacy fallback: no per-session files — try bare meta.enc.
+	legacyMeta, _ := legacyPairPaths(projectDir)
+	if _, err := os.Stat(legacyMeta); err == nil {
+		meta, err := readMetaFile(key, legacyMeta, dirHash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skipping %s/%s: %v\n", filepath.Base(projectDir), legacyMetaFilename, err)
+			return nil, nil
+		}
+		out = append(out, *meta)
+	}
+	return out, nil
+}
+
 func readAllMeta(key Key, syncDir string) ([]SessionMeta, error) {
 	entries, err := os.ReadDir(syncDir)
 	if err != nil {
@@ -406,12 +627,12 @@ func readAllMeta(key Key, syncDir string) ([]SessionMeta, error) {
 		if !e.IsDir() || !IsDirHash(e.Name()) {
 			continue
 		}
-		meta, err := readMeta(key, filepath.Join(syncDir, e.Name()), e.Name())
+		metas, err := readAllMetaInDir(key, filepath.Join(syncDir, e.Name()), e.Name())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", e.Name(), err)
 			continue
 		}
-		out = append(out, *meta)
+		out = append(out, metas...)
 	}
 	return out, nil
 }
@@ -431,4 +652,3 @@ func gitRun(dir string, args ...string) error {
 	}
 	return nil
 }
-
