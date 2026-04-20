@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/tickets"
@@ -419,7 +419,7 @@ func (m Model) handleTicketStartWorking() (Model, tea.Cmd) {
 // earlier in Update via the Back binding). Enter inside an active filter
 // confirms the filter (handled by the list itself); only enter with the
 // filter inactive / applied selects the highlighted project.
-func (m Model) handleTicketPickerActive(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleTicketPickerActive(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if msg.String() == "enter" && m.pickerList.FilterState() != list.Filtering {
 		picked := m.pickerSelectedProject()
 		if picked == "" {
@@ -437,7 +437,7 @@ func (m Model) handleTicketPickerActive(msg tea.KeyMsg) (Model, tea.Cmd) {
 // handleTicketPickerRemember handles keys on the remember-or-not prompt
 // after a pick. y = remember, o = just-this-once, n/esc = cancel back to
 // the picker. See CLAUDE.md → Prompt conventions.
-func (m Model) handleTicketPickerRemember(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleTicketPickerRemember(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	provider := m.pickerForProvider
 	jiraKey := m.pickerForJiraKey
 	pickedMo := m.pickerPendingMo

@@ -1,6 +1,6 @@
 package sidebar
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 var (
 	// Colors — same palette as main TUI, tuned for dark backgrounds (~#14191E)

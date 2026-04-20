@@ -105,7 +105,7 @@ Split the sidebar pane immediately (preserves current layout, no visual jump). B
 - On match: set `sessionID`, flip to `Ready`, trigger one full `refreshState`.
 
 **UI during Loading:**
-- Session row shows a spinner (`bubbles/spinner` is already a dep) + `resolving session…`.
+- Session row shows a spinner (`bubbles/v2/spinner` is already a dep) + `resolving session…`.
 - `T` key handler returns a transient status: `terminal unavailable until session resolved`.
 - Popup (`) also gated.
 - Footer shows `s syncing ·` dot as `·` (neutral) instead of session-dependent status.

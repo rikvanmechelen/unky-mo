@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
 	Enter            key.Binding
@@ -81,7 +81,7 @@ var keys = keyMap{
 		key.WithHelp("ctrl+r", "refresh"),
 	),
 	Restart: key.NewBinding(
-		// Bubbletea v1.3.10 stringifies the key as "alt+ctrl+r" (alt prefix
+		// Bubbletea stringifies the key as "alt+ctrl+r" (alt prefix
 		// always comes first in Key.String()), even though the user presses
 		// physical ctrl+alt+r. Match that canonical form; render the
 		// human-friendly "ctrl+alt+r" in help text.

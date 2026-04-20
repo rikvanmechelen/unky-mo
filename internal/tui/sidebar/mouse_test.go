@@ -3,7 +3,7 @@ package sidebar
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	mock_sidebar "github.com/rvanmech/unky-mo/internal/tui/sidebar/mocks"
 	"go.uber.org/mock/gomock"
@@ -14,11 +14,10 @@ import (
 // check state transitions, not what the click would do once dispatched.
 func sendMouseClick(t *testing.T, m Model, y int) (Model, tea.Cmd) {
 	t.Helper()
-	msg := tea.MouseMsg{
+	msg := tea.MouseClickMsg{
 		X:      0,
 		Y:      y,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
+		Button: tea.MouseLeft,
 	}
 	updated, cmd := m.Update(msg)
 	m2, ok := updated.(Model)
@@ -187,8 +186,8 @@ func TestMouseNonLeftButtonIgnored(t *testing.T) {
 	}
 	m := newMouseModel(items)
 
-	for _, btn := range []tea.MouseButton{tea.MouseButtonRight, tea.MouseButtonMiddle} {
-		msg := tea.MouseMsg{Y: 1, Button: btn, Action: tea.MouseActionPress}
+	for _, btn := range []tea.MouseButton{tea.MouseRight, tea.MouseMiddle} {
+		msg := tea.MouseClickMsg{Y: 1, Button: btn}
 		updated, cmd := m.Update(msg)
 		got, _ := updated.(Model)
 		if got.cursor != 0 {
@@ -200,7 +199,7 @@ func TestMouseNonLeftButtonIgnored(t *testing.T) {
 	}
 
 	// Motion event also ignored.
-	motion := tea.MouseMsg{Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion}
+	motion := tea.MouseMotionMsg{Y: 1, Button: tea.MouseLeft}
 	updated, cmd := m.Update(motion)
 	got, _ := updated.(Model)
 	if got.cursor != 0 {
@@ -220,7 +219,7 @@ func TestMouseReleaseIgnored(t *testing.T) {
 	m := newMouseModel(items)
 	m.cursor = 1
 
-	msg := tea.MouseMsg{Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
+	msg := tea.MouseReleaseMsg{Y: 1, Button: tea.MouseLeft}
 	updated, cmd := m.Update(msg)
 	got, _ := updated.(Model)
 

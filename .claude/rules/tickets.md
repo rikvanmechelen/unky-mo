@@ -77,4 +77,4 @@ The branch-flow helpers read `m.detailProject`, so `startWorkOnTicket` sets it b
 
 ## Project picker
 
-A `bubbles/list` model with a custom `pickerItem` wrapper (separate from `ProjectItem` so it doesn't need session-status machinery). Fuzzy filter is on by default. Activated via `startProjectPicker(provider, jiraKey)`. Key routing: while `pickerActive` is true, the main Update forwards keys to `updateProjectPicker` via `handleTicketPickerActive`, except `enter` which confirms the pick and flips to `pickerRememberActive`. `enter` inside an active filter falls through to the list so the filter can apply first.
+A `bubbles/v2/list` model with a custom `pickerItem` wrapper (separate from `ProjectItem` so it doesn't need session-status machinery). Fuzzy filter is on by default. Activated via `startProjectPicker(provider, jiraKey)`. Key routing: while `pickerActive` is true, the main Update forwards keys to `updateProjectPicker` via `handleTicketPickerActive`, except `enter` which confirms the pick and flips to `pickerRememberActive`. `enter` inside an active filter falls through to the list so the filter can apply first.

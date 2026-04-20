@@ -44,4 +44,4 @@ Sidebar bug regression tests gated by `//go:build sidebarregression` live in `in
 
 ## View() testing
 
-Full render paths (`View()` / `Update()` end-to-end with the `bubbles/list` component) are still not unit-tested — they require a list.Model populated from a slice of `list.Item`, which is expensive to set up. For those, keep extracting pure helpers (see `applyNotifOverrides` for the pattern) and test the helper rather than the whole Update branch. `internal/tui/helpers_test.go` + `internal/tui/sidebar/helpers_test.go` cover the already-extracted pure functions (status ranking, window-name parsing, file-tree rendering, etc.).
+Full render paths (`View()` / `Update()` end-to-end with the `bubbles/v2/list` component) are still not unit-tested — they require a list.Model populated from a slice of `list.Item`, which is expensive to set up. For those, keep extracting pure helpers (see `applyNotifOverrides` for the pattern) and test the helper rather than the whole Update branch. `internal/tui/helpers_test.go` + `internal/tui/sidebar/helpers_test.go` cover the already-extracted pure functions (status ranking, window-name parsing, file-tree rendering, etc.).

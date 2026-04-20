@@ -14,7 +14,7 @@ make install   # Build and install to ~/go/bin/mo
 
 ## Architecture
 
-- **Go + Bubbletea** TUI with charmbracelet ecosystem (lipgloss, bubbles)
+- **Go + Bubbletea v2** TUI with charmbracelet ecosystem (lipgloss v2, bubbles v2) — imports via `charm.land/*/v2`
 - **Cobra** CLI with subcommands
 - **tmux** session management — TUI runs as window 0, Claude sessions as sibling windows with sidebar panes
 - **Unix domain socket** at `/tmp/unky-mo.sock` for real-time notifications from Claude Code hooks

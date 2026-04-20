@@ -6,9 +6,9 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
 	"github.com/rvanmech/unky-mo/internal/project"
@@ -337,7 +337,7 @@ func TestWKeyOnSessionRowOpensLiftPrompt(t *testing.T) {
 		claude:       cr,
 		tmux:         tc,
 	}
-	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got, _ := m.Update(tea.KeyPressMsg{Code: 'w'})
 	mm := got.(Model)
 	if mm.liftSessionInput == nil {
 		t.Fatal("w on br-session row should open the lift input prompt")
@@ -360,7 +360,7 @@ func TestDirtyMenuLeaveKeyClearsState(t *testing.T) {
 		// No detailProject → the cmd runs but the adapter returns a status event;
 		// we're validating state transitions, not ops behavior.
 	}
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	got, cmd := m.Update(tea.KeyPressMsg{Code: 'l'})
 	mm := got.(Model)
 	if mm.pendingLiftDirtyActive {
 		t.Error("dirty menu should clear after `l`")
@@ -382,7 +382,7 @@ func TestDirtyMenuStashKeyClearsState(t *testing.T) {
 		liftSessionSessionID:   "s",
 		liftSessionSourcePath:  "/ws/alpha",
 	}
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	got, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
 	mm := got.(Model)
 	if mm.pendingLiftDirtyActive {
 		t.Error("dirty menu should clear after `s`")
@@ -400,7 +400,7 @@ func TestDirtyMenuCancelClearsState(t *testing.T) {
 		liftSessionSessionID:   "s",
 		liftSessionSourcePath:  "/ws/alpha",
 	}
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	got, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
 	mm := got.(Model)
 	if mm.pendingLiftDirtyActive {
 		t.Error("dirty menu should clear after `n`")
@@ -420,7 +420,7 @@ func TestLiftInputPromptEscCancels(t *testing.T) {
 		liftSessionSessionID:   "s",
 		liftSessionSourcePath:  "/ws/alpha",
 	}
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	mm := got.(Model)
 	if mm.liftSessionInput != nil {
 		t.Error("esc should clear liftSessionInput")

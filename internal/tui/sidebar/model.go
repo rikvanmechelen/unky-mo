@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/state"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
@@ -156,12 +156,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshState()
 		return m, stateTick()
 
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			return m.handleMouseClick(msg.Y)
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if m.focusSection == "files" {
@@ -286,9 +286,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.width == 0 {
-		return ""
+		return tea.NewView("")
 	}
 
 	var b strings.Builder
@@ -522,7 +522,9 @@ func (m Model) View() string {
 		b.WriteString(footerStyle.Render(" ^r refresh"))
 	}
 
-	return b.String()
+	v := tea.NewView(b.String())
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // renderSectionHeader renders "────── Label ──────" centered in width,
@@ -1429,13 +1431,11 @@ func (m *Model) refreshTerminals() {
 	}
 }
 
-// execWithMouseRestore wraps tea.ExecProcess so mouse mode is re-enabled
-// after the popup closes. bubbletea's RestoreTerminal (exercised by
-// ExecProcess) does not replay the mouse-tracking escape sequences, so
-// without this the sidebar silently stops receiving tea.MouseMsg events
-// until the process is restarted.
+// execWithMouseRestore wraps tea.ExecProcess. In bubbletea v2, mouse mode
+// is declarative (set in View()), so the next render cycle automatically
+// re-enables mouse tracking after the popup closes.
 func execWithMouseRestore(c *exec.Cmd, fn func(error) tea.Msg) tea.Cmd {
-	return tea.Sequence(tea.ExecProcess(c, fn), tea.EnableMouseCellMotion)
+	return tea.ExecProcess(c, fn)
 }
 
 func (m Model) showShellOutput(shell claude.ActiveShell) tea.Cmd {

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	gh "github.com/rvanmech/unky-mo/internal/github"
@@ -430,7 +430,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Clear sticky error messages on any keypress
 		if m.statusMsg != "" {
 			lower := strings.ToLower(m.statusMsg)
@@ -960,7 +960,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ti.Placeholder = "new branch name"
 				ti.Focus()
 				ti.CharLimit = 128
-				ti.Width = 40
+				ti.SetWidth(40)
 				m.worktreeInput = &ti
 				return m, textinput.Blink
 			}
@@ -1238,7 +1238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ticket → last session). Wraps within each section if tickets isn't
 		// rendered.
 		if !m.dashFocusLeft {
-			if msg, ok := msg.(tea.KeyMsg); ok {
+			if msg, ok := msg.(tea.KeyPressMsg); ok {
 				sess := len(m.dashSessionItems)
 				ticketsLen := 0
 				if m.ticketsShouldRender() {
@@ -1297,7 +1297,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
 	case ScreenProject:
-		if msg, ok := msg.(tea.KeyMsg); ok {
+		if msg, ok := msg.(tea.KeyPressMsg); ok {
 			switch msg.String() {
 			case "up", "k":
 				if m.detailFocusLeft {
@@ -1332,21 +1332,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	var content string
 	if !m.ready {
-		return "Loading..."
+		content = "Loading..."
+	} else {
+		switch m.screen {
+		case ScreenProject:
+			content = m.projectDetailView()
+		case ScreenHelp:
+			content = m.helpView()
+		case ScreenTicket:
+			content = m.renderTicketDetailScreen()
+		default:
+			content = m.dashboardView()
+		}
 	}
-
-	switch m.screen {
-	case ScreenProject:
-		return m.projectDetailView()
-	case ScreenHelp:
-		return m.helpView()
-	case ScreenTicket:
-		return m.renderTicketDetailScreen()
-	default:
-		return m.dashboardView()
-	}
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }
 
 // dashSessionItem represents an active session in the dashboard's right panel.
@@ -3855,7 +3859,7 @@ func (m Model) startLiftSessionPrompt(row *detailRow) (tea.Model, tea.Cmd) {
 	ti.Placeholder = "new branch name"
 	ti.Focus()
 	ti.CharLimit = 128
-	ti.Width = 40
+	ti.SetWidth(40)
 	m.liftSessionInput = &ti
 	return m, textinput.Blink
 }
@@ -4024,7 +4028,7 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 	}
 
 	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 
 	// Clean up state file on exit

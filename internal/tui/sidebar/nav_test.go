@@ -3,7 +3,7 @@ package sidebar
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
 )
 
@@ -12,14 +12,14 @@ import (
 // tea.Model, so we assert + cast back).
 func sendKey(t *testing.T, m Model, key string) Model {
 	t.Helper()
-	var keyMsg tea.KeyMsg
+	var keyMsg tea.KeyPressMsg
 	switch key {
 	case "up":
-		keyMsg = tea.KeyMsg{Type: tea.KeyUp}
+		keyMsg = tea.KeyPressMsg{Code: tea.KeyUp}
 	case "down":
-		keyMsg = tea.KeyMsg{Type: tea.KeyDown}
+		keyMsg = tea.KeyPressMsg{Code: tea.KeyDown}
 	default:
-		keyMsg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		keyMsg = tea.KeyPressMsg{Code: rune(key[0])}
 	}
 	updated, _ := m.Update(keyMsg)
 	m2, ok := updated.(Model)

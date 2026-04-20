@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -96,8 +96,8 @@ func (d projectDelegate) Render(w io.Writer, m list.Model, index int, item list.
 
 	if isSelected {
 		nameCol = selectedItemStyle.Render(nameCol)
-		langCol = langStyle.Copy().Bold(true).Render(langCol)
-		gitCol = footerDescStyle.Copy().Bold(true).Render(gitCol)
+		langCol = langStyle.Bold(true).Render(langCol)
+		gitCol = footerDescStyle.Bold(true).Render(gitCol)
 	} else {
 		nameCol = normalItemStyle.Render(nameCol)
 		langCol = langStyle.Render(langCol)
