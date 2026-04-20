@@ -1,6 +1,13 @@
 package sidebar
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/state"
+	mock_sidebar "github.com/rvanmech/unky-mo/internal/tui/sidebar/mocks"
+	"go.uber.org/mock/gomock"
+)
 
 // Phase 1 coverage — small pure helpers that already exist but had no
 // dedicated tests. `itemMatchesOwnWindow` is the most interesting: it
@@ -88,6 +95,84 @@ func TestItemMatchesOwnWindowPrefersID(t *testing.T) {
 					tc.item, tc.ownInstanceID, tc.ownID, tc.ownName, got, tc.want)
 			}
 		})
+	}
+}
+
+// ownSessionID tests — covers the instance-ID fast path and PID-descent fallback.
+
+func TestOwnSessionID_InstanceIDMatchReturnsSessionID(t *testing.T) {
+	m := &Model{instanceID: "a1b2c3d4e5f6", windowPath: "/ws/alpha"}
+	sf := &state.StateFile{
+		Projects: []state.ProjectState{
+			{Name: "beta", InstanceID: "000000000000", SessionID: "sess-beta"},
+			{Name: "alpha", InstanceID: "a1b2c3d4e5f6", SessionID: "sess-alpha"},
+		},
+	}
+	got := m.ownSessionID(sf)
+	if got != "sess-alpha" {
+		t.Errorf("ownSessionID = %q, want sess-alpha", got)
+	}
+}
+
+func TestOwnSessionID_NoInstanceIDFallsThroughToOwnWindowSession(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cr := mock_sidebar.NewMockClaudeReader(ctrl)
+	cr.EXPECT().SessionsForPath("/ws/alpha").Return([]claude.Session{
+		{PID: 100, SessionID: "sess-from-pid"},
+	})
+
+	m := &Model{
+		instanceID: "", // no instance ID — pre-refactor window
+		windowPath: "/ws/alpha",
+		claude:     cr,
+	}
+	sf := &state.StateFile{
+		Projects: []state.ProjectState{
+			{Name: "alpha", SessionID: "sess-stale"},
+		},
+	}
+	got := m.ownSessionID(sf)
+	if got != "sess-from-pid" {
+		t.Errorf("ownSessionID = %q, want sess-from-pid (from PID-descent fallback)", got)
+	}
+}
+
+func TestOwnSessionID_InstanceIDNotInStateFileFallsThrough(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cr := mock_sidebar.NewMockClaudeReader(ctrl)
+	cr.EXPECT().SessionsForPath("/ws/alpha").Return([]claude.Session{
+		{PID: 100, SessionID: "sess-fallback"},
+	})
+
+	m := &Model{
+		instanceID: "a1b2c3d4e5f6",
+		windowPath: "/ws/alpha",
+		claude:     cr,
+	}
+	sf := &state.StateFile{
+		Projects: []state.ProjectState{
+			{Name: "alpha", InstanceID: "different12ab", SessionID: "sess-other"},
+		},
+	}
+	got := m.ownSessionID(sf)
+	if got != "sess-fallback" {
+		t.Errorf("ownSessionID = %q, want sess-fallback (no instance ID match → PID fallback)", got)
+	}
+}
+
+func TestOwnSessionID_NilStateFileFallsThrough(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cr := mock_sidebar.NewMockClaudeReader(ctrl)
+	cr.EXPECT().SessionsForPath("/ws/alpha").Return(nil)
+
+	m := &Model{
+		instanceID: "a1b2c3d4e5f6",
+		windowPath: "/ws/alpha",
+		claude:     cr,
+	}
+	got := m.ownSessionID(nil)
+	if got != "" {
+		t.Errorf("ownSessionID = %q, want empty (nil state + no live sessions)", got)
 	}
 }
 

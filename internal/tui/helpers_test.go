@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/rvanmech/unky-mo/internal/ops"
+	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
 	"github.com/rvanmech/unky-mo/internal/state"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
+	"go.uber.org/mock/gomock"
 )
 
 func TestOrphanedTermSessions(t *testing.T) {
@@ -95,6 +99,75 @@ func TestOrphanedTermSessionsWindowWithEmptyID(t *testing.T) {
 	if len(got) != 1 || got[0] != "mo-terms-1" {
 		t.Errorf("want [mo-terms-1], got %v", got)
 	}
+}
+
+func TestRestartSidebarsNewPathKillsAndRespawns(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tmux := mock_ops.NewMockTmuxClient(ctrl)
+
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{
+		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                                     // TUI — skipped
+		{ID: "@5", Index: "1", Name: "alpha", InstanceID: "a1b2c3d4e5f6", CWD: "/ws/alpha"},  // has instance ID
+	}, nil)
+	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
+	tmux.EXPECT().KillPane("mo:1.1").Return(nil)
+	tmux.EXPECT().SplitWindow("mo:1", 42, "/ws/alpha", gomock.Any()).
+		Do(func(target string, cols int, cwd, cmd string) {
+			if !strings.Contains(cmd, "--instance-id=a1b2c3d4e5f6") {
+				t.Errorf("sidebar command should contain instance ID, got %q", cmd)
+			}
+		}).Return("%2", nil)
+	tmux.EXPECT().SelectPane("mo:1.0").Return(nil)
+
+	m := Model{
+		tmux: tmux,
+		ops:  &ops.Context{MoBinaryPath: "/usr/local/bin/mo", SidebarWidth: 42},
+	}
+	m.restartSidebars()
+}
+
+func TestRestartSidebarsLegacyFallbackSendsRawKeys(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tmux := mock_ops.NewMockTmuxClient(ctrl)
+
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{
+		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                // TUI — skipped
+		{ID: "@5", Index: "1", Name: "alpha", CWD: "/ws/alpha"},         // no instance ID — legacy
+	}, nil)
+	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
+	tmux.EXPECT().SendRawKeys("mo:1.1", "M-C-r")
+
+	m := Model{
+		tmux: tmux,
+		ops:  &ops.Context{MoBinaryPath: "/usr/local/bin/mo", SidebarWidth: 42},
+	}
+	m.restartSidebars()
+}
+
+func TestRestartSidebarsMixedWindows(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tmux := mock_ops.NewMockTmuxClient(ctrl)
+
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{
+		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                                     // skipped
+		{ID: "@5", Index: "1", Name: "alpha", InstanceID: "a1b2c3d4e5f6", CWD: "/ws/alpha"},  // new path
+		{ID: "@6", Index: "2", Name: "beta", CWD: "/ws/beta"},                                 // legacy
+	}, nil)
+	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
+
+	// Window 1 (alpha): kill + respawn
+	tmux.EXPECT().KillPane("mo:1.1").Return(nil)
+	tmux.EXPECT().SplitWindow("mo:1", 42, "/ws/alpha", gomock.Any()).Return("%2", nil)
+	tmux.EXPECT().SelectPane("mo:1.0").Return(nil)
+
+	// Window 2 (beta): legacy raw keys
+	tmux.EXPECT().SendRawKeys("mo:2.1", "M-C-r")
+
+	m := Model{
+		tmux: tmux,
+		ops:  &ops.Context{MoBinaryPath: "/usr/local/bin/mo", SidebarWidth: 42},
+	}
+	m.restartSidebars()
 }
 
 func TestYesNoBindings(t *testing.T) {
@@ -371,6 +444,61 @@ func TestViewToProjectStateMatchesStateStructShape(t *testing.T) {
 	var _ state.ProjectState = ps
 	if ps.Parent != "parent" {
 		t.Errorf("Parent not threaded through")
+	}
+}
+
+func TestViewToProjectStateThreadsInstanceID(t *testing.T) {
+	v := sessionView{
+		SessionID:  "s1",
+		InstanceID: "a1b2c3d4e5f6",
+		WindowName: "alpha",
+		WindowID:   "@5",
+		Status:     StatusActive,
+		CWD:        "/ws/alpha",
+	}
+	ps := viewToProjectState(v, "", "alpha")
+	if ps.InstanceID != "a1b2c3d4e5f6" {
+		t.Errorf("InstanceID not threaded through: got %q", ps.InstanceID)
+	}
+	if ps.SessionID != "s1" || ps.WindowID != "@5" {
+		t.Errorf("other fields dropped: %+v", ps)
+	}
+}
+
+func TestStateFileInstanceIDRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/state.json"
+
+	sf := &state.StateFile{
+		TmuxSession: "mo",
+		Projects: []state.ProjectState{
+			{
+				Name:       "alpha",
+				WindowID:   "@5",
+				InstanceID: "a1b2c3d4e5f6",
+				SessionID:  "sess-1",
+				Status:     "active",
+			},
+			{
+				Name:     "beta",
+				WindowID: "@6",
+				// No InstanceID — pre-refactor window
+				Status: "idle",
+			},
+		},
+	}
+	if err := state.Write(path, sf); err != nil {
+		t.Fatal(err)
+	}
+	got, err := state.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Projects[0].InstanceID != "a1b2c3d4e5f6" {
+		t.Errorf("InstanceID lost on round-trip: got %q", got.Projects[0].InstanceID)
+	}
+	if got.Projects[1].InstanceID != "" {
+		t.Errorf("empty InstanceID should stay empty: got %q", got.Projects[1].InstanceID)
 	}
 }
 

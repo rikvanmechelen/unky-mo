@@ -84,7 +84,10 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 		if width <= 0 {
 			width = 42
 		}
-		sidebarCmd := fmt.Sprintf("%s sidebar --instance-id=%s", ctx.MoBinaryPath, instanceID)
+		sidebarCmd := fmt.Sprintf("%s sidebar", ctx.MoBinaryPath)
+		if res.InstanceID != "" {
+			sidebarCmd += " --instance-id=" + res.InstanceID
+		}
 		if _, err := ctx.Tmux.SplitWindow(target, width, p.Cwd, sidebarCmd); err == nil {
 			// Refocus to the main (left) pane so the claude pane is foregrounded.
 			_ = ctx.Tmux.SelectPane(target + ".0")

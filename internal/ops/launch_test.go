@@ -271,6 +271,38 @@ func TestLaunchSessionThreadsInstanceIDIntoSidebarArgs(t *testing.T) {
 	}
 }
 
+func TestLaunchSessionSetWindowOptionFailureOmitsInstanceID(t *testing.T) {
+	ctx, tmux, _ := newTestContext(t)
+
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:proj", nil)
+	tmux.EXPECT().SetWindowOption(gomock.Any(), "@mo_instance_id", gomock.Any()).
+		Return(errors.New("window not found"))
+	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
+	tmux.EXPECT().SendKeys(gomock.Any(), gomock.Any()).Return(nil)
+	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
+	// Sidebar command should NOT contain --instance-id when SetWindowOption failed.
+	tmux.EXPECT().SplitWindow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Do(func(target string, cols int, cwd, cmd string) {
+			if strings.Contains(cmd, "--instance-id") {
+				t.Errorf("sidebar should not get --instance-id when SetWindowOption failed, got %q", cmd)
+			}
+		}).Return("%2", nil)
+	tmux.EXPECT().SelectPane(gomock.Any()).Return(nil)
+
+	res, err := LaunchSession(ctx, LaunchParams{
+		WindowName:    "proj",
+		Cwd:           "/ws",
+		AttachSidebar: true,
+		SwitchFocus:   false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.InstanceID != "" {
+		t.Errorf("InstanceID should be empty when SetWindowOption fails, got %q", res.InstanceID)
+	}
+}
+
 func TestLaunchSessionRequiresWindowName(t *testing.T) {
 	ctx, _, _ := newTestContext(t)
 	_, err := LaunchSession(ctx, LaunchParams{WindowName: ""})

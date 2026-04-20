@@ -78,6 +78,37 @@ func TestParseWindowListBackwardsCompat4Fields(t *testing.T) {
 	}
 }
 
+func TestParseWindowListBackwardsCompatColonsInPath(t *testing.T) {
+	// Old 4-field format where the CWD contains colons — the parser must
+	// not misclassify the first path segment as an instance ID.
+	in := []byte(`@3:3:weird:/tmp/dir:with:colons/inside`)
+	got := parseWindowList(in)
+	if len(got) != 1 {
+		t.Fatalf("count: %d", len(got))
+	}
+	if got[0].InstanceID != "" {
+		t.Errorf("instance ID should be empty, got %q", got[0].InstanceID)
+	}
+	if got[0].CWD != "/tmp/dir:with:colons/inside" {
+		t.Errorf("cwd should preserve embedded colons, got %q", got[0].CWD)
+	}
+}
+
+func TestParseWindowListNewFormatEmptyInstanceID(t *testing.T) {
+	// New 5-field format where instance ID is empty (window option not set).
+	in := []byte(`@1:1:proj::/home/user/proj`)
+	got := parseWindowList(in)
+	if len(got) != 1 {
+		t.Fatalf("count: %d", len(got))
+	}
+	if got[0].InstanceID != "" {
+		t.Errorf("instance ID should be empty, got %q", got[0].InstanceID)
+	}
+	if got[0].CWD != "/home/user/proj" {
+		t.Errorf("cwd: %q", got[0].CWD)
+	}
+}
+
 func TestParsePIDSet(t *testing.T) {
 	in := []byte(`12345
 23456
