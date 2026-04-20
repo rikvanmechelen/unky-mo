@@ -396,6 +396,50 @@ func readMeta(key Key, projectDir, dirHash string) (*SessionMeta, error) {
 	return &meta, nil
 }
 
+// migrateUUIDPrefixed renames UUID-prefixed files (e.g.
+// "f2b5f5f8-…-4922e.meta.enc") left over from the reverted multi-session
+// branch back to the bare "meta.enc"/"session.enc" names the current code
+// expects. Returns true if a migration was performed.
+func migrateUUIDPrefixed(projectDir string) bool {
+	// Fast path: bare files already exist — nothing to do.
+	if _, err := os.Stat(filepath.Join(projectDir, metaFilename)); err == nil {
+		return false
+	}
+
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return false
+	}
+
+	var oldMeta, oldSession string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".meta.enc") && name != metaFilename {
+			oldMeta = name
+		} else if strings.HasSuffix(name, ".session.enc") && name != sessionFilename {
+			oldSession = name
+		}
+	}
+
+	if oldMeta == "" {
+		return false
+	}
+
+	if err := os.Rename(filepath.Join(projectDir, oldMeta), filepath.Join(projectDir, metaFilename)); err != nil {
+		return false
+	}
+	if oldSession != "" {
+		if err := os.Rename(filepath.Join(projectDir, oldSession), filepath.Join(projectDir, sessionFilename)); err != nil {
+			// meta was already renamed; best-effort for session
+			return true
+		}
+	}
+	return true
+}
+
 func readAllMeta(key Key, syncDir string) ([]SessionMeta, error) {
 	entries, err := os.ReadDir(syncDir)
 	if err != nil {
@@ -406,7 +450,9 @@ func readAllMeta(key Key, syncDir string) ([]SessionMeta, error) {
 		if !e.IsDir() || !IsDirHash(e.Name()) {
 			continue
 		}
-		meta, err := readMeta(key, filepath.Join(syncDir, e.Name()), e.Name())
+		projectDir := filepath.Join(syncDir, e.Name())
+		migrateUUIDPrefixed(projectDir)
+		meta, err := readMeta(key, projectDir, e.Name())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", e.Name(), err)
 			continue
