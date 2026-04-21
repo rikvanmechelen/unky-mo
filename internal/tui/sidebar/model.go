@@ -1414,8 +1414,20 @@ func (m *Model) hidePane(paneID string) error {
 }
 
 // refreshTerminals verifies tracked terminals are still alive and appends
-// terminal items to the sidebar item list.
+// terminal items to the sidebar item list. Any existing terminal items in
+// m.items are stripped first so the section isn't duplicated when called
+// from the fallback (stale state file) path.
 func (m *Model) refreshTerminals() {
+	// Strip existing terminal items so we don't accumulate duplicates.
+	n := 0
+	for _, item := range m.items {
+		if !item.IsTerminal && !(item.IsHeader && item.Name == "Terminals") {
+			m.items[n] = item
+			n++
+		}
+	}
+	m.items = m.items[:n]
+
 	// Remember the active pane so we can detect if it gets pruned
 	activePaneID := ""
 	if m.drawerOpen && m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {

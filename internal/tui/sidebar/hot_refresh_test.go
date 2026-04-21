@@ -152,3 +152,39 @@ func TestRefreshTerminals_AppendsTerminalItemsToSidebar(t *testing.T) {
 		t.Error("item[3] should not be active")
 	}
 }
+
+func TestRefreshTerminals_CalledTwiceDoesNotDuplicate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+
+	m := &Model{
+		tmux:     tmux,
+		windowID: "@1",
+		items:    []SidebarItem{{Name: "Home", IsHome: true}, {Name: "alpha", Status: "active"}},
+		terminals: []TerminalTab{
+			{PaneID: "%10", Name: "term-1"},
+		},
+		activeTermIdx: 0,
+		drawerOpen:    true,
+	}
+
+	// Each call checks IsPaneAlive once per terminal.
+	tmux.EXPECT().IsPaneAlive("%10").Return(true).Times(2)
+
+	m.refreshTerminals()
+	m.refreshTerminals() // second call — should NOT duplicate
+
+	// items: Home + alpha + Terminals header + 1 terminal = 4
+	if len(m.items) != 4 {
+		t.Fatalf("want 4 items after two refreshTerminals calls, got %d: %+v", len(m.items), m.items)
+	}
+	termCount := 0
+	for _, item := range m.items {
+		if item.IsTerminal {
+			termCount++
+		}
+	}
+	if termCount != 1 {
+		t.Errorf("want exactly 1 terminal item, got %d", termCount)
+	}
+}
