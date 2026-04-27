@@ -718,7 +718,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					if m.tmux != nil {
-						target := m.tmux.SessionName() + ":" + item.WindowName
+						target := m.safeWindowTarget(item.WindowName, item.WindowID)
 						m.tmux.SwitchToWindow(target)
 					}
 				}
@@ -1399,6 +1399,7 @@ func (m Model) View() tea.View {
 type dashSessionItem struct {
 	Name        string
 	WindowName  string
+	WindowID    string              // stable tmux window ID (@N); used for safe target construction
 	Status      SessionStatus
 	ProjectPath string              // cwd — used to resolve external PID/sessionID on import
 	Section     string              // "projects" (default) or "external"
@@ -1496,6 +1497,7 @@ func viewToDashItem(v sessionView) dashSessionItem {
 	item := dashSessionItem{
 		Name:        v.WindowName,
 		WindowName:  v.WindowName,
+		WindowID:    v.WindowID,
 		Status:      v.Status,
 		ProjectPath: v.CWD,
 		Section:     v.Section,
@@ -3467,6 +3469,25 @@ func (m Model) currentProject() *project.Project {
 	return &item.project
 }
 
+// safeWindowTarget constructs a tmux target string for the given window,
+// preferring the stable window ID (@N) when available. This avoids tmux
+// misinterpreting dots in window names (e.g. "moma.org.cubed") as pane
+// separators.
+func (m Model) safeWindowTarget(name, windowID string) string {
+	session := m.tmux.SessionName()
+	if windowID != "" {
+		return session + ":" + windowID
+	}
+	if !ttmux.NeedsSafeTarget(name) {
+		return session + ":" + name
+	}
+	windows, err := m.tmux.ListWindows()
+	if err != nil {
+		return session + ":" + name
+	}
+	return ttmux.SafeTarget(session, name, windows)
+}
+
 // focusIfExists switches the client to windowName if a tmux window by that
 // name exists. Returns (existed, err): callers gate launch decisions on
 // existed, and report err as the "failed to switch" case when it is non-nil.
@@ -3476,7 +3497,7 @@ func (m Model) focusIfExists(windowName string) (bool, error) {
 	if !m.tmux.WindowExists(windowName) {
 		return false, nil
 	}
-	return true, m.tmux.SwitchToWindow(m.tmux.SessionName() + ":" + windowName)
+	return true, m.tmux.SwitchToWindow(m.safeWindowTarget(windowName, ""))
 }
 
 func (m Model) launchSession() tea.Cmd {
@@ -3668,15 +3689,15 @@ func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 						continue
 					}
 					if m.claude.IsDescendantOf(s.PID, panePIDs) {
-						windowBySession[s.SessionID] = w.Name
+						windowBySession[s.SessionID] = w.ID
 					}
 				}
 			}
 		}
 		for _, s := range sessions {
 			ops.SignalAndWaitExit(m.ops, s.PID)
-			if name, ok := windowBySession[s.SessionID]; ok {
-				_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + name)
+			if wID, ok := windowBySession[s.SessionID]; ok {
+				_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + wID)
 			}
 		}
 		return statusMsgEvent(fmt.Sprintf("Killed %d session(s)", len(sessions)))

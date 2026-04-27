@@ -57,7 +57,7 @@ func CreateWorktreeAndLaunch(ctx *Context, p WorktreeParams) (*WorktreeResult, e
 	// If a live session already exists at this worktree, prefer focusing its
 	// real window (may have been renamed).
 	if realWin, sess := PrimaryWindowForTarget(ctx, p.ProjectName, p.Branch, wtPath); sess != nil && realWin != "" {
-		if err := ctx.Tmux.SwitchToWindow(ctx.Tmux.SessionName() + ":" + realWin); err != nil {
+		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, realWin)); err != nil {
 			res.Status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
 			return res, nil
 		}
@@ -67,7 +67,7 @@ func CreateWorktreeAndLaunch(ctx *Context, p WorktreeParams) (*WorktreeResult, e
 	}
 	// Otherwise: focus bare window if it happens to exist, else launch fresh.
 	if ctx.Tmux.WindowExists(windowName) {
-		if err := ctx.Tmux.SwitchToWindow(ctx.Tmux.SessionName() + ":" + windowName); err != nil {
+		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, windowName)); err != nil {
 			res.Status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
 			return res, nil
 		}
@@ -136,13 +136,13 @@ func OpenBranchInMain(ctx *Context, p OpenBranchParams) (*OpenBranchResult, erro
 	windowName := p.ProjectName
 	// Focus existing primary if live, else the bare window, else launch.
 	if realWin, sess := PrimaryWindowForTarget(ctx, p.ProjectName, "", p.ProjectPath); sess != nil && realWin != "" {
-		if err := ctx.Tmux.SwitchToWindow(ctx.Tmux.SessionName() + ":" + realWin); err == nil {
+		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, realWin)); err == nil {
 			res.Status = "Switched to " + realWin
 			return res, nil
 		}
 	}
 	if ctx.Tmux.WindowExists(windowName) {
-		if err := ctx.Tmux.SwitchToWindow(ctx.Tmux.SessionName() + ":" + windowName); err == nil {
+		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, windowName)); err == nil {
 			res.Status = "Switched to " + windowName
 			return res, nil
 		}
@@ -190,11 +190,11 @@ func CleanupWorktree(ctx *Context, p CleanupParams) (*CleanupResult, error) {
 
 	// Stage 1: kill live sessions (if the caller provided any).
 	if len(p.Sessions) > 0 {
-		windowBySession := sessionToWindowMapForSessions(ctx, p.Sessions)
+		windowIDBySession := sessionToWindowIDMapForSessions(ctx, p.Sessions)
 		for _, s := range p.Sessions {
 			SignalAndWaitExit(ctx, s.PID)
-			if name, ok := windowBySession[s.SessionID]; ok {
-				_ = ctx.Tmux.KillWindow(ctx.Tmux.SessionName() + ":" + name)
+			if wID, ok := windowIDBySession[s.SessionID]; ok {
+				_ = ctx.Tmux.KillWindow(ctx.Tmux.SessionName() + ":" + wID)
 			}
 			res.KilledSessions++
 		}
@@ -225,10 +225,11 @@ func CleanupWorktree(ctx *Context, p CleanupParams) (*CleanupResult, error) {
 	return res, nil
 }
 
-// sessionToWindowMapForSessions walks tmux windows and attributes each of
-// the given sessions to the window whose pane PIDs claim them via the
-// PPID chain. Narrower variant of SessionToWindowMap used during cleanup.
-func sessionToWindowMapForSessions(ctx *Context, sessions []claude.Session) map[string]string {
+// sessionToWindowIDMapForSessions walks tmux windows and attributes each of
+// the given sessions to the window whose pane PIDs claim them via the PPID
+// chain. Returns session ID → window ID (@N) so callers can build safe tmux
+// targets even for dotted window names.
+func sessionToWindowIDMapForSessions(ctx *Context, sessions []claude.Session) map[string]string {
 	out := map[string]string{}
 	if ctx == nil || ctx.Tmux == nil {
 		return out
@@ -247,7 +248,7 @@ func sessionToWindowMapForSessions(ctx *Context, sessions []claude.Session) map[
 				continue
 			}
 			if ctx.Claude != nil && ctx.Claude.IsDescendantOf(s.PID, panePIDs) {
-				out[s.SessionID] = w.Name
+				out[s.SessionID] = w.ID
 			}
 		}
 	}

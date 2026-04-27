@@ -296,11 +296,21 @@ func attachCmd() *cobra.Command {
 			tc := tmux.NewClient(cfg.TmuxSession)
 			windowName := args[0]
 
-			if !tc.WindowExists(windowName) {
+			windows, err := tc.ListWindows()
+			if err != nil {
+				return fmt.Errorf("listing windows: %w", err)
+			}
+			target := ""
+			for _, w := range windows {
+				if w.Name == windowName {
+					target = cfg.TmuxSession + ":" + w.ID
+					break
+				}
+			}
+			if target == "" {
 				return fmt.Errorf("no session for %q. Use 'mo start %s' to create one", windowName, windowName)
 			}
 
-			target := cfg.TmuxSession + ":" + windowName
 			if err := tc.SwitchToWindow(target); err != nil {
 				return fmt.Errorf("switching to window: %w", err)
 			}

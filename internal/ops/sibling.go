@@ -29,7 +29,7 @@ func ParkAndLaunch(ctx *Context, p ParkParams) (*LaunchResult, error) {
 		return nil, fmt.Errorf("ops.ParkAndLaunch: PrimaryWindowName required")
 	}
 	SignalAndWaitExit(ctx, p.PID)
-	_ = ctx.Tmux.KillWindow(ctx.Tmux.SessionName() + ":" + p.PrimaryWindowName)
+	_ = ctx.Tmux.KillWindow(resolveTarget(ctx, p.PrimaryWindowName))
 	shellCmd := "claude"
 	if p.ResumeID != "" {
 		shellCmd = "claude --resume " + p.ResumeID

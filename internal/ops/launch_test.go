@@ -32,12 +32,13 @@ func expectInstanceID(tmux *mock_ops.MockTmuxClient) *gomock.Call {
 func TestLaunchSessionHappyPath(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	// Script the full ceremony.
-	tmux.EXPECT().CreateWindow("myproj", "/ws/myproj").Return("mo:myproj", nil)
+	// Script the full ceremony. CreateWindow returns an ID-based target
+	// (session:@N) so dots in window names are never misinterpreted.
+	tmux.EXPECT().CreateWindow("myproj", "/ws/myproj").Return("mo:@1", nil)
 	expectInstanceID(tmux)
-	tmux.EXPECT().PaneID("mo:myproj").Return("%12", nil)
-	tmux.EXPECT().SendKeys("mo:myproj", "exec claude").Return(nil)
-	tmux.EXPECT().SetWindowHook("mo:myproj", "pane-exited", gomock.Any()).
+	tmux.EXPECT().PaneID("mo:@1").Return("%12", nil)
+	tmux.EXPECT().SendKeys("mo:@1", "exec claude").Return(nil)
+	tmux.EXPECT().SetWindowHook("mo:@1", "pane-exited", gomock.Any()).
 		Do(func(target, hook, cmd string) {
 			if !strings.Contains(cmd, "%12") {
 				t.Errorf("hook command should reference the claude pane ID, got %q", cmd)
@@ -46,14 +47,14 @@ func TestLaunchSessionHappyPath(t *testing.T) {
 				t.Errorf("hook should kill-window, got %q", cmd)
 			}
 		})
-	tmux.EXPECT().SplitWindow("mo:myproj", 42, "/ws/myproj", gomock.Any()).
+	tmux.EXPECT().SplitWindow("mo:@1", 42, "/ws/myproj", gomock.Any()).
 		Do(func(target string, cols int, cwd, cmd string) {
 			if !strings.Contains(cmd, "--instance-id=") {
 				t.Errorf("sidebar command should contain --instance-id=, got %q", cmd)
 			}
 		}).Return("%13", nil)
-	tmux.EXPECT().SelectPane("mo:myproj.0").Return(nil)
-	tmux.EXPECT().SwitchToWindow("mo:myproj").Return(nil)
+	tmux.EXPECT().SelectPane("mo:@1.0").Return(nil)
+	tmux.EXPECT().SwitchToWindow("mo:@1").Return(nil)
 
 	res, err := LaunchSession(ctx, LaunchParams{
 		WindowName:    "myproj",
@@ -65,7 +66,7 @@ func TestLaunchSessionHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LaunchSession: %v", err)
 	}
-	if res.Target != "mo:myproj" {
+	if res.Target != "mo:@1" {
 		t.Errorf("target: got %q", res.Target)
 	}
 	if res.ClaudePaneID != "%12" {
@@ -85,11 +86,11 @@ func TestLaunchSessionHappyPath(t *testing.T) {
 func TestLaunchSessionResumeCommand(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow("myproj", "/ws/myproj").Return("mo:myproj", nil)
+	tmux.EXPECT().CreateWindow("myproj", "/ws/myproj").Return("mo:@1", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	// The `claude --resume <id>` shell command should appear verbatim.
-	tmux.EXPECT().SendKeys("mo:myproj", "exec claude --resume abc-123").Return(nil)
+	tmux.EXPECT().SendKeys("mo:@1", "exec claude --resume abc-123").Return(nil)
 	tmux.EXPECT().SetWindowHook(gomock.Any(), "pane-exited", gomock.Any())
 	tmux.EXPECT().SplitWindow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("%2", nil)
 	tmux.EXPECT().SelectPane(gomock.Any()).Return(nil)
@@ -123,7 +124,7 @@ func TestLaunchSessionCreateWindowError(t *testing.T) {
 func TestLaunchSessionSwitchFailureStillReturnsResult(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:myproj", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@1", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), gomock.Any()).Return(nil)
@@ -151,7 +152,7 @@ func TestLaunchSessionSwitchFailureStillReturnsResult(t *testing.T) {
 func TestLaunchSessionNoSidebar(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:myproj", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@1", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), gomock.Any()).Return(nil)
@@ -172,7 +173,7 @@ func TestLaunchSessionNoSidebar(t *testing.T) {
 func TestLaunchSessionNoSwitch(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:myproj", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@1", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), gomock.Any()).Return(nil)
@@ -197,10 +198,10 @@ func TestLaunchSessionNoSwitch(t *testing.T) {
 func TestLaunchSessionDefaultsShellCmdToClaude(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:x", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@1", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
-	tmux.EXPECT().SendKeys("mo:x", "exec claude").Return(nil) // defaulted
+	tmux.EXPECT().SendKeys("mo:@1", "exec claude").Return(nil) // defaulted
 	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
 
 	_, err := LaunchSession(ctx, LaunchParams{WindowName: "x"})
@@ -214,13 +215,13 @@ func TestLaunchSessionDefaultsShellCmdToClaude(t *testing.T) {
 func TestLaunchSessionSidebarSplitAfterClaudeExec(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	create := tmux.EXPECT().CreateWindow("proj", "/ws").Return("mo:proj", nil)
-	setOpt := tmux.EXPECT().SetWindowOption("mo:proj", "@mo_instance_id", gomock.Any()).Return(nil).After(create)
-	paneID := tmux.EXPECT().PaneID("mo:proj").Return("%1", nil).After(setOpt)
-	sendKeys := tmux.EXPECT().SendKeys("mo:proj", "exec claude").Return(nil).After(paneID)
-	hook := tmux.EXPECT().SetWindowHook("mo:proj", "pane-exited", gomock.Any()).After(sendKeys)
-	split := tmux.EXPECT().SplitWindow("mo:proj", 42, "/ws", gomock.Any()).Return("%2", nil).After(hook)
-	tmux.EXPECT().SelectPane("mo:proj.0").Return(nil).After(split)
+	create := tmux.EXPECT().CreateWindow("proj", "/ws").Return("mo:@1", nil)
+	setOpt := tmux.EXPECT().SetWindowOption("mo:@1", "@mo_instance_id", gomock.Any()).Return(nil).After(create)
+	paneID := tmux.EXPECT().PaneID("mo:@1").Return("%1", nil).After(setOpt)
+	sendKeys := tmux.EXPECT().SendKeys("mo:@1", "exec claude").Return(nil).After(paneID)
+	hook := tmux.EXPECT().SetWindowHook("mo:@1", "pane-exited", gomock.Any()).After(sendKeys)
+	split := tmux.EXPECT().SplitWindow("mo:@1", 42, "/ws", gomock.Any()).Return("%2", nil).After(hook)
+	tmux.EXPECT().SelectPane("mo:@1.0").Return(nil).After(split)
 
 	res, err := LaunchSession(ctx, LaunchParams{
 		WindowName:    "proj",
@@ -239,7 +240,7 @@ func TestLaunchSessionSidebarSplitAfterClaudeExec(t *testing.T) {
 func TestLaunchSessionThreadsInstanceIDIntoSidebarArgs(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:proj", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@1", nil)
 	var capturedID string
 	tmux.EXPECT().SetWindowOption(gomock.Any(), "@mo_instance_id", gomock.Any()).
 		Do(func(target, opt, value string) {
@@ -274,7 +275,7 @@ func TestLaunchSessionThreadsInstanceIDIntoSidebarArgs(t *testing.T) {
 func TestLaunchSessionSetWindowOptionFailureOmitsInstanceID(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:proj", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@1", nil)
 	tmux.EXPECT().SetWindowOption(gomock.Any(), "@mo_instance_id", gomock.Any()).
 		Return(errors.New("window not found"))
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)

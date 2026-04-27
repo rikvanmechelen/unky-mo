@@ -2,7 +2,6 @@ package ops
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
@@ -18,7 +17,7 @@ func TestLaunchSiblingPicksNextOrdinal(t *testing.T) {
 		{ID: "@2", Name: "alpha [2]"},
 	}, nil)
 	// From there ops.LaunchSibling should call LaunchSession with window "alpha [3]".
-	tmux.EXPECT().CreateWindow("alpha [3]", "/ws/alpha").Return("mo:alpha [3]", nil)
+	tmux.EXPECT().CreateWindow("alpha [3]", "/ws/alpha").Return("mo:@3", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude").Return(nil)
@@ -35,15 +34,15 @@ func TestLaunchSiblingPicksNextOrdinal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Target, "[3]") {
-		t.Errorf("sibling should pick ordinal 3, got %q", res.Target)
+	if res.Target != "mo:@3" {
+		t.Errorf("sibling target: got %q, want %q", res.Target, "mo:@3")
 	}
 }
 
 func TestLaunchSiblingPassesResumeCommand(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 	tmux.EXPECT().ListWindows().Return(nil, nil)
-	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:alpha [2]", nil)
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("mo:@2", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude --resume sess-abc").Return(nil)
@@ -95,7 +94,7 @@ func TestParkAndLaunchKillsPrimaryWindowFirst(t *testing.T) {
 	tmux.EXPECT().SessionName().Return("mo")
 	tmux.EXPECT().KillWindow("mo:alpha").Return(nil)
 	// Then LaunchSession ceremony.
-	tmux.EXPECT().CreateWindow("alpha", "/ws/alpha").Return("mo:alpha", nil)
+	tmux.EXPECT().CreateWindow("alpha", "/ws/alpha").Return("mo:@1", nil)
 	expectInstanceID(tmux)
 	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
 	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude").Return(nil)

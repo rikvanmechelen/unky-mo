@@ -37,7 +37,7 @@ func ResumeInDir(ctx *Context, p ResumeParams) (*ResumeResult, error) {
 	}
 	res := &ResumeResult{Target: windowName}
 	if windowName != "" && ctx.Tmux.WindowExists(windowName) {
-		if err := ctx.Tmux.SwitchToWindow(ctx.Tmux.SessionName() + ":" + windowName); err != nil {
+		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, windowName)); err != nil {
 			return res, fmt.Errorf("switch to window: %w", err)
 		}
 		res.Switched = true

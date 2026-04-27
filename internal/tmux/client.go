@@ -162,14 +162,27 @@ func (c *Client) EnableMouse() {
 	c.runTmux("set-option", "-t", c.SessionName, "mouse", "on")
 }
 
-// CreateWindow creates a new window in the session.
+// CreateWindow creates a new window in the session. The returned target uses
+// the window's stable ID (@N) so that dotted window names (e.g.
+// "moma.org.cubed") are never misinterpreted by tmux as pane separators.
 func (c *Client) CreateWindow(name, cwd string) (string, error) {
-	target := c.SessionName + ":" + name
-	// Use -a to append after the current window, avoiding index conflicts
-	if err := c.runTmux("new-window", "-a", "-t", c.SessionName, "-n", name, "-c", cwd); err != nil {
+	// Use -a to append after the current window, avoiding index conflicts.
+	// -P -F captures the new window's stable ID so the target is unambiguous.
+	args := []string{
+		"new-window", "-a", "-t", c.SessionName, "-n", name, "-c", cwd,
+		"-P", "-F", "#{window_id}",
+	}
+	cmd := c.tmuxCmd(args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("creating window %q: %s", name, msg)
+		}
 		return "", fmt.Errorf("creating window %q: %w", name, err)
 	}
-	return target, nil
+	windowID := strings.TrimSpace(string(out))
+	return c.SessionName + ":" + windowID, nil
 }
 
 // SendKeys sends keystrokes to a tmux target (window or pane), followed by Enter.

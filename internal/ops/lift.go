@@ -107,7 +107,7 @@ func LiftSessionToWorktree(ctx *Context, p LiftParams) (*LiftResult, error) {
 
 	// Step 5: kill the old tmux window so the sidebar dies with it.
 	if p.SourceWindow != "" {
-		_ = ctx.Tmux.KillWindow(ctx.Tmux.SessionName() + ":" + p.SourceWindow)
+		_ = ctx.Tmux.KillWindow(resolveTarget(ctx, p.SourceWindow))
 	}
 
 	// Step 6: move the JSONL. Missing source file is a silent non-fatal.
