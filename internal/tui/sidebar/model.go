@@ -254,6 +254,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "o":
 			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
 				return m, m.openFileExternal(m.changedFiles[m.fileCursor])
+			} else {
+				return m, m.openProjectExternal()
 			}
 		case "t":
 			return m, m.toggleDrawer()
@@ -502,7 +504,7 @@ func (m Model) View() tea.View {
 	// Footer — context-sensitive
 	if m.focusSection == "shells" && len(m.activeShells) > 0 {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ view output") + "\n")
-		b.WriteString(footerStyle.Render(" ` popup  s sync") + "\n")
+		b.WriteString(footerStyle.Render(" ` popup  s sync  o open") + "\n")
 		b.WriteString(footerStyle.Render(" ^r refresh"))
 	} else if m.focusSection == "files" && len(m.changedFiles) > 0 {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/d diff") + "\n")
@@ -519,7 +521,7 @@ func (m Model) View() tea.View {
 		case "stale":
 			syncLabel = "  s " + dotActive.Render("sync ↑")
 		}
-		b.WriteString(footerStyle.Render(" ⇥ next   x close") + "\n")
+		b.WriteString(footerStyle.Render(" ⇥ next   x close  o open") + "\n")
 		b.WriteString(footerStyle.Render(" ` popup") + syncLabel + "\n")
 		b.WriteString(footerStyle.Render(" ^r refresh"))
 	}
@@ -1554,13 +1556,27 @@ func (m Model) openFileInEditor(file string) tea.Cmd {
 
 func (m Model) openFileExternal(file string) tea.Cmd {
 	absPath := filepath.Join(m.windowPath, file)
-	// Try VS Code first, fall back to macOS open
+	// Try VS Code first — pass the project folder so the full workspace
+	// opens (or is reused if already open), then --goto focuses the file.
+	// Falls back to macOS open for non-VS-Code users.
 	return func() tea.Msg {
-		if err := exec.Command("code", "--goto", absPath+":1:1").Run(); err == nil {
+		if err := exec.Command("code", m.windowPath, "--goto", absPath+":1:1").Run(); err == nil {
 			return sidebarStatusMsg("opened in VS Code")
 		}
 		if err := exec.Command("open", absPath).Run(); err == nil {
 			return sidebarStatusMsg("opened in default editor")
+		}
+		return sidebarStatusMsg("no external editor found")
+	}
+}
+
+func (m Model) openProjectExternal() tea.Cmd {
+	return func() tea.Msg {
+		if err := exec.Command("code", m.windowPath).Run(); err == nil {
+			return sidebarStatusMsg("opened in VS Code")
+		}
+		if err := exec.Command("open", m.windowPath).Run(); err == nil {
+			return sidebarStatusMsg("opened in Finder")
 		}
 		return sidebarStatusMsg("no external editor found")
 	}
