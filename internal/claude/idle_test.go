@@ -105,6 +105,38 @@ func TestIsSessionIdleSlashCommandStale(t *testing.T) {
 	}
 }
 
+// A regular user prompt means Claude is thinking about the response. Even if
+// the JSONL hasn't been written to in a while (complex tasks can take minutes),
+// the session is still active — not idle.
+func TestIsSessionIdleUserPromptStaleNotIdle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := ProjectsDirForPath("/workspace/myproj")
+	path := writeJSONL(t, dir, "sess1", []string{
+		`{"type":"assistant","message":{"role":"assistant","content":"done","stop_reason":"end_turn"}}`,
+		`{"type":"user","message":{"role":"user","content":"please refactor the auth module"}}`,
+	})
+	backdateFile(t, path, 200*time.Second)
+	if IsSessionIdle("/workspace/myproj", "sess1") {
+		t.Errorf("regular user prompt should NOT be idle — Claude is still thinking")
+	}
+}
+
+// A tool_result means Claude is mid-turn processing tool output. Never idle.
+func TestIsSessionIdleToolResultNotIdle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := ProjectsDirForPath("/workspace/myproj")
+	path := writeJSONL(t, dir, "sess1", []string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use"}],"stop_reason":"tool_use"}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+	})
+	backdateFile(t, path, 200*time.Second)
+	if IsSessionIdle("/workspace/myproj", "sess1") {
+		t.Errorf("tool_result should NOT be idle — Claude is mid-turn")
+	}
+}
+
 func TestIsSessionIdleMissingFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

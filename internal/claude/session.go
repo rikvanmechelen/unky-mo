@@ -297,7 +297,8 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 		var msg struct {
 			Type    string `json:"type"`
 			Message struct {
-				StopReason string `json:"stop_reason"`
+				StopReason string          `json:"stop_reason"`
+				Content    json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
 		if json.Unmarshal([]byte(line), &msg) != nil {
@@ -321,12 +322,20 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 			// as idle so the session lights up instead of staying orange.
 			return time.Since(info.ModTime()) > 120*time.Second
 		case "user":
-			// User sent something. Normally Claude would be mid-response —
-			// but /compact and other slash commands write synthetic user
-			// entries (content starts with <local-command-*> / <command-*>)
-			// with no assistant follow-up, leaving the session actually
-			// idle. If the JSONL hasn't advanced in >120s, the session is
-			// waiting for real input.
+			// User messages come in three flavors:
+			//   1. tool_result — Claude is mid-turn, always still working
+			//   2. Regular prompt — Claude should be generating a response
+			//   3. Slash commands (/compact etc.) — synthetic entries that
+			//      may have no assistant follow-up
+			//
+			// For (1) and (2), Claude is actively working and may take
+			// several minutes on complex tasks before writing the next
+			// JSONL entry. Only slash commands (3) use the staleness
+			// fallback since they can legitimately leave the session idle
+			// with no assistant response.
+			if isUserToolResult(msg.Message.Content) || !isUserSlashCommand(msg.Message.Content) {
+				return false
+			}
 			return time.Since(info.ModTime()) > 120*time.Second
 		default:
 			continue
@@ -336,6 +345,53 @@ func IsSessionIdle(projectPath, sessionID string) bool {
 	// Fallback: if JSONL hasn't been written to in >120s, the session is
 	// likely stuck on a permission prompt or similar (no assistant message).
 	return time.Since(info.ModTime()) > 120*time.Second
+}
+
+// isUserToolResult reports whether a user message's content contains a
+// tool_result entry (meaning Claude is mid-turn processing tool output).
+func isUserToolResult(content json.RawMessage) bool {
+	if len(content) == 0 {
+		return false
+	}
+	// Content is either a JSON array of objects or a plain string.
+	var items []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(content, &items) == nil {
+		for _, item := range items {
+			if item.Type == "tool_result" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isUserSlashCommand reports whether a user message's content looks like a
+// slash command (/compact, /review, etc.). These write synthetic user entries
+// with content starting with <local-command-*> or <command-*> and may have
+// no assistant follow-up.
+func isUserSlashCommand(content json.RawMessage) bool {
+	if len(content) == 0 {
+		return false
+	}
+	// Content can be a plain string or an array with text items.
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return strings.HasPrefix(s, "<local-command") || strings.HasPrefix(s, "<command")
+	}
+	var items []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &items) == nil {
+		for _, item := range items {
+			if item.Type == "text" {
+				return strings.HasPrefix(item.Text, "<local-command") || strings.HasPrefix(item.Text, "<command")
+			}
+		}
+	}
+	return false
 }
 
 // RecentSession represents a historical Claude Code session from the JSONL files.
