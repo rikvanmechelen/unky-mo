@@ -438,6 +438,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		return m, nil
 
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			return m.handleMouseClick(msg.X, msg.Y)
+		}
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
+
 	case tea.KeyPressMsg:
 		// Clear sticky error messages on any keypress
 		if m.statusMsg != "" {
@@ -1392,6 +1401,7 @@ func (m Model) View() tea.View {
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
