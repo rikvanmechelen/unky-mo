@@ -1392,7 +1392,14 @@ func (m *Model) ensureMoTerms() (string, error) {
 	if err := m.tmux.SetSessionOption(name, "key-table", "popup-keys"); err != nil {
 		return "", err
 	}
+	_ = m.tmux.SetSessionOption(name, "mouse", "on")
 	_ = m.tmux.BindKey("popup-keys", "`", "detach-client")
+	// Mouse bindings so the popup supports scroll and text selection.
+	// WheelUp enters copy-mode (auto-exits at bottom), WheelDown passes
+	// through, and drag starts a selection.
+	_ = m.tmux.BindKey("popup-keys", "WheelUpPane", "copy-mode", "-e")
+	_ = m.tmux.BindKey("popup-keys", "WheelDownPane", "send-keys", "-M")
+	_ = m.tmux.BindKey("popup-keys", "MouseDrag1Pane", "copy-mode", "-M")
 	return ghost, nil
 }
 

@@ -24,7 +24,11 @@ func expectEnsureMoTermsFirstTime(tmux *mock_sidebar.MockTmuxClient, cwd, ghostP
 	tmux.EXPECT().SessionExistsNamed(drawerModelTermSession).Return(false)
 	tmux.EXPECT().NewDetachedSession(drawerModelTermSession, cwd).Return(ghostPaneID, nil)
 	tmux.EXPECT().SetSessionOption(drawerModelTermSession, "key-table", "popup-keys").Return(nil)
+	tmux.EXPECT().SetSessionOption(drawerModelTermSession, "mouse", "on").Return(nil)
 	tmux.EXPECT().BindKey("popup-keys", "`", "detach-client").Return(nil)
+	tmux.EXPECT().BindKey("popup-keys", "WheelUpPane", "copy-mode", "-e").Return(nil)
+	tmux.EXPECT().BindKey("popup-keys", "WheelDownPane", "send-keys", "-M").Return(nil)
+	tmux.EXPECT().BindKey("popup-keys", "MouseDrag1Pane", "copy-mode", "-M").Return(nil)
 }
 
 // expectEnsureMoTermsExists is the fast path — mo-terms is already around,
