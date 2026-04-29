@@ -19,19 +19,38 @@ func ScanWorkspace(dirs []string) ([]Project, error) {
 			continue
 		}
 		for _, entry := range entries {
-			if !entry.IsDir() || entry.Name()[0] == '.' || strings.HasSuffix(entry.Name(), ".worktrees") {
+			name := entry.Name()
+			if name[0] == '.' || strings.HasSuffix(name, ".worktrees") {
 				continue
 			}
-			fullPath := filepath.Join(dir, entry.Name())
-			if seen[fullPath] {
+
+			fullPath := filepath.Join(dir, name)
+
+			// Follow symlinks: IsDir() is false for symlinks, so stat the target.
+			if !entry.IsDir() {
+				if entry.Type()&os.ModeSymlink == 0 {
+					continue
+				}
+				info, err := os.Stat(fullPath)
+				if err != nil || !info.IsDir() {
+					continue
+				}
+			}
+
+			// Deduplicate by resolved path so symlinks to already-seen dirs are skipped.
+			resolved, _ := filepath.EvalSymlinks(fullPath)
+			if resolved == "" {
+				resolved = fullPath
+			}
+			if seen[resolved] {
 				continue
 			}
 			if !isGitRepo(fullPath) {
 				continue
 			}
-			seen[fullPath] = true
+			seen[resolved] = true
 			projects = append(projects, Project{
-				Name:     entry.Name(),
+				Name:     name,
 				Path:     fullPath,
 				Language: detectLanguage(fullPath),
 			})
