@@ -83,7 +83,7 @@ The Tickets panel only appears once you've set up Jira (`mo jira setup`) — see
 | `→`          | Focus right panel (sessions / tickets) |
 | `←`          | Focus project list                    |
 | `enter`      | Open project detail / switch to session / open ticket detail popup |
-| `⇧enter`    | Pick a coding agent, then launch      |
+| `A`          | Pick a coding agent, then launch      |
 | `/`          | Filter projects (fuzzy search)        |
 | `n`          | Start a new session (prompts switch/park/concurrent if one is already running) |
 | `a`          | Attach to session window              |
@@ -211,7 +211,7 @@ Sessions appear indented under their branch. Synced sessions are marked with `�
 | `↑/↓`  | Navigate within the focused panel               |
 | `←/→`  | Switch between left and right panels            |
 | `enter` | Resume session / launch worktree / expand PR   |
-| `⇧enter`| Pick a coding agent, then launch               |
+| `A`     | Pick a coding agent, then launch               |
 | `o`     | Open PR in browser                              |
 | `w`     | Open selected branch as a worktree              |
 | `W`     | Prompt for a brand-new branch name              |
@@ -520,7 +520,7 @@ key = "x"
 cmd = "codex"
 ```
 
-Each agent has a single-character `key` used as a mnemonic in the picker menu. The `default = true` agent is used when you press plain `enter`; press `shift+enter` to choose a different agent before launching.
+Each agent has a single-character `key` used as a mnemonic in the picker menu. The `default = true` agent is used when you press plain `enter`; press `A` to choose a different agent before launching.
 
 Manage agents from the CLI:
 
@@ -531,7 +531,7 @@ mo agents remove g                              # remove by key
 mo agents default g                             # set the default agent
 ```
 
-Agent preferences can be saved per project and branch in `~/.config/unky-mo/agent-choices.toml`. When you use the agent picker (`shift+enter`), the chosen agent is used for that launch. Future launches with plain `enter` on the same branch will use the saved preference.
+Agent preferences can be saved per project and branch in `~/.config/unky-mo/agent-choices.toml`. When you use the agent picker (`A`), the chosen agent is used for that launch. Future launches with plain `enter` on the same branch will use the saved preference.
 
 Session detection (idle/active/permission status) currently only works for Claude Code sessions. Other agents show as "active" in the sidebar and dashboard — idle and permission detection requires agent-specific hooks that aren't available yet for most agents.
 
