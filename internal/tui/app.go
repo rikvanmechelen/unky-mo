@@ -160,6 +160,8 @@ type Model struct {
 	tmux           ops.TmuxClient
 	claude         ops.ClaudeReader
 	ops            *ops.Context
+	agents         []config.AgentConfig
+	agentChoices   map[string]string // project:branch → agent key (persisted preferences)
 	notifServer    *notify.Server
 	notifState     sessionStateMap // status overrides from notification system
 	statusMsg      string
@@ -239,6 +241,9 @@ type Model struct {
 	pendingNewLivePID        int    // claude PID of the session to park on `p`
 	pendingNewLiveID         string // claude session ID of the current primary
 	pendingNewResumeSession  string // non-empty ⇒ `p`/`c` launch `claude --resume <id>` instead of fresh
+	// Agent picker menu: shown when shift+enter is pressed on a branch row.
+	pendingAgentPickerActive bool
+	pendingAgentPickerBranch *project.Branch
 	// Cleanup menu: active when the user pressed `x` on a branch row.
 	// Two stages: "kill" (one or more sessions live in the target; user
 	// must confirm SIGINT) then "action" (choose [w] worktree only / [b]
@@ -304,16 +309,16 @@ type Model struct {
 	ready      bool
 }
 
-func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
+func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
 	opsCtx := ops.NewContext(tmuxClient)
-	return NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, stateFilePath, ticketsCfg)
+	return NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, stateFilePath, ticketsCfg, agents)
 }
 
 // NewModelWithDeps is the test-friendly constructor — accepts ops interface
 // implementations so tests can inject mocks directly. Production code calls
 // NewModel, which wraps the concrete *ttmux.Client and claude package via
 // ops.NewContext.
-func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig) Model {
+func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
 	if opsCtx == nil {
 		opsCtx = &ops.Context{
 			Tmux:         tmuxClient,
@@ -350,6 +355,8 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 		projectMap = map[string]map[string]string{}
 	}
 
+	agentChoices, _ := config.LoadAgentChoices()
+
 	return Model{
 		screen:             ScreenDashboard,
 		list:               l,
@@ -357,6 +364,8 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 		tmux:               tmuxClient,
 		claude:             claudeReader,
 		ops:                opsCtx,
+		agents:             agents,
+		agentChoices:       agentChoices,
 		notifServer:        notifServer,
 		notifState:         make(sessionStateMap),
 		dashFocusLeft:      true,
@@ -655,6 +664,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Agent picker menu: non-destructive multi-option.
+		if m.pendingAgentPickerActive {
+			k := msg.String()
+			// Check each configured agent mnemonic.
+			for _, a := range m.agents {
+				if k == a.Key || k == strings.ToUpper(a.Key) {
+					branch := m.pendingAgentPickerBranch
+					agent := a
+					m.clearAgentPicker()
+					if branch == nil {
+						return m, nil
+					}
+					return m, m.launchBranchWithAgent(*branch, agent)
+				}
+			}
+			// Cancel keys.
+			switch k {
+			case "n", "N", "esc", "escape", "enter":
+				m.clearAgentPicker()
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// Import-external-session prompt captures all input while active.
 		// Destructive [y/N] (kills the external claude): only y/Y confirms.
 		if m.pendingImportSessionID != "" {
@@ -832,6 +865,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.pullRemoteSessionAndLaunch(row.branch.Name, *row.remoteMeta)
 				}
 				return m, nil
+			}
+
+		case key.Matches(msg, keys.AgentLaunch):
+			// Shift+enter opens the agent picker menu.
+			if m.screen == ScreenDashboard && m.dashFocusLeft {
+				// Dashboard project list: pick agent, then launch on main branch.
+				if sel, ok := m.list.SelectedItem().(ProjectItem); ok {
+					m.pendingAgentPickerActive = true
+					main := project.Branch{Name: "main", IsMain: true}
+					m.pendingAgentPickerBranch = &main
+					m.detailProject = &sel.project
+					return m, nil
+				}
+			}
+			if m.screen == ScreenProject && m.detailFocusLeft {
+				if m.detailCursor >= 0 && m.detailCursor < len(m.detailRows) {
+					row := m.detailRows[m.detailCursor]
+					if (row.kind == "branch" || row.kind == "br-empty") && row.branch != nil {
+						m.pendingAgentPickerActive = true
+						b := *row.branch
+						m.pendingAgentPickerBranch = &b
+						return m, nil
+					}
+				}
 			}
 
 		case key.Matches(msg, keys.Back):
@@ -1858,11 +1915,14 @@ func (m Model) dashboardView() string {
 	} else if m.pendingImportSessionID != "" {
 		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here) [y/N]", m.pendingImportProject)
 		footer = m.renderPrompt(question, yesNoBindings("import"))
+	} else if m.pendingAgentPickerActive {
+		footer = m.renderPrompt("Launch with:", withCancel(m.agentPickerBindings()))
 	} else {
 		footer = m.renderFooter([]footerBinding{
 			{"↑↓", "navigate"},
 			{"←→", "switch panel"},
 			{"enter", "open"},
+			{"⇧enter", "agent"},
 			{"n", "new session"},
 			{"a", "attach"},
 			{"/", "filter"},
@@ -1952,6 +2012,7 @@ func (m Model) helpView() string {
 			{"r", "Resume most recent session"},
 		}},
 		{"Branches (project detail)", []footerBinding{
+			{"⇧enter", "Pick coding agent before launching (Claude, Gemini, etc.)"},
 			{"w", "Open branch under cursor as a worktree"},
 			{"W", "Prompt for a new branch name + worktree"},
 			{"m", "Check out branch in main repo (refuse if dirty)"},
@@ -2025,6 +2086,58 @@ func withCancel(binds []footerBinding) []footerBinding {
 	return append(binds, footerBinding{"n", "cancel"})
 }
 
+// agentResumeCmd builds the shell command for resuming a session with the
+// given agent. If the agent has no ResumeCmd, falls back to a fresh launch.
+func agentResumeCmd(agent config.AgentConfig, sessionID string) string {
+	if agent.ResumeCmd != "" {
+		return agent.ResumeCmd + " " + sessionID
+	}
+	return agent.Cmd
+}
+
+// agentForBranch returns the agent to use for a project+branch. Resolution
+// order: saved choice > default agent.
+func (m Model) agentForBranch(projectName, branch string) config.AgentConfig {
+	if key := config.LookupAgentChoice(m.agentChoices, projectName, branch); key != "" {
+		if a := m.agentByKey(key); a != nil {
+			return *a
+		}
+	}
+	return m.defaultAgent()
+}
+
+// agentByKey looks up a configured agent by key, or nil.
+func (m Model) agentByKey(key string) *config.AgentConfig {
+	for i := range m.agents {
+		if m.agents[i].Key == key {
+			return &m.agents[i]
+		}
+	}
+	return nil
+}
+
+// defaultAgent returns the user's default agent config.
+func (m Model) defaultAgent() config.AgentConfig {
+	for _, a := range m.agents {
+		if a.Default {
+			return a
+		}
+	}
+	if len(m.agents) > 0 {
+		return m.agents[0]
+	}
+	return config.DefaultAgents()[0]
+}
+
+// agentPickerBindings builds footer bindings from the configured agents.
+func (m Model) agentPickerBindings() []footerBinding {
+	binds := make([]footerBinding, len(m.agents))
+	for i, a := range m.agents {
+		binds[i] = footerBinding{a.Key, a.Name}
+	}
+	return binds
+}
+
 // sessionView is one row per live Claude session — the unit every consumer
 // (dashboard, state file, sidebar, notification overrides) actually needs.
 // Built once per refresh in the refreshSessions goroutine and stashed on
@@ -2047,6 +2160,7 @@ type sessionView struct {
 	WindowName  string        // real tmux window name from sessionToWindowMap; composed fallback if unresolved
 	WindowID    string        // stable tmux window id (e.g. "@5"); empty when window couldn't be resolved
 	InstanceID  string        // mo-generated instance ID (from @mo_instance_id window option); empty for pre-refactor windows
+	AgentKey    string        // coding agent mnemonic (from @mo_agent window option); empty = default
 	Index       int           // 0 bare, 2+ ordinal, -1 custom-title (for ordering siblings)
 	Status      SessionStatus // raw status from poll (notif overrides applied in updateProjectStatuses)
 	Section     string        // "projects" | "external"
@@ -2169,6 +2283,7 @@ func (m Model) refreshSessions() tea.Cmd {
 				v.WindowName = w.Name
 				v.WindowID = w.ID
 				v.InstanceID = w.InstanceID
+				v.AgentKey = w.AgentKey
 			} else {
 				v.WindowName = composeFallbackWindow(v)
 			}
@@ -2599,6 +2714,7 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 		WindowName: v.WindowName,
 		WindowID:   v.WindowID,
 		InstanceID: v.InstanceID,
+		AgentKey:   v.AgentKey,
 		Status:     statusToString(v.Status),
 		Section:    v.Section,
 		SessionID:  v.SessionID,
@@ -2902,6 +3018,8 @@ func (m Model) projectDetailView() string {
 			{"c", "concurrent"},
 			{"esc", "cancel"},
 		})
+	case m.pendingAgentPickerActive:
+		footer = m.renderPrompt("Launch with:", withCancel(m.agentPickerBindings()))
 	default:
 		var bindings []footerBinding
 		if !m.detailFocusLeft && len(m.detailPRs) > 0 {
@@ -2922,6 +3040,7 @@ func (m Model) projectDetailView() string {
 				{"↑↓", "select"},
 				{"←→", "panel"},
 				{"enter", "resume"},
+				{"⇧enter", "agent"},
 				{"w", "worktree"},
 				{"m", "main"},
 				{"M", "stash+main"},
@@ -3359,7 +3478,7 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 				status = "Switched to " + windowName
 			}
 		} else {
-			launch := m.launchClaudeInWindow(windowName, wtPath, "claude")
+			launch := m.launchAgentInWindow(windowName, wtPath, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key)
 			if se, ok := launch.(statusMsgEvent); ok {
 				status = string(se)
 			}
@@ -3530,7 +3649,7 @@ func (m Model) launchSession() tea.Cmd {
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
-		return m.launchClaudeInWindow(windowName, cwd, "claude")
+		return m.launchAgentInWindow(windowName, cwd, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key)
 	}
 }
 
@@ -3585,19 +3704,31 @@ func (m *Model) clearPendingNewMenu() {
 	m.pendingNewResumeSession = ""
 }
 
+func (m *Model) clearAgentPicker() {
+	m.pendingAgentPickerActive = false
+	m.pendingAgentPickerBranch = nil
+}
+
 // parkAndLaunchPrimary is a thin TUI adapter over ops.ParkAndLaunch.
 func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID string) tea.Cmd {
+	agent := m.defaultAgent()
+	shellCmd := agent.Cmd
+	if resumeID != "" {
+		shellCmd = agentResumeCmd(agent, resumeID)
+	}
 	return func() tea.Msg {
 		_, err := ops.ParkAndLaunch(m.ops, ops.ParkParams{
 			PID:               pid,
 			PrimaryWindowName: primaryWindowName,
 			Cwd:               cwd,
 			ResumeID:          resumeID,
+			ShellCmd:          shellCmd,
+			AgentKey:          agent.Key,
 		})
 		if err != nil {
 			return statusMsgEvent(fmt.Sprintf("Park failed: %v", err))
 		}
-		return statusMsgEvent("Launched Claude in " + primaryWindowName)
+		return statusMsgEvent("Launched " + agent.Name + " in " + primaryWindowName)
 	}
 }
 
@@ -3638,7 +3769,7 @@ func (m Model) focusExistingWorktree(projectName, branch, wtPath string) tea.Cmd
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
-		return m.launchClaudeInWindow(windowName, wtPath, "claude")
+		return m.launchAgentInWindow(windowName, wtPath, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key)
 	}
 }
 
@@ -3674,7 +3805,7 @@ func (m Model) removeAndRecreateWorktree(projectPath, projectName, branch string
 				status = "Switched to " + windowName
 			}
 		} else {
-			launch := m.launchClaudeInWindow(windowName, wtPath, "claude")
+			launch := m.launchAgentInWindow(windowName, wtPath, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key)
 			if se, ok := launch.(statusMsgEvent); ok {
 				status = string(se)
 			}
@@ -3736,35 +3867,41 @@ func (m Model) runCleanup(projectPath, branch string, alsoDeleteBranch bool) tea
 
 // launchSiblingSession is a thin TUI adapter over ops.LaunchSibling.
 func (m Model) launchSiblingSession(project, branch, cwd, resumeID string) tea.Cmd {
+	agent := m.defaultAgent()
+	shellCmd := agent.Cmd
+	if resumeID != "" {
+		shellCmd = agentResumeCmd(agent, resumeID)
+	}
 	return func() tea.Msg {
 		res, err := ops.LaunchSibling(m.ops, ops.SiblingParams{
 			ProjectName: project,
 			Branch:      branch,
 			Cwd:         cwd,
 			ResumeID:    resumeID,
+			ShellCmd:    shellCmd,
+			AgentKey:    agent.Key,
 		})
 		if err != nil {
 			return statusMsgEvent(fmt.Sprintf("Sibling launch failed: %v", err))
 		}
-		return statusMsgEvent("Launched Claude in " + res.Target)
+		return statusMsgEvent("Launched " + agent.Name + " in " + res.Target)
 	}
 }
 
-// launchClaudeInWindow is a thin TUI adapter over ops.LaunchSession. The
-// ops call does the tmux ceremony; this wrapper maps the typed result back
-// into the statusMsgEvent the bubbletea Update loop expects.
-func (m Model) launchClaudeInWindow(windowName, cwd, shellCmd string) tea.Msg {
+// launchAgentInWindow launches a coding agent session in a new tmux window.
+func (m Model) launchAgentInWindow(windowName, cwd, shellCmd, agentName, agentKey string) tea.Msg {
 	_, err := ops.LaunchSession(m.ops, ops.LaunchParams{
 		WindowName:    windowName,
 		Cwd:           cwd,
 		ShellCmd:      shellCmd,
+		AgentKey:      agentKey,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	})
 	if err != nil {
 		return statusMsgEvent(fmt.Sprintf("Launch failed: %v", err))
 	}
-	return statusMsgEvent("Launched Claude in " + windowName)
+	return statusMsgEvent("Launched " + agentName + " in " + windowName)
 }
 
 // launchWorktreeSession opens a Claude session in the given worktree's directory.
@@ -3803,7 +3940,7 @@ func (m Model) launchWorktreeSession(wt project.Worktree) tea.Cmd {
 			}
 			return statusMsgEvent("Switched to " + windowName)
 		}
-		return m.launchClaudeInWindow(windowName, wt.Path, "claude")
+		return m.launchAgentInWindow(windowName, wt.Path, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key)
 	}
 }
 
@@ -3935,7 +4072,7 @@ func (m Model) resumeSession() tea.Cmd {
 		}
 		// Live session reports existence but no tmux window (shouldn't
 		// normally happen) — launch a fresh window that resumes it.
-		return m.launchClaudeInWindow(bareName, cwd, fmt.Sprintf("claude --resume %s", session.SessionID))
+		return m.launchAgentInWindow(bareName, cwd, agentResumeCmd(m.defaultAgent(), session.SessionID), m.defaultAgent().Name, m.defaultAgent().Key)
 	}
 }
 
@@ -3992,10 +4129,12 @@ func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string)
 // launchResumeInWindow is a thin TUI adapter over ops.LaunchSession that
 // passes `claude --resume <id>` as the shell command.
 func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) tea.Msg {
+	agent := m.defaultAgent()
 	_, err := ops.LaunchSession(m.ops, ops.LaunchParams{
 		WindowName:    windowName,
 		Cwd:           projectPath,
-		ShellCmd:      fmt.Sprintf("claude --resume %s", sessionID),
+		ShellCmd:      agentResumeCmd(agent, sessionID),
+		AgentKey:      agent.Key,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	})
@@ -4153,9 +4292,91 @@ func (m Model) resumeBranchSmart(b project.Branch) tea.Cmd {
 		wt := project.Worktree{Path: b.WorktreePath, Branch: b.Name}
 		return m.launchWorktreeSession(wt)
 	case b.IsMain:
-		return func() tea.Msg { return m.launchClaudeInWindow(p.Name, p.Path, "claude") }
+		return func() tea.Msg { return m.launchAgentInWindow(p.Name, p.Path, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key) }
 	default:
 		return m.createWorktreeAndLaunch(b.Name)
+	}
+}
+
+// launchBranchWithAgent is like resumeBranchSmart but launches the given
+// coding agent instead of the default. Used by the shift+enter agent picker.
+func (m Model) launchBranchWithAgent(b project.Branch, agent config.AgentConfig) tea.Cmd {
+	p := m.detailProject
+	if p == nil {
+		return func() tea.Msg { return statusMsgEvent("No project selected") }
+	}
+	switch {
+	case b.WorktreePath != "":
+		// Existing worktree: focus if live, else launch with chosen agent.
+		return m.launchWorktreeSessionWithAgent(project.Worktree{Path: b.WorktreePath, Branch: b.Name}, agent)
+	case b.IsMain:
+		return func() tea.Msg { return m.launchAgentInWindow(p.Name, p.Path, agent.Cmd, agent.Name, agent.Key) }
+	default:
+		return m.createWorktreeAndLaunchWithAgent(b.Name, agent)
+	}
+}
+
+// launchWorktreeSessionWithAgent mirrors launchWorktreeSession but uses the
+// given agent command instead of "claude".
+func (m Model) launchWorktreeSessionWithAgent(wt project.Worktree, agent config.AgentConfig) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		if m.tmux == nil {
+			return statusMsgEvent("tmux not available")
+		}
+		branch := wt.Branch
+		if branch == "" {
+			if len(wt.HEAD) >= 8 {
+				branch = wt.HEAD[:8]
+			} else {
+				branch = "detached"
+			}
+		}
+		if attempted, realWin, err := m.focusPrimaryIfLive(p.Name, branch, wt.Path); attempted {
+			if err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + realWin)
+		}
+		windowName := p.Name + "@" + branch
+		if existed, err := m.focusIfExists(windowName); existed {
+			if err != nil {
+				return statusMsgEvent(fmt.Sprintf("Failed to switch: %v", err))
+			}
+			return statusMsgEvent("Switched to " + windowName)
+		}
+		return m.launchAgentInWindow(windowName, wt.Path, agent.Cmd, agent.Name, agent.Key)
+	}
+}
+
+// createWorktreeAndLaunchWithAgent mirrors createWorktreeAndLaunch but passes
+// the agent command through to the ops layer.
+func (m Model) createWorktreeAndLaunchWithAgent(branch string, agent config.AgentConfig) tea.Cmd {
+	return func() tea.Msg {
+		p := m.detailProject
+		if p == nil {
+			return statusMsgEvent("No project selected")
+		}
+		res, err := ops.CreateWorktreeAndLaunch(m.ops, ops.WorktreeParams{
+			ProjectName: p.Name,
+			ProjectPath: p.Path,
+			Branch:      branch,
+			ShellCmd:    agent.Cmd,
+			AgentKey:    agent.Key,
+		})
+		if err != nil {
+			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
+		}
+		if res.ExistsConflict {
+			return worktreeExistsMsg{
+				branch:       branch,
+				worktreePath: res.WorktreePath,
+			}
+		}
+		return worktreeCreatedMsg{status: res.Status}
 	}
 }
 
@@ -4196,7 +4417,7 @@ func (m Model) openBranchInMain(branch string, force bool) tea.Cmd {
 				status = fmt.Sprintf("checked out %s but failed to switch window: %v", branch, err)
 			}
 		} else {
-			if se, ok := m.launchClaudeInWindow(p.Name, p.Path, "claude").(statusMsgEvent); ok {
+			if se, ok := m.launchAgentInWindow(p.Name, p.Path, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key).(statusMsgEvent); ok {
 				status = string(se)
 			}
 		}
@@ -4232,7 +4453,7 @@ func (m Model) attachSession() tea.Cmd {
 	}
 }
 
-func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig) error {
+func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
 		// Use the actual current session — the user may be in a session
@@ -4257,7 +4478,7 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 		defer ns.Stop()
 	}
 
-	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg)
+	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg, agents)
 	p := tea.NewProgram(m)
 	_, err := p.Run()
 

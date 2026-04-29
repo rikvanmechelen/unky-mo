@@ -539,7 +539,7 @@ func (m Model) startWorkOnTicket(t *tickets.Ticket, moProjectName string) (Model
 			}
 		}
 		if m.tmux != nil {
-			if se, ok := m.launchClaudeInWindow(windowName, existing, "claude").(statusMsgEvent); ok {
+			if se, ok := m.launchAgentInWindow(windowName, existing, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key).(statusMsgEvent); ok {
 				m.screen = ScreenDashboard
 				return m, func() tea.Msg { return statusMsgEvent(string(se)) }
 			}

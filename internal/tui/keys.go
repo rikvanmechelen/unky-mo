@@ -4,6 +4,7 @@ import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
 	Enter            key.Binding
+	AgentLaunch      key.Binding // shift+enter — pick which coding agent to launch
 	Back             key.Binding
 	New              key.Binding
 	Attach           key.Binding
@@ -27,6 +28,10 @@ var keys = keyMap{
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "open"),
+	),
+	AgentLaunch: key.NewBinding(
+		key.WithKeys("shift+enter"),
+		key.WithHelp("⇧enter", "agent"),
 	),
 	Back: key.NewBinding(
 		key.WithKeys("esc", "backspace"),

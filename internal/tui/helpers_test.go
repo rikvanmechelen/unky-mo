@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rvanmech/unky-mo/internal/config"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
 	"github.com/rvanmech/unky-mo/internal/state"
@@ -502,6 +503,42 @@ func TestStateFileInstanceIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStateFileAgentKeyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/state.json"
+
+	sf := &state.StateFile{
+		TmuxSession: "mo",
+		Projects: []state.ProjectState{
+			{
+				Name:     "alpha",
+				WindowID: "@5",
+				AgentKey: "g",
+				Status:   "active",
+			},
+			{
+				Name:     "beta",
+				WindowID: "@6",
+				// No AgentKey — default agent
+				Status: "idle",
+			},
+		},
+	}
+	if err := state.Write(path, sf); err != nil {
+		t.Fatal(err)
+	}
+	got, err := state.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Projects[0].AgentKey != "g" {
+		t.Errorf("AgentKey lost on round-trip: got %q", got.Projects[0].AgentKey)
+	}
+	if got.Projects[1].AgentKey != "" {
+		t.Errorf("empty AgentKey should stay empty: got %q", got.Projects[1].AgentKey)
+	}
+}
+
 // TestHelpViewContainsAllSectionHeaders — helpView is essentially static
 // (doesn't read Model fields beyond the receiver). Lock in the section
 // headers so a future refactor doesn't accidentally drop a category.
@@ -515,11 +552,85 @@ func TestHelpViewContainsAllSectionHeaders(t *testing.T) {
 		}
 	}
 	// Spot-check a few binding descriptions so a removal surfaces.
-	wantBindings := []string{"Move up", "New session", "Toggle this help", "Quit"}
+	wantBindings := []string{"Move up", "New session", "Toggle this help", "Quit", "Pick coding agent"}
 	for _, b := range wantBindings {
 		if !contains(out, b) {
 			t.Errorf("helpView missing binding %q", b)
 		}
+	}
+}
+
+func TestAgentResumeCmd(t *testing.T) {
+	claude := config.AgentConfig{Name: "Claude", Cmd: "claude", ResumeCmd: "claude --resume"}
+	if got := agentResumeCmd(claude, "abc-123"); got != "claude --resume abc-123" {
+		t.Errorf("claude resume: got %q", got)
+	}
+	gemini := config.AgentConfig{Name: "Gemini", Cmd: "gemini"}
+	if got := agentResumeCmd(gemini, "abc-123"); got != "gemini" {
+		t.Errorf("gemini (no resume): got %q", got)
+	}
+}
+
+func TestDefaultAgent(t *testing.T) {
+	m := Model{
+		agents: []config.AgentConfig{
+			{Name: "Gemini", Key: "g", Cmd: "gemini"},
+			{Name: "Claude", Key: "c", Cmd: "claude", Default: true},
+		},
+	}
+	got := m.defaultAgent()
+	if got.Key != "c" {
+		t.Errorf("want default Claude, got %q", got.Key)
+	}
+}
+
+func TestDefaultAgentFallback(t *testing.T) {
+	m := Model{
+		agents: []config.AgentConfig{
+			{Name: "Gemini", Key: "g", Cmd: "gemini"},
+		},
+	}
+	got := m.defaultAgent()
+	if got.Key != "g" {
+		t.Errorf("want first (Gemini), got %q", got.Key)
+	}
+}
+
+func TestAgentPickerBindings(t *testing.T) {
+	m := Model{
+		agents: []config.AgentConfig{
+			{Name: "Claude", Key: "c", Cmd: "claude"},
+			{Name: "Gemini CLI", Key: "g", Cmd: "gemini"},
+			{Name: "Codex CLI", Key: "x", Cmd: "codex"},
+		},
+	}
+	got := m.agentPickerBindings()
+	if len(got) != 3 {
+		t.Fatalf("want 3 bindings, got %d", len(got))
+	}
+	if got[0].key != "c" || got[0].desc != "Claude" {
+		t.Errorf("binding[0] = %+v, want {c, Claude}", got[0])
+	}
+	if got[1].key != "g" || got[1].desc != "Gemini CLI" {
+		t.Errorf("binding[1] = %+v, want {g, Gemini CLI}", got[1])
+	}
+	if got[2].key != "x" || got[2].desc != "Codex CLI" {
+		t.Errorf("binding[2] = %+v, want {x, Codex CLI}", got[2])
+	}
+}
+
+func TestAgentPickerBindingsSingle(t *testing.T) {
+	m := Model{
+		agents: []config.AgentConfig{
+			{Name: "Claude", Key: "c", Cmd: "claude"},
+		},
+	}
+	got := m.agentPickerBindings()
+	if len(got) != 1 {
+		t.Fatalf("want 1 binding, got %d", len(got))
+	}
+	if got[0].key != "c" || got[0].desc != "Claude" {
+		t.Errorf("binding = %+v, want {c, Claude}", got[0])
 	}
 }
 
