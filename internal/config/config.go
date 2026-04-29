@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -23,6 +24,106 @@ type Config struct {
 	NotifySound   bool              `toml:"notify_sound"`
 	Projects      []project.Project `toml:"project"`
 	Tickets       TicketsConfig     `toml:"tickets"`
+	Agents        []AgentConfig     `toml:"agent"`
+}
+
+// AgentConfig describes a coding agent that can be launched in a tmux pane.
+type AgentConfig struct {
+	Name      string `toml:"name"`
+	Key       string `toml:"key"`        // single mnemonic char for the picker menu
+	Cmd       string `toml:"cmd"`        // shell command to exec (e.g. "claude", "gemini")
+	ResumeCmd string `toml:"resume_cmd"` // optional resume command prefix (e.g. "claude --resume")
+	Default   bool   `toml:"default"`    // at most one; used by bare enter
+}
+
+// DefaultAgents returns the built-in agent list used when no [[agent]] blocks
+// are configured. Currently just Claude.
+func DefaultAgents() []AgentConfig {
+	return []AgentConfig{
+		{Name: "Claude", Key: "c", Cmd: "claude", ResumeCmd: "claude --resume", Default: true},
+	}
+}
+
+// DefaultAgent returns the agent marked Default, or the first agent if none
+// is marked. Returns nil only when Agents is empty.
+func (c *Config) DefaultAgent() *AgentConfig {
+	for i := range c.Agents {
+		if c.Agents[i].Default {
+			return &c.Agents[i]
+		}
+	}
+	if len(c.Agents) > 0 {
+		return &c.Agents[0]
+	}
+	return nil
+}
+
+// AgentByKey looks up a configured agent by its mnemonic key. Returns nil if
+// no agent has the given key.
+func (c *Config) AgentByKey(key string) *AgentConfig {
+	for i := range c.Agents {
+		if c.Agents[i].Key == key {
+			return &c.Agents[i]
+		}
+	}
+	return nil
+}
+
+// AddAgent appends a new agent to the config. Returns an error if the key or
+// name is already in use, or if required fields are empty.
+func (c *Config) AddAgent(a AgentConfig) error {
+	if a.Name == "" {
+		return fmt.Errorf("agent name is required")
+	}
+	if a.Key == "" {
+		return fmt.Errorf("agent key is required")
+	}
+	if a.Cmd == "" {
+		return fmt.Errorf("agent cmd is required")
+	}
+	for _, existing := range c.Agents {
+		if existing.Key == a.Key {
+			return fmt.Errorf("agent key %q already in use by %q", a.Key, existing.Name)
+		}
+		if existing.Name == a.Name {
+			return fmt.Errorf("agent name %q already exists", a.Name)
+		}
+	}
+	c.Agents = append(c.Agents, a)
+	return nil
+}
+
+// RemoveAgent removes the agent with the given key. Refuses to remove the
+// last remaining agent.
+func (c *Config) RemoveAgent(key string) error {
+	if len(c.Agents) <= 1 {
+		return fmt.Errorf("cannot remove the last agent")
+	}
+	for i, a := range c.Agents {
+		if a.Key == key {
+			c.Agents = append(c.Agents[:i], c.Agents[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("no agent with key %q", key)
+}
+
+// SetDefaultAgent marks the agent with the given key as default and clears
+// the flag on all others.
+func (c *Config) SetDefaultAgent(key string) error {
+	found := false
+	for i := range c.Agents {
+		if c.Agents[i].Key == key {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no agent with key %q", key)
+	}
+	for i := range c.Agents {
+		c.Agents[i].Default = c.Agents[i].Key == key
+	}
+	return nil
 }
 
 // TicketsConfig controls the dashboard tickets panel. Nested providers are
@@ -81,6 +182,7 @@ func Load() (*Config, error) {
 
 	path := DefaultConfigPath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		cfg.Agents = DefaultAgents()
 		return cfg, nil
 	}
 
@@ -102,6 +204,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Tickets.PerBucketLimit <= 0 {
 		cfg.Tickets.PerBucketLimit = defaultTicketsPerBucketLimit
+	}
+	if len(cfg.Agents) == 0 {
+		cfg.Agents = DefaultAgents()
 	}
 
 	return cfg, nil
