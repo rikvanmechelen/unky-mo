@@ -438,6 +438,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		return m, nil
 
+	case mouseEnterMsg:
+		// Sent by mouse click handlers after selecting an item. Dispatches the
+		// same enter-key logic without duplicating it.
+		return m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
 			return m.handleMouseClick(msg.X, msg.Y)

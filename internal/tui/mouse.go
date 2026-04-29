@@ -5,6 +5,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// mouseEnterMsg is an internal message sent after a mouse click selects an
+// item. It causes the Update loop to run the same enter-key logic as if the
+// user had pressed enter, without duplicating that code in the mouse handler.
+type mouseEnterMsg struct{}
+
+func fireMouseEnter() tea.Msg { return mouseEnterMsg{} }
+
 // dashboardLayout holds Y-coordinate boundaries for the dashboard's clickable
 // regions, mirroring dashboardView()'s rendering logic. Computed fresh on each
 // click so it always agrees with what's on screen.
@@ -290,7 +297,7 @@ func (m Model) handleDashboardClick(x, y int) (tea.Model, tea.Cmd) {
 		}
 		m.list.Select(idx)
 		m.dashFocusLeft = true
-		return m, nil
+		return m, fireMouseEnter
 	}
 
 	if x >= l.rightX0 {
@@ -299,13 +306,13 @@ func (m Model) handleDashboardClick(x, y int) (tea.Model, tea.Cmd) {
 			m.dashFocusLeft = false
 			m.dashRightFocus = dashRightSessions
 			m.dashSessionCursor = si
-			return m, nil
+			return m, fireMouseEnter
 		}
 		if ti, ok := l.ticketRowY[y]; ok {
 			m.dashFocusLeft = false
 			m.dashRightFocus = dashRightTickets
 			m.ticketsCursor = ti
-			return m, nil
+			return m, fireMouseEnter
 		}
 	}
 
@@ -326,7 +333,7 @@ func (m Model) handleProjectClick(x, y int) (tea.Model, tea.Cmd) {
 			m.detailFocusLeft = true
 			m.detailCursor = ri
 			m.loadRecap()
-			return m, nil
+			return m, fireMouseEnter
 		}
 		return m, nil
 	}
@@ -336,7 +343,7 @@ func (m Model) handleProjectClick(x, y int) (tea.Model, tea.Cmd) {
 		if pi, ok := l.prRowY[y]; ok && pi >= 0 && pi < len(m.detailPRs) {
 			m.detailFocusLeft = false
 			m.detailPRCursor = pi
-			return m, nil
+			return m, fireMouseEnter
 		}
 		return m, nil
 	}
