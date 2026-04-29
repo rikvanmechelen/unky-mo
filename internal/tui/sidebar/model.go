@@ -22,6 +22,7 @@ type SidebarItem struct {
 	WindowName string // tmux window target; empty for Home (window 0)
 	WindowID   string // stable tmux window id (e.g. "@5"); empty when unresolved
 	InstanceID string // mo-generated instance ID; empty for pre-refactor rows
+	AgentKey   string // coding agent mnemonic (from @mo_agent); empty = default
 	Status     string // "none", "active", "idle", "permission", "external"
 	Parent     string // non-empty for worktree entries (parent project name)
 	Section    string // "projects" (default) or "external" — groups stray sessions
@@ -65,6 +66,7 @@ type Model struct {
 	windowID   string // stable tmux window id (e.g. "@5"); survives renames
 	windowPath string
 	instanceID string // mo-generated instance ID (from --instance-id flag); the primary key for binding sidebar+terminals
+	agentKey   string // coding agent mnemonic for the own window; empty = Claude (default)
 	width      int
 	height     int
 	// Terminal drawer state
@@ -734,6 +736,7 @@ func (m *Model) refreshState() {
 			WindowName: p.WindowName,
 			WindowID:   p.WindowID,
 			InstanceID: p.InstanceID,
+			AgentKey:   p.AgentKey,
 			Status:     p.Status,
 			Parent:     p.Parent,
 			Section:    p.Section,
@@ -755,13 +758,23 @@ func (m *Model) refreshState() {
 	m.items = items
 	m.usage = sf.Usage
 	m.sessionTokens = 0
-	if sid := m.ownSessionID(sf); sid != "" {
+	// Detect own agent and session.
+	m.agentKey = m.ownAgentKey(sf)
+	isClaude := m.agentKey == "" || m.agentKey == "c"
+
+	if sid := m.ownSessionID(sf); sid != "" && isClaude {
 		jsonl := filepath.Join(m.claude.ProjectsDirForPath(m.windowPath), sid+".jsonl")
 		m.sessionTokens = usage.SessionTokens(jsonl)
+	} else if !isClaude {
+		m.sessionTokens = 0
 	}
 	m.refreshTerminals()
 	m.refreshChangedFiles()
-	m.activeShells = m.claude.ActiveShellsForSession(m.windowPath)
+	if isClaude {
+		m.activeShells = m.claude.ActiveShellsForSession(m.windowPath)
+	} else {
+		m.activeShells = nil
+	}
 	// Sync status is checked on init and after push, not every tick
 	// (moSync.List does git pull which is too slow for 1s polling)
 
@@ -779,6 +792,28 @@ func (m *Model) refreshState() {
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1
 	}
+}
+
+// ownAgentKey returns the agent key for this sidebar's own window from the
+// state file. Empty string means Claude (default).
+func (m *Model) ownAgentKey(sf *state.StateFile) string {
+	if sf == nil {
+		return ""
+	}
+	if m.instanceID != "" {
+		for _, p := range sf.Projects {
+			if p.InstanceID == m.instanceID {
+				return p.AgentKey
+			}
+		}
+	}
+	// Fallback: match by window ID or name.
+	for _, p := range sf.Projects {
+		if itemMatchesOwnWindow(SidebarItem{WindowName: p.WindowName, WindowID: p.WindowID, InstanceID: p.InstanceID}, m.instanceID, m.windowID, m.windowName) {
+			return p.AgentKey
+		}
+	}
+	return ""
 }
 
 // ownSessionID returns the Claude session ID for this sidebar's own window.
