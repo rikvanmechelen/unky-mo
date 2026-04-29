@@ -44,6 +44,7 @@ func main() {
 	rootCmd.AddCommand(hooksCmd())
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(jiraCmd())
+	rootCmd.AddCommand(agentsCmd())
 	rootCmd.AddCommand(sidebarCmd())
 	rootCmd.AddCommand(debugCmd())
 	rootCmd.AddCommand(versionCmd())
@@ -68,7 +69,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading projects: %w", err)
 	}
-	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets)
+	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents)
 }
 
 func listCmd() *cobra.Command {
@@ -256,9 +257,10 @@ func startCmd() *cobra.Command {
 				return nil
 			}
 
-			shellCmd := "claude"
+			agent := cfg.DefaultAgent()
+			shellCmd := agent.Cmd
 			if prompt != "" {
-				shellCmd = fmt.Sprintf("claude -p %q", prompt)
+				shellCmd = fmt.Sprintf("%s -p %q", agent.Cmd, prompt)
 			}
 
 			ctx := ops.NewContext(tc)
@@ -268,13 +270,14 @@ func startCmd() *cobra.Command {
 				WindowName:    windowName,
 				Cwd:           projectPath,
 				ShellCmd:      shellCmd,
+				AgentKey:      agent.Key,
 				AttachSidebar: true,
 				SwitchFocus:   false, // CLI invocation from outside tmux: skip switch
 			})
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Started Claude session in %s (tmux: %s)\n", windowName, res.Target)
+			fmt.Printf("Started %s session in %s (tmux: %s)\n", agent.Name, windowName, res.Target)
 			return nil
 		},
 	}
@@ -394,11 +397,16 @@ func resumeCmd() *cobra.Command {
 				return fmt.Errorf("creating window: %w", err)
 			}
 
-			resumeCmd := fmt.Sprintf("exec claude --resume %s", sessionID)
-			if err := tc.SendKeys(target, resumeCmd); err != nil {
+			agent := cfg.DefaultAgent()
+			shellCmd := "exec " + agent.Cmd
+			if agent.ResumeCmd != "" {
+				shellCmd = fmt.Sprintf("exec %s %s", agent.ResumeCmd, sessionID)
+			}
+			if err := tc.SendKeys(target, shellCmd); err != nil {
 				return fmt.Errorf("resuming session: %w", err)
 			}
 
+			tc.SetWindowOption(target, "@mo_agent", agent.Key)
 			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
 
@@ -596,11 +604,16 @@ func syncCmd() *cobra.Command {
 				return fmt.Errorf("creating window: %w", err)
 			}
 
-			resumeCmd := fmt.Sprintf("exec claude --resume %s", meta.SessionID)
-			if err := tc.SendKeys(target, resumeCmd); err != nil {
+			agent := cfg.DefaultAgent()
+			syncShellCmd := "exec " + agent.Cmd
+			if agent.ResumeCmd != "" {
+				syncShellCmd = fmt.Sprintf("exec %s %s", agent.ResumeCmd, meta.SessionID)
+			}
+			if err := tc.SendKeys(target, syncShellCmd); err != nil {
 				return fmt.Errorf("resuming session: %w", err)
 			}
 
+			tc.SetWindowOption(target, "@mo_agent", agent.Key)
 			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
 
