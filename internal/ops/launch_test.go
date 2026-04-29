@@ -108,6 +108,63 @@ func TestLaunchSessionResumeCommand(t *testing.T) {
 	}
 }
 
+func TestLaunchSessionSetsAgentKey(t *testing.T) {
+	ctx, tmux, _ := newTestContext(t)
+
+	tmux.EXPECT().CreateWindow("myproj", "/ws/myproj").Return("mo:@1", nil)
+	expectInstanceID(tmux)
+	tmux.EXPECT().SetWindowOption("mo:@1", "@mo_agent", "g").Return(nil)
+	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
+	tmux.EXPECT().SendKeys("mo:@1", "exec gemini").Return(nil)
+	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
+	tmux.EXPECT().SplitWindow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("%2", nil)
+	tmux.EXPECT().SelectPane(gomock.Any()).Return(nil)
+	tmux.EXPECT().SwitchToWindow(gomock.Any()).Return(nil)
+
+	res, err := LaunchSession(ctx, LaunchParams{
+		WindowName:    "myproj",
+		Cwd:           "/ws/myproj",
+		ShellCmd:      "gemini",
+		AgentKey:      "g",
+		AttachSidebar: true,
+		SwitchFocus:   true,
+	})
+	if err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	if res.AgentKey != "g" {
+		t.Errorf("AgentKey: want %q, got %q", "g", res.AgentKey)
+	}
+}
+
+func TestLaunchSessionOmitsAgentKeyWhenEmpty(t *testing.T) {
+	ctx, tmux, _ := newTestContext(t)
+
+	tmux.EXPECT().CreateWindow("myproj", "/ws/myproj").Return("mo:@1", nil)
+	expectInstanceID(tmux)
+	// No SetWindowOption("@mo_agent"...) call expected
+	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
+	tmux.EXPECT().SendKeys("mo:@1", "exec claude").Return(nil)
+	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
+	tmux.EXPECT().SplitWindow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("%2", nil)
+	tmux.EXPECT().SelectPane(gomock.Any()).Return(nil)
+	tmux.EXPECT().SwitchToWindow(gomock.Any()).Return(nil)
+
+	res, err := LaunchSession(ctx, LaunchParams{
+		WindowName:    "myproj",
+		Cwd:           "/ws/myproj",
+		ShellCmd:      "claude",
+		AttachSidebar: true,
+		SwitchFocus:   true,
+	})
+	if err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	if res.AgentKey != "" {
+		t.Errorf("AgentKey should be empty when not set, got %q", res.AgentKey)
+	}
+}
+
 func TestLaunchSessionCreateWindowError(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 	tmux.EXPECT().CreateWindow("myproj", "/ws").Return("", errors.New("tmux: duplicate window"))

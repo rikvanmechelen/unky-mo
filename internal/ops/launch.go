@@ -11,6 +11,7 @@ type LaunchParams struct {
 	WindowName string // tmux window name (e.g. "myproj" or "myproj@feat")
 	Cwd        string // working directory for both the Claude pane and sidebar
 	ShellCmd   string // command to exec in the claude pane; typically "claude" or "claude --resume <id>"
+	AgentKey   string // coding agent mnemonic (e.g. "c", "g"); stored as @mo_agent tmux window option
 	// AttachSidebar adds a second pane running `mo sidebar`. Default true —
 	// CLI and TUI both want it. Set false for environments where the sidebar
 	// isn't useful (tests; future headless runs).
@@ -24,6 +25,7 @@ type LaunchResult struct {
 	Target       string // "session:window"
 	ClaudePaneID string // "%N" — useful for the pane-exited hook + tests
 	InstanceID   string // mo-generated instance ID stored as @mo_instance_id window option
+	AgentKey     string // coding agent mnemonic stored as @mo_agent window option
 	SwitchedTo   bool   // true when SwitchFocus was requested and tmux switched
 }
 
@@ -57,6 +59,14 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 	instanceID := ttmux.GenerateInstanceID()
 	if err := ctx.Tmux.SetWindowOption(target, "@mo_instance_id", instanceID); err == nil {
 		res.InstanceID = instanceID
+	}
+
+	// Store the agent key so the sidebar and session poller know which
+	// coding agent is running in this window.
+	if p.AgentKey != "" {
+		if err := ctx.Tmux.SetWindowOption(target, "@mo_agent", p.AgentKey); err == nil {
+			res.AgentKey = p.AgentKey
+		}
 	}
 
 	// Capture the claude pane ID before we split off the sidebar — once the

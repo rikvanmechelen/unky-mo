@@ -14,6 +14,8 @@ type WorktreeParams struct {
 	ProjectName string
 	ProjectPath string // main repo path
 	Branch      string // branch name (created if missing)
+	ShellCmd    string // command to exec; empty defaults to "claude" via LaunchSession
+	AgentKey    string // coding agent mnemonic; stored as @mo_agent on the tmux window
 }
 
 // WorktreeResult reports the outcome.
@@ -77,6 +79,8 @@ func CreateWorktreeAndLaunch(ctx *Context, p WorktreeParams) (*WorktreeResult, e
 	if _, err := LaunchSession(ctx, LaunchParams{
 		WindowName:    windowName,
 		Cwd:           wtPath,
+		ShellCmd:      p.ShellCmd,
+		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	}); err != nil {

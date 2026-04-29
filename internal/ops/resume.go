@@ -12,6 +12,8 @@ type ResumeParams struct {
 	SessionID  string // optional — when set, used to locate an already-running window
 	WindowName string // starting-point tmux window name; may be overridden if session is live elsewhere
 	Cwd        string // working directory for launch fallback
+	ShellCmd   string // resume command (e.g. "claude --resume <id>"); empty defaults to "claude --resume <SessionID>"
+	AgentKey   string // coding agent mnemonic for the @mo_agent window option
 }
 
 // ResumeResult reports what happened.
@@ -43,11 +45,16 @@ func ResumeInDir(ctx *Context, p ResumeParams) (*ResumeResult, error) {
 		res.Switched = true
 		return res, nil
 	}
-	// Fall back: spawn a new window running `claude --resume <id>`.
+	// Fall back: spawn a new window running the resume command.
+	shellCmd := p.ShellCmd
+	if shellCmd == "" {
+		shellCmd = fmt.Sprintf("claude --resume %s", p.SessionID)
+	}
 	launch, err := LaunchSession(ctx, LaunchParams{
 		WindowName:    windowName,
 		Cwd:           p.Cwd,
-		ShellCmd:      fmt.Sprintf("claude --resume %s", p.SessionID),
+		ShellCmd:      shellCmd,
+		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	})

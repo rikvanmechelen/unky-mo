@@ -22,6 +22,7 @@ type ProjectState struct {
 	Dirty      int    `json:"dirty,omitempty"`      // dirty file count (populated for git-backed strays)
 	SessionID  string `json:"session_id,omitempty"`  // Claude session ID running in this window (empty if none)
 	InstanceID string `json:"instance_id,omitempty"` // mo-generated instance ID (from @mo_instance_id window option)
+	AgentKey   string `json:"agent_key,omitempty"`   // coding agent mnemonic (from @mo_agent window option); empty = default
 	Index      int    `json:"index,omitempty"`       // 0 = primary, 2+ = sibling ordinal; for stable sort
 }
 

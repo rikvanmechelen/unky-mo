@@ -13,6 +13,8 @@ type ImportParams struct {
 	SessionID  string // session ID to resume after the orphan exits
 	Cwd        string // working directory for the new window
 	WindowName string // tmux window name for the new window (typically project's display name)
+	ShellCmd   string // resume command; empty defaults to "claude --resume <SessionID>"
+	AgentKey   string // coding agent mnemonic for the @mo_agent window option
 }
 
 // ImportResult describes the outcome.
@@ -50,10 +52,15 @@ func ImportExternalSession(ctx *Context, p ImportParams) (*ImportResult, error) 
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	shellCmd := p.ShellCmd
+	if shellCmd == "" {
+		shellCmd = fmt.Sprintf("claude --resume %s", p.SessionID)
+	}
 	launch, err := LaunchSession(ctx, LaunchParams{
 		WindowName:    p.WindowName,
 		Cwd:           p.Cwd,
-		ShellCmd:      fmt.Sprintf("claude --resume %s", p.SessionID),
+		ShellCmd:      shellCmd,
+		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	})

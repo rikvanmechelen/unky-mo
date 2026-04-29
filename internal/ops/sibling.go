@@ -14,7 +14,9 @@ type ParkParams struct {
 	PID               int    // claude PID of the session to park (SIGINT + wait)
 	PrimaryWindowName string // name of the window hosting that session; will be killed
 	Cwd               string // working dir for the replacement window
-	ResumeID          string // if non-empty, replacement runs `claude --resume <id>`
+	ResumeID          string // if non-empty, replacement runs the agent's resume command
+	ShellCmd          string // explicit shell command; empty → agent default or resume
+	AgentKey          string // coding agent mnemonic for the @mo_agent window option
 }
 
 // ParkAndLaunch signals the current primary's Claude to exit, waits for it
@@ -30,14 +32,18 @@ func ParkAndLaunch(ctx *Context, p ParkParams) (*LaunchResult, error) {
 	}
 	SignalAndWaitExit(ctx, p.PID)
 	_ = ctx.Tmux.KillWindow(resolveTarget(ctx, p.PrimaryWindowName))
-	shellCmd := "claude"
-	if p.ResumeID != "" {
-		shellCmd = "claude --resume " + p.ResumeID
+	shellCmd := p.ShellCmd
+	if shellCmd == "" {
+		shellCmd = "claude"
+		if p.ResumeID != "" {
+			shellCmd = "claude --resume " + p.ResumeID
+		}
 	}
 	return LaunchSession(ctx, LaunchParams{
 		WindowName:    p.PrimaryWindowName,
 		Cwd:           p.Cwd,
 		ShellCmd:      shellCmd,
+		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	})
@@ -49,6 +55,8 @@ type SiblingParams struct {
 	Branch      string // "" for main-checkout siblings
 	Cwd         string
 	ResumeID    string // optional; resume a specific historical session in the new sibling
+	ShellCmd    string // explicit shell command; empty → agent default or resume
+	AgentKey    string // coding agent mnemonic for the @mo_agent window option
 }
 
 // LaunchSibling always creates a new concurrent sibling window for the
@@ -72,14 +80,18 @@ func LaunchSibling(ctx *Context, p SiblingParams) (*LaunchResult, error) {
 	}
 	ordinal := ttmux.NextAvailableOrdinal(names, p.ProjectName, p.Branch)
 	windowName := ttmux.ComposeWindowName(p.ProjectName, p.Branch, ordinal)
-	shellCmd := "claude"
-	if p.ResumeID != "" {
-		shellCmd = "claude --resume " + p.ResumeID
+	shellCmd := p.ShellCmd
+	if shellCmd == "" {
+		shellCmd = "claude"
+		if p.ResumeID != "" {
+			shellCmd = "claude --resume " + p.ResumeID
+		}
 	}
 	return LaunchSession(ctx, LaunchParams{
 		WindowName:    windowName,
 		Cwd:           p.Cwd,
 		ShellCmd:      shellCmd,
+		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
 		SwitchFocus:   true,
 	})

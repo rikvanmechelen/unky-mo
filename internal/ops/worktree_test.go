@@ -149,6 +149,64 @@ func TestCreateWorktreeAndLaunchHappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeAndLaunchCustomShellCmd(t *testing.T) {
+	repo := newGitRepo(t)
+
+	ctx, tmux, claude := newTestContext(t)
+	claude.EXPECT().SessionsForPath(gomock.Any()).Return(nil).AnyTimes()
+	tmux.EXPECT().WindowExists("alpha@feat").Return(false)
+	tmux.EXPECT().CreateWindow("alpha@feat", gomock.Any()).Return("mo:@1", nil)
+	expectInstanceID(tmux)
+	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
+	tmux.EXPECT().SendKeys(gomock.Any(), "exec gemini").Return(nil) // custom agent
+	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
+	tmux.EXPECT().SplitWindow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("%2", nil)
+	tmux.EXPECT().SelectPane(gomock.Any()).Return(nil)
+	tmux.EXPECT().SwitchToWindow(gomock.Any()).Return(nil)
+
+	res, err := CreateWorktreeAndLaunch(ctx, WorktreeParams{
+		ProjectName: "alpha",
+		ProjectPath: repo,
+		Branch:      "feat",
+		ShellCmd:    "gemini",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorktreeAndLaunch: %v", err)
+	}
+	if !res.Launched {
+		t.Error("Launched should be true")
+	}
+}
+
+func TestCreateWorktreeAndLaunchDefaultShellCmd(t *testing.T) {
+	repo := newGitRepo(t)
+
+	ctx, tmux, claude := newTestContext(t)
+	claude.EXPECT().SessionsForPath(gomock.Any()).Return(nil).AnyTimes()
+	tmux.EXPECT().WindowExists("alpha@feat").Return(false)
+	tmux.EXPECT().CreateWindow("alpha@feat", gomock.Any()).Return("mo:@1", nil)
+	expectInstanceID(tmux)
+	tmux.EXPECT().PaneID(gomock.Any()).Return("%1", nil)
+	tmux.EXPECT().SendKeys(gomock.Any(), "exec claude").Return(nil) // default
+	tmux.EXPECT().SetWindowHook(gomock.Any(), gomock.Any(), gomock.Any())
+	tmux.EXPECT().SplitWindow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("%2", nil)
+	tmux.EXPECT().SelectPane(gomock.Any()).Return(nil)
+	tmux.EXPECT().SwitchToWindow(gomock.Any()).Return(nil)
+
+	res, err := CreateWorktreeAndLaunch(ctx, WorktreeParams{
+		ProjectName: "alpha",
+		ProjectPath: repo,
+		Branch:      "feat",
+		// ShellCmd intentionally empty — should default to "claude"
+	})
+	if err != nil {
+		t.Fatalf("CreateWorktreeAndLaunch: %v", err)
+	}
+	if !res.Launched {
+		t.Error("Launched should be true")
+	}
+}
+
 func TestOpenBranchInMainRefusesDirty(t *testing.T) {
 	repo := newGitRepo(t)
 	// Make dirty.
