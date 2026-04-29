@@ -2,13 +2,13 @@
 
 [![tests](https://github.com/rikvanmechelen/unky-mo/actions/workflows/test.yml/badge.svg)](https://github.com/rikvanmechelen/unky-mo/actions/workflows/test.yml)
 
-A terminal UI for orchestrating multiple Claude Code sessions across your projects. See which sessions are running, which need your attention, and switch between them — all from one place.
+A terminal UI for orchestrating multiple coding agent sessions across your projects. Supports Claude Code, Gemini CLI, Codex CLI, and any other terminal-based coding agent. See which sessions are running, which need your attention, and switch between them — all from one place.
 
 ## Prerequisites
 
 - **Go** 1.22+ (`go version`)
 - **tmux** 3.0+ (`tmux -V`)
-- **Claude Code CLI** (`claude --version`)
+- **Claude Code CLI** (`claude --version`) — or any supported coding agent
 - **GitHub CLI** (`gh --version`) — optional, for pull request display
 
 ## Installation
@@ -47,7 +47,7 @@ mo
 
 If you're not already inside tmux, Unky Mo automatically creates a tmux session (with mouse support enabled) and launches itself inside it. If the session already exists, it attaches to it. If the TUI crashed, it restarts automatically.
 
-When you launch Claude sessions from the TUI, they open as sibling tmux windows with an interactive sidebar. When you exit a Claude session (`ctrl-d ctrl-d` or `/exit`), the window closes cleanly — no orphaned panes.
+When you launch coding agent sessions from the TUI, they open as sibling tmux windows with an interactive sidebar. When you exit a session, the window closes cleanly — no orphaned panes.
 
 ## Dashboard
 
@@ -83,8 +83,9 @@ The Tickets panel only appears once you've set up Jira (`mo jira setup`) — see
 | `→`          | Focus right panel (sessions / tickets) |
 | `←`          | Focus project list                    |
 | `enter`      | Open project detail / switch to session / open ticket detail popup |
+| `⇧enter`    | Pick a coding agent, then launch      |
 | `/`          | Filter projects (fuzzy search)        |
-| `n`          | Start a new Claude session (prompts switch/park/concurrent if one is already running) |
+| `n`          | Start a new session (prompts switch/park/concurrent if one is already running) |
 | `a`          | Attach to session window              |
 | `o`          | Open selected ticket in browser       |
 | `s`          | Suspend (tmux detach-client; sessions keep running) |
@@ -210,13 +211,14 @@ Sessions appear indented under their branch. Synced sessions are marked with `�
 | `↑/↓`  | Navigate within the focused panel               |
 | `←/→`  | Switch between left and right panels            |
 | `enter` | Resume session / launch worktree / expand PR   |
+| `⇧enter`| Pick a coding agent, then launch               |
 | `o`     | Open PR in browser                              |
 | `w`     | Open selected branch as a worktree              |
 | `W`     | Prompt for a brand-new branch name              |
 | `m`     | Checkout selected branch in the main repo       |
 | `M`     | Stash, then checkout selected branch in main    |
 | `c`     | Checkout expanded PR's branch locally           |
-| `n`     | New Claude session (prompts switch/park/concurrent if one exists) |
+| `n`     | New session (prompts switch/park/concurrent if one exists) |
 | `a`     | Attach to existing session window               |
 | `r`     | Resume most recent session                      |
 | `esc`   | Back to dashboard                               |
@@ -225,10 +227,10 @@ Sessions under worktrees resume in the **worktree's directory**, not the project
 
 ## Running Multiple Sessions per Project
 
-A single project or worktree can host more than one Claude session at once. Press `n` when a session already exists and Mo prompts:
+A single project or worktree can host more than one coding agent session at once. Press `n` when a session already exists and Mo prompts:
 
 - **`s` switch** — jump to the existing session
-- **`p` park + new** — send `SIGINT` to the current Claude, close the window, and launch a fresh session under the same name
+- **`p` park + new** — send `SIGINT` to the current agent, close the window, and launch a fresh session under the same name
 - **`c` concurrent** — add a sibling session alongside the existing one
 - **`esc`** — cancel
 
@@ -430,6 +432,10 @@ mo sync pull                    # Pull + decrypt all sessions (files only)
 mo sync pull <project>          # Pull a session and resume it in a tmux window
 mo sync list                    # List available synced sessions
 mo sync migrate                 # Re-encrypt any legacy plaintext sessions
+mo agents list                  # List configured coding agents
+mo agents add --name --key --cmd # Add a new coding agent
+mo agents remove <key>          # Remove an agent by its mnemonic key
+mo agents default <key>         # Set the default coding agent
 mo jira setup                   # Interactive Jira integration setup (URL + email + token)
 mo jira fetch                   # Run one Jira fetch and print result (diagnostic)
 mo jira issue <KEY>             # Print one issue's metadata + description (diagnostic)
@@ -490,6 +496,44 @@ tags = ["production"]
 ```
 
 Jira integration has its own `[tickets]` / `[[tickets.jira]]` blocks — see the [Jira Tickets](#jira-tickets) section. Use `mo jira setup` to write them interactively rather than editing by hand.
+
+### Coding agents
+
+By default, Unky Mo launches Claude Code. You can configure additional coding agents and pick which one to use per session:
+
+```toml
+[[agent]]
+name = "Claude"
+key = "c"
+cmd = "claude"
+resume_cmd = "claude --resume"
+default = true
+
+[[agent]]
+name = "Gemini CLI"
+key = "g"
+cmd = "gemini"
+
+[[agent]]
+name = "Codex CLI"
+key = "x"
+cmd = "codex"
+```
+
+Each agent has a single-character `key` used as a mnemonic in the picker menu. The `default = true` agent is used when you press plain `enter`; press `shift+enter` to choose a different agent before launching.
+
+Manage agents from the CLI:
+
+```bash
+mo agents list                                  # show configured agents
+mo agents add --name "Gemini CLI" --key g --cmd gemini   # add a new agent
+mo agents remove g                              # remove by key
+mo agents default g                             # set the default agent
+```
+
+Agent preferences can be saved per project and branch in `~/.config/unky-mo/agent-choices.toml`. When you use the agent picker (`shift+enter`), the chosen agent is used for that launch. Future launches with plain `enter` on the same branch will use the saved preference.
+
+Session detection (idle/active/permission status) currently only works for Claude Code sessions. Other agents show as "active" in the sidebar and dashboard — idle and permission detection requires agent-specific hooks that aren't available yet for most agents.
 
 ### Project auto-discovery
 
@@ -657,8 +701,9 @@ Tests under the `expectfail` build tag encode claims from `CLAUDE.md` that curre
 unky-mo/
 ├── cmd/mo/main.go          # CLI entry point (Cobra commands)
 ├── internal/
-│   ├── config/             # TOML config loading
-│   ├── claude/             # Session detection, JSONL parsing, hook management
+│   ├── agents/             # Agent-agnostic interfaces (SessionReader, HookInstaller)
+│   ├── config/             # TOML config loading + agent config
+│   ├── claude/             # Claude Code session detection, JSONL parsing, hooks
 │   ├── github/             # GitHub PR fetching via gh CLI
 │   ├── tmux/               # tmux command wrapper (sessions, windows, panes, popups)
 │   ├── notify/             # Unix socket notification server
