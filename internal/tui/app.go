@@ -2299,6 +2299,76 @@ func (m Model) refreshSessions() tea.Cmd {
 
 			views = append(views, v)
 		}
+
+		// Second pass: detect non-Claude agent windows by their @mo_agent
+		// tmux option. These sessions don't appear in claude.LiveSessions()
+		// so we must discover them from the window list directly.
+		if tmuxClient != nil {
+			// Build a set of window IDs already claimed by Claude sessions.
+			claimedWindows := make(map[string]bool)
+			for _, v := range views {
+				if v.WindowID != "" {
+					claimedWindows[v.WindowID] = true
+				}
+			}
+			if windows, err := tmuxClient.ListWindows(); err == nil {
+				for _, w := range windows {
+					if w.AgentKey == "" || w.AgentKey == "c" {
+						continue // Claude or unset — already handled above
+					}
+					if claimedWindows[w.ID] {
+						continue // already claimed
+					}
+					if w.Index == "0" {
+						continue // window 0 is the TUI itself
+					}
+					v := sessionView{
+						WindowName: w.Name,
+						WindowID:   w.ID,
+						InstanceID: w.InstanceID,
+						AgentKey:   w.AgentKey,
+						CWD:        w.CWD,
+						Status:     StatusActive,
+						Section:    "projects",
+					}
+					// Classify by CWD.
+					if name := knownProjectPath(projectNames, w.CWD); name != "" {
+						v.ProjectPath = w.CWD
+						v.ProjectName = name
+					} else if strings.Contains(w.CWD, ".worktrees/") {
+						parentPath, parentName, branch := worktreeParent(w.CWD, projectNames)
+						v.ProjectPath = parentPath
+						v.ProjectName = "@" + branch
+						v.Parent = parentName
+						v.IsWorktree = true
+					} else {
+						repoRoot := project.FindGitRoot(w.CWD)
+						if repoRoot != "" {
+							if name, known := projectNames[repoRoot]; known {
+								v.ProjectPath = repoRoot
+								v.ProjectName = name
+							} else {
+								v.ProjectPath = repoRoot
+								v.ProjectName = filepath.Base(repoRoot)
+								v.IsStray = true
+								if gs := project.GetGitStatus(repoRoot); gs.Branch != "" {
+									v.Branch = gs.Branch
+									v.Dirty = gs.Dirty
+								}
+							}
+						} else {
+							v.ProjectPath = w.CWD
+							v.ProjectName = filepath.Base(w.CWD)
+							v.Section = "external"
+							v.IsStray = true
+						}
+					}
+					v.Index = parseWindowIndex(v.WindowName)
+					views = append(views, v)
+				}
+			}
+		}
+
 		return sessionRefreshMsg{
 			views:            views,
 			externalPIDs:     externalPIDs,
