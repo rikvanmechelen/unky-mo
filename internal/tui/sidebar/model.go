@@ -374,8 +374,11 @@ func (m Model) View() tea.View {
 				styledName = normalStyle.Render(name)
 			}
 
-			// Append status label after styling (so underline doesn't extend)
+			// Append agent tag for non-default agents.
 			suffix := ""
+			if tag := agentTag(item.AgentKey); tag != "" {
+				suffix = " " + normalStyle.Render(tag)
+			}
 			if item.Status == "idle" {
 				suffix = " " + dotIdle.Render("idle")
 			} else if item.Status == "permission" {
@@ -558,6 +561,25 @@ func renderDot(status string) string {
 		return dotExternal.Render("●")
 	default:
 		return dotNone.Render("○")
+	}
+}
+
+// agentTag returns a short parenthesized label for non-default agents.
+// Empty or "c" (Claude) returns "" since Claude is the implied default.
+func agentTag(key string) string {
+	if key == "" || key == "c" {
+		return ""
+	}
+	// Map well-known keys to friendly names; fall back to the key itself.
+	switch key {
+	case "g":
+		return "(gemini)"
+	case "x":
+		return "(codex)"
+	case "p":
+		return "(pi)"
+	default:
+		return "(" + key + ")"
 	}
 }
 

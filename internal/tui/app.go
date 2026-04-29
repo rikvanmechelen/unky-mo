@@ -1472,6 +1472,7 @@ type dashSessionItem struct {
 	Name        string
 	WindowName  string
 	WindowID    string              // stable tmux window ID (@N); used for safe target construction
+	AgentKey    string              // coding agent mnemonic; empty = default (Claude)
 	Status      SessionStatus
 	ProjectPath string              // cwd — used to resolve external PID/sessionID on import
 	Section     string              // "projects" (default) or "external"
@@ -1570,6 +1571,7 @@ func viewToDashItem(v sessionView) dashSessionItem {
 		Name:        v.WindowName,
 		WindowName:  v.WindowName,
 		WindowID:    v.WindowID,
+		AgentKey:    v.AgentKey,
 		Status:      v.Status,
 		ProjectPath: v.CWD,
 		Section:     v.Section,
@@ -1857,12 +1859,15 @@ func (m Model) dashboardView() string {
 			}
 
 			suffix := ""
+			if tag := m.agentTagForKey(item.AgentKey); tag != "" {
+				suffix = " " + footerDescStyle.Render(tag)
+			}
 			if item.Status == StatusIdle {
-				suffix = " " + statusIdle.Render("idle")
+				suffix += " " + statusIdle.Render("idle")
 			} else if item.Status == StatusPermission {
-				suffix = " " + statusPermission.Render("perm")
+				suffix += " " + statusPermission.Render("perm")
 			} else if item.Status == StatusExternal {
-				suffix = " " + statusExternal.Render("external")
+				suffix += " " + statusExternal.Render("external")
 			}
 			// Branch/dirty info for git-backed strays.
 			if item.Git != nil && item.Git.Branch != "" {
@@ -2084,6 +2089,25 @@ func withCancel(binds []footerBinding) []footerBinding {
 		}
 	}
 	return append(binds, footerBinding{"n", "cancel"})
+}
+
+// agentTagForKey returns a short display tag for the given agent key,
+// e.g. "(gemini)" for key "g". Returns "" for the default agent (Claude)
+// since it's the implied default and doesn't need a tag.
+func (m Model) agentTagForKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	def := m.defaultAgent()
+	if key == def.Key {
+		return ""
+	}
+	for _, a := range m.agents {
+		if a.Key == key {
+			return "(" + strings.ToLower(a.Name) + ")"
+		}
+	}
+	return "(" + key + ")"
 }
 
 // agentResumeCmd builds the shell command for resuming a session with the
