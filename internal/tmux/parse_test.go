@@ -3,6 +3,7 @@ package tmux
 import "testing"
 
 func TestParseWindowList(t *testing.T) {
+	// 5-field format (pre-agent-key): backward compat
 	in := []byte(`@0:0:mo:a1b2c3d4e5f6:/home/user
 @1:1:my-app::/home/user/workspace/my-app
 @2:2:foo@feat:deadbeef0123:/home/user/workspace/foo.worktrees/feat
@@ -106,6 +107,56 @@ func TestParseWindowListNewFormatEmptyInstanceID(t *testing.T) {
 	}
 	if got[0].CWD != "/home/user/proj" {
 		t.Errorf("cwd: %q", got[0].CWD)
+	}
+}
+
+func TestParseWindowListNewFormatWithAgentKey(t *testing.T) {
+	// New 6-field format: id:index:name:instanceID:agentKey:cwd
+	in := []byte(`@0:0:mo:a1b2c3d4e5f6:c:/home/user
+@1:1:my-app:deadbeef0123:g:/home/user/workspace/my-app
+`)
+	got := parseWindowList(in)
+	if len(got) != 2 {
+		t.Fatalf("count: got %d, want 2", len(got))
+	}
+	if got[0].InstanceID != "a1b2c3d4e5f6" || got[0].AgentKey != "c" || got[0].CWD != "/home/user" {
+		t.Errorf("row 0: %+v", got[0])
+	}
+	if got[1].InstanceID != "deadbeef0123" || got[1].AgentKey != "g" || got[1].CWD != "/home/user/workspace/my-app" {
+		t.Errorf("row 1: %+v", got[1])
+	}
+}
+
+func TestParseWindowListNewFormatEmptyAgentKey(t *testing.T) {
+	// New 6-field format where agent key is empty (window option not set).
+	in := []byte(`@0:0:mo:a1b2c3d4e5f6::/home/user`)
+	got := parseWindowList(in)
+	if len(got) != 1 {
+		t.Fatalf("count: %d", len(got))
+	}
+	if got[0].InstanceID != "a1b2c3d4e5f6" {
+		t.Errorf("instanceID: %q", got[0].InstanceID)
+	}
+	if got[0].AgentKey != "" {
+		t.Errorf("agentKey should be empty, got %q", got[0].AgentKey)
+	}
+	if got[0].CWD != "/home/user" {
+		t.Errorf("cwd: %q", got[0].CWD)
+	}
+}
+
+func TestParseWindowListNewFormatColonsInPath(t *testing.T) {
+	// SplitN(6) must preserve any ':' inside the pane_current_path.
+	in := []byte(`@3:3:weird:abc123def456:g:/tmp/dir:with:colons/inside`)
+	got := parseWindowList(in)
+	if len(got) != 1 {
+		t.Fatalf("count: %d", len(got))
+	}
+	if got[0].AgentKey != "g" {
+		t.Errorf("agentKey: %q", got[0].AgentKey)
+	}
+	if got[0].CWD != "/tmp/dir:with:colons/inside" {
+		t.Errorf("cwd should preserve embedded colons, got %q", got[0].CWD)
 	}
 }
 
