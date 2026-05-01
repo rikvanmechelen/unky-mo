@@ -53,6 +53,7 @@ type TmuxClient interface {
 	SwitchToWindow(target string) error
 	WindowExists(name string) bool
 	WindowPanePIDs(target string) (map[int]bool, error)
+	ListWindowPanes(target string) ([]ttmux.PaneInfo, error)
 }
 
 // ClaudeReader is the subset of the internal/claude package that ops reads

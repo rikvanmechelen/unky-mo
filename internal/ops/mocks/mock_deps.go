@@ -127,6 +127,21 @@ func (mr *MockTmuxClientMockRecorder) ListSessions() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSessions", reflect.TypeOf((*MockTmuxClient)(nil).ListSessions))
 }
 
+// ListWindowPanes mocks base method.
+func (m *MockTmuxClient) ListWindowPanes(target string) ([]tmux.PaneInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListWindowPanes", target)
+	ret0, _ := ret[0].([]tmux.PaneInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListWindowPanes indicates an expected call of ListWindowPanes.
+func (mr *MockTmuxClientMockRecorder) ListWindowPanes(target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWindowPanes", reflect.TypeOf((*MockTmuxClient)(nil).ListWindowPanes), target)
+}
+
 // ListWindows mocks base method.
 func (m *MockTmuxClient) ListWindows() ([]tmux.Window, error) {
 	m.ctrl.T.Helper()

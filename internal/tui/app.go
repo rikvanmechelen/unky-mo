@@ -2193,6 +2193,18 @@ type sessionView struct {
 	IsStray     bool
 	IsWorktree  bool
 	External    bool          // PID not descendant of mo tmux panes (StatusExternal)
+
+	// Team fields — populated when session is part of a Claude Code agent team.
+	TeamName  string          // team name from ~/.claude/teams/{name}/config.json
+	TeamRole  string          // "lead" or "teammate"
+	Teammates []teammateView  // populated for leads only
+}
+
+// teammateView describes a teammate pane within a team lead's window.
+type teammateView struct {
+	Name   string
+	Status string // "active" (pane alive), "idle" (pane dead or gone)
+	PaneID string // tmux pane ID for focus switching
 }
 
 // sessionRefreshMsg carries the per-session view list plus the CWD-keyed
@@ -2393,6 +2405,11 @@ func (m Model) refreshSessions() tea.Cmd {
 			}
 		}
 
+		// Third pass: detect Claude Code agent teams. Reads
+		// ~/.claude/teams/*/config.json and enriches lead sessions
+		// with teammate pane info from their tmux window.
+		enrichViewsWithTeamInfo(views, tmuxClient)
+
 		return sessionRefreshMsg{
 			views:            views,
 			externalPIDs:     externalPIDs,
@@ -2419,6 +2436,43 @@ func worktreeParent(cwd string, projectNames map[string]string) (string, string,
 	parentPath = strings.TrimSuffix(parentPath, ".worktrees")
 	branch := filepath.Base(cwd)
 	return parentPath, projectNames[parentPath], branch
+}
+
+// enrichViewsWithTeamInfo calls ops.ListTeams to detect Claude Code agent
+// teams and annotates lead session views with teammate pane information.
+func enrichViewsWithTeamInfo(views []sessionView, tmuxClient ops.TmuxClient) {
+	// Build the sessionID → windowID map that ListTeams needs.
+	sessionWindows := make(map[string]string)
+	viewBySession := make(map[string]int)
+	for i, v := range views {
+		if v.SessionID != "" {
+			viewBySession[v.SessionID] = i
+			if v.WindowID != "" {
+				sessionWindows[v.SessionID] = v.WindowID
+			}
+		}
+	}
+
+	teams, err := ops.ListTeams(tmuxClient, sessionWindows)
+	if err != nil || len(teams) == 0 {
+		return
+	}
+
+	for _, ts := range teams {
+		idx, ok := viewBySession[ts.LeadSession]
+		if !ok {
+			continue
+		}
+		views[idx].TeamName = ts.Name
+		views[idx].TeamRole = "lead"
+		for _, tm := range ts.Teammates {
+			views[idx].Teammates = append(views[idx].Teammates, teammateView{
+				Name:   tm.Name,
+				Status: tm.Status,
+				PaneID: tm.PaneID,
+			})
+		}
+	}
 }
 
 // resolveSessionWindows mirrors sessionToWindowMap but takes the sessions as
@@ -2818,6 +2872,17 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 	if v.IsStray {
 		ps.Branch = v.Branch
 		ps.Dirty = v.Dirty
+	}
+	if v.TeamName != "" {
+		ps.TeamName = v.TeamName
+		ps.TeamRole = v.TeamRole
+		for _, tm := range v.Teammates {
+			ps.Teammates = append(ps.Teammates, state.TeammateState{
+				Name:   tm.Name,
+				Status: tm.Status,
+				PaneID: tm.PaneID,
+			})
+		}
 	}
 	return ps
 }

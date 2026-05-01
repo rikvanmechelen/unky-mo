@@ -280,6 +280,17 @@ func (c *Client) WindowPanePIDs(target string) (map[int]bool, error) {
 	return parsePIDSet(out), nil
 }
 
+// ListWindowPanes returns pane metadata (ID + PID) for all panes in the given
+// window. Used to discover teammate panes in agent-team windows.
+func (c *Client) ListWindowPanes(target string) ([]PaneInfo, error) {
+	cmd := c.tmuxCmd("list-panes", "-t", target, "-F", "#{pane_id}:#{pane_pid}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return parsePaneInfoList(out), nil
+}
+
 // WindowExists checks if a window with the given name exists.
 func (c *Client) WindowExists(name string) bool {
 	windows, err := c.ListWindows()

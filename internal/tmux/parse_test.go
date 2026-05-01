@@ -160,6 +160,47 @@ func TestParseWindowListNewFormatColonsInPath(t *testing.T) {
 	}
 }
 
+func TestParsePaneInfoList(t *testing.T) {
+	in := []byte("%0:12345\n%1:23456\n%2:34567\n")
+	got := parsePaneInfoList(in)
+	if len(got) != 3 {
+		t.Fatalf("count: got %d, want 3", len(got))
+	}
+	want := []PaneInfo{
+		{ID: "%0", PID: 12345},
+		{ID: "%1", PID: 23456},
+		{ID: "%2", PID: 34567},
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+func TestParsePaneInfoListEmpty(t *testing.T) {
+	if got := parsePaneInfoList(nil); got != nil {
+		t.Errorf("empty input: got %v", got)
+	}
+	if got := parsePaneInfoList([]byte("")); got != nil {
+		t.Errorf("blank input: got %v", got)
+	}
+}
+
+func TestParsePaneInfoListMalformed(t *testing.T) {
+	in := []byte("%0:12345\nbogus\n%1:notanumber\n%2:99\n")
+	got := parsePaneInfoList(in)
+	if len(got) != 2 {
+		t.Fatalf("count: got %d, want 2 (skip malformed)", len(got))
+	}
+	if got[0].ID != "%0" || got[0].PID != 12345 {
+		t.Errorf("row 0: %+v", got[0])
+	}
+	if got[1].ID != "%2" || got[1].PID != 99 {
+		t.Errorf("row 1: %+v", got[1])
+	}
+}
+
 func TestParsePIDSet(t *testing.T) {
 	in := []byte(`12345
 23456

@@ -31,6 +31,7 @@ type TmuxClient interface {
 	SplitWindowHorizontal(target, cwd string) (string, error)
 	SwitchToWindow(target string) error
 	WindowPanePIDs(target string) (map[int]bool, error)
+	ListWindowPanes(target string) ([]ttmux.PaneInfo, error)
 }
 
 // ClaudeReader is the subset of internal/claude the sidebar reads from.
@@ -136,6 +137,9 @@ func (a *tmuxClientAdapter) SwitchToWindow(target string) error {
 }
 func (a *tmuxClientAdapter) WindowPanePIDs(target string) (map[int]bool, error) {
 	return a.c.WindowPanePIDs(target)
+}
+func (a *tmuxClientAdapter) ListWindowPanes(target string) ([]ttmux.PaneInfo, error) {
+	return a.c.ListWindowPanes(target)
 }
 
 // defaultClaudeReader delegates every method to the package-level function.

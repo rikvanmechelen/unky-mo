@@ -92,6 +92,36 @@ func isAgentKeyField(s string) bool {
 	return s[0] >= 'a' && s[0] <= 'z'
 }
 
+// PaneInfo describes a single pane in a tmux window.
+type PaneInfo struct {
+	ID  string // tmux pane ID, e.g. "%5"
+	PID int    // shell PID running in the pane
+}
+
+// parsePaneInfoList parses the output of
+//
+//	tmux list-panes -F '#{pane_id}:#{pane_pid}'
+//
+// into a slice of PaneInfo. Malformed lines are silently dropped.
+func parsePaneInfoList(out []byte) []PaneInfo {
+	var panes []PaneInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(parts[1], "%d", &pid); err != nil {
+			continue
+		}
+		panes = append(panes, PaneInfo{ID: parts[0], PID: pid})
+	}
+	return panes
+}
+
 // parsePIDSet parses the output of `tmux list-panes … -F '#{pane_pid}'` into
 // a set of PIDs. Malformed lines are silently dropped.
 func parsePIDSet(out []byte) map[int]bool {
