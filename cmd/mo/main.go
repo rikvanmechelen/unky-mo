@@ -45,6 +45,7 @@ func main() {
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(jiraCmd())
 	rootCmd.AddCommand(agentsCmd())
+	rootCmd.AddCommand(teamsCmd())
 	rootCmd.AddCommand(sidebarCmd())
 	rootCmd.AddCommand(debugCmd())
 	rootCmd.AddCommand(versionCmd())

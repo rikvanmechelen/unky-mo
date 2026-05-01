@@ -77,6 +77,9 @@ func (a *tmuxClientAdapter) WindowExists(name string) bool { return a.c.WindowEx
 func (a *tmuxClientAdapter) WindowPanePIDs(target string) (map[int]bool, error) {
 	return a.c.WindowPanePIDs(target)
 }
+func (a *tmuxClientAdapter) ListWindowPanes(target string) ([]ttmux.PaneInfo, error) {
+	return a.c.ListWindowPanes(target)
+}
 
 // NewDefaultClaudeReader returns the production ClaudeReader implementation.
 func NewDefaultClaudeReader() ClaudeReader { return defaultClaudeReader{} }

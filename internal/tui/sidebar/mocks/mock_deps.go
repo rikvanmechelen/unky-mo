@@ -13,6 +13,7 @@ import (
 	reflect "reflect"
 
 	claude "github.com/rvanmech/unky-mo/internal/claude"
+	tmux "github.com/rvanmech/unky-mo/internal/tmux"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -167,6 +168,21 @@ func (m *MockTmuxClient) KillPane(paneID string) error {
 func (mr *MockTmuxClientMockRecorder) KillPane(paneID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KillPane", reflect.TypeOf((*MockTmuxClient)(nil).KillPane), paneID)
+}
+
+// ListWindowPanes mocks base method.
+func (m *MockTmuxClient) ListWindowPanes(target string) ([]tmux.PaneInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListWindowPanes", target)
+	ret0, _ := ret[0].([]tmux.PaneInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListWindowPanes indicates an expected call of ListWindowPanes.
+func (mr *MockTmuxClientMockRecorder) ListWindowPanes(target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWindowPanes", reflect.TypeOf((*MockTmuxClient)(nil).ListWindowPanes), target)
 }
 
 // NewDetachedSession mocks base method.

@@ -1472,6 +1472,7 @@ type dashSessionItem struct {
 	Name        string
 	WindowName  string
 	WindowID    string              // stable tmux window ID (@N); used for safe target construction
+	AgentKey    string              // coding agent mnemonic; empty = default (Claude)
 	Status      SessionStatus
 	ProjectPath string              // cwd — used to resolve external PID/sessionID on import
 	Section     string              // "projects" (default) or "external"
@@ -1570,6 +1571,7 @@ func viewToDashItem(v sessionView) dashSessionItem {
 		Name:        v.WindowName,
 		WindowName:  v.WindowName,
 		WindowID:    v.WindowID,
+		AgentKey:    v.AgentKey,
 		Status:      v.Status,
 		ProjectPath: v.CWD,
 		Section:     v.Section,
@@ -1857,12 +1859,15 @@ func (m Model) dashboardView() string {
 			}
 
 			suffix := ""
+			if tag := m.agentTagForKey(item.AgentKey); tag != "" {
+				suffix = " " + footerDescStyle.Render(tag)
+			}
 			if item.Status == StatusIdle {
-				suffix = " " + statusIdle.Render("idle")
+				suffix += " " + statusIdle.Render("idle")
 			} else if item.Status == StatusPermission {
-				suffix = " " + statusPermission.Render("perm")
+				suffix += " " + statusPermission.Render("perm")
 			} else if item.Status == StatusExternal {
-				suffix = " " + statusExternal.Render("external")
+				suffix += " " + statusExternal.Render("external")
 			}
 			// Branch/dirty info for git-backed strays.
 			if item.Git != nil && item.Git.Branch != "" {
@@ -2086,6 +2091,25 @@ func withCancel(binds []footerBinding) []footerBinding {
 	return append(binds, footerBinding{"n", "cancel"})
 }
 
+// agentTagForKey returns a short display tag for the given agent key,
+// e.g. "(gemini)" for key "g". Returns "" for the default agent (Claude)
+// since it's the implied default and doesn't need a tag.
+func (m Model) agentTagForKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	def := m.defaultAgent()
+	if key == def.Key {
+		return ""
+	}
+	for _, a := range m.agents {
+		if a.Key == key {
+			return "(" + strings.ToLower(a.Name) + ")"
+		}
+	}
+	return "(" + key + ")"
+}
+
 // agentResumeCmd builds the shell command for resuming a session with the
 // given agent. If the agent has no ResumeCmd, falls back to a fresh launch.
 func agentResumeCmd(agent config.AgentConfig, sessionID string) string {
@@ -2169,6 +2193,18 @@ type sessionView struct {
 	IsStray     bool
 	IsWorktree  bool
 	External    bool          // PID not descendant of mo tmux panes (StatusExternal)
+
+	// Team fields — populated when session is part of a Claude Code agent team.
+	TeamName  string          // team name from ~/.claude/teams/{name}/config.json
+	TeamRole  string          // "lead" or "teammate"
+	Teammates []teammateView  // populated for leads only
+}
+
+// teammateView describes a teammate pane within a team lead's window.
+type teammateView struct {
+	Name   string
+	Status string // "active" (pane alive), "idle" (pane dead or gone)
+	PaneID string // tmux pane ID for focus switching
 }
 
 // sessionRefreshMsg carries the per-session view list plus the CWD-keyed
@@ -2299,6 +2335,81 @@ func (m Model) refreshSessions() tea.Cmd {
 
 			views = append(views, v)
 		}
+
+		// Second pass: detect non-Claude agent windows by their @mo_agent
+		// tmux option. These sessions don't appear in claude.LiveSessions()
+		// so we must discover them from the window list directly.
+		if tmuxClient != nil {
+			// Build a set of window IDs already claimed by Claude sessions.
+			claimedWindows := make(map[string]bool)
+			for _, v := range views {
+				if v.WindowID != "" {
+					claimedWindows[v.WindowID] = true
+				}
+			}
+			if windows, err := tmuxClient.ListWindows(); err == nil {
+				for _, w := range windows {
+					if w.AgentKey == "" || w.AgentKey == "c" {
+						continue // Claude or unset — already handled above
+					}
+					if claimedWindows[w.ID] {
+						continue // already claimed
+					}
+					if w.Index == "0" {
+						continue // window 0 is the TUI itself
+					}
+					v := sessionView{
+						WindowName: w.Name,
+						WindowID:   w.ID,
+						InstanceID: w.InstanceID,
+						AgentKey:   w.AgentKey,
+						CWD:        w.CWD,
+						Status:     StatusActive,
+						Section:    "projects",
+					}
+					// Classify by CWD.
+					if name := knownProjectPath(projectNames, w.CWD); name != "" {
+						v.ProjectPath = w.CWD
+						v.ProjectName = name
+					} else if strings.Contains(w.CWD, ".worktrees/") {
+						parentPath, parentName, branch := worktreeParent(w.CWD, projectNames)
+						v.ProjectPath = parentPath
+						v.ProjectName = "@" + branch
+						v.Parent = parentName
+						v.IsWorktree = true
+					} else {
+						repoRoot := project.FindGitRoot(w.CWD)
+						if repoRoot != "" {
+							if name, known := projectNames[repoRoot]; known {
+								v.ProjectPath = repoRoot
+								v.ProjectName = name
+							} else {
+								v.ProjectPath = repoRoot
+								v.ProjectName = filepath.Base(repoRoot)
+								v.IsStray = true
+								if gs := project.GetGitStatus(repoRoot); gs.Branch != "" {
+									v.Branch = gs.Branch
+									v.Dirty = gs.Dirty
+								}
+							}
+						} else {
+							v.ProjectPath = w.CWD
+							v.ProjectName = filepath.Base(w.CWD)
+							v.Section = "external"
+							v.IsStray = true
+						}
+					}
+					v.Index = parseWindowIndex(v.WindowName)
+					views = append(views, v)
+				}
+			}
+		}
+
+		// Third pass: detect Claude Code agent teams. Reads
+		// ~/.claude/teams/*/config.json and enriches lead sessions
+		// with teammate pane info from their tmux window.
+		enrichViewsWithTeamInfo(views, tmuxClient)
+
 		return sessionRefreshMsg{
 			views:            views,
 			externalPIDs:     externalPIDs,
@@ -2325,6 +2436,43 @@ func worktreeParent(cwd string, projectNames map[string]string) (string, string,
 	parentPath = strings.TrimSuffix(parentPath, ".worktrees")
 	branch := filepath.Base(cwd)
 	return parentPath, projectNames[parentPath], branch
+}
+
+// enrichViewsWithTeamInfo calls ops.ListTeams to detect Claude Code agent
+// teams and annotates lead session views with teammate pane information.
+func enrichViewsWithTeamInfo(views []sessionView, tmuxClient ops.TmuxClient) {
+	// Build the sessionID → windowID map that ListTeams needs.
+	sessionWindows := make(map[string]string)
+	viewBySession := make(map[string]int)
+	for i, v := range views {
+		if v.SessionID != "" {
+			viewBySession[v.SessionID] = i
+			if v.WindowID != "" {
+				sessionWindows[v.SessionID] = v.WindowID
+			}
+		}
+	}
+
+	teams, err := ops.ListTeams(tmuxClient, sessionWindows)
+	if err != nil || len(teams) == 0 {
+		return
+	}
+
+	for _, ts := range teams {
+		idx, ok := viewBySession[ts.LeadSession]
+		if !ok {
+			continue
+		}
+		views[idx].TeamName = ts.Name
+		views[idx].TeamRole = "lead"
+		for _, tm := range ts.Teammates {
+			views[idx].Teammates = append(views[idx].Teammates, teammateView{
+				Name:   tm.Name,
+				Status: tm.Status,
+				PaneID: tm.PaneID,
+			})
+		}
+	}
 }
 
 // resolveSessionWindows mirrors sessionToWindowMap but takes the sessions as
@@ -2724,6 +2872,17 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 	if v.IsStray {
 		ps.Branch = v.Branch
 		ps.Dirty = v.Dirty
+	}
+	if v.TeamName != "" {
+		ps.TeamName = v.TeamName
+		ps.TeamRole = v.TeamRole
+		for _, tm := range v.Teammates {
+			ps.Teammates = append(ps.Teammates, state.TeammateState{
+				Name:   tm.Name,
+				Status: tm.Status,
+				PaneID: tm.PaneID,
+			})
+		}
 	}
 	return ps
 }

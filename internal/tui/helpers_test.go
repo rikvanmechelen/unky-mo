@@ -596,6 +596,27 @@ func TestDefaultAgentFallback(t *testing.T) {
 	}
 }
 
+func TestAgentTagForKey(t *testing.T) {
+	m := Model{
+		agents: []config.AgentConfig{
+			{Name: "Claude", Key: "c", Cmd: "claude", Default: true},
+			{Name: "Gemini CLI", Key: "g", Cmd: "gemini"},
+		},
+	}
+	if got := m.agentTagForKey(""); got != "" {
+		t.Errorf("empty key: want empty, got %q", got)
+	}
+	if got := m.agentTagForKey("c"); got != "" {
+		t.Errorf("default agent: want empty, got %q", got)
+	}
+	if got := m.agentTagForKey("g"); got != "(gemini cli)" {
+		t.Errorf("gemini: want (gemini cli), got %q", got)
+	}
+	if got := m.agentTagForKey("z"); got != "(z)" {
+		t.Errorf("unknown: want (z), got %q", got)
+	}
+}
+
 func TestAgentPickerBindings(t *testing.T) {
 	m := Model{
 		agents: []config.AgentConfig{

@@ -34,6 +34,11 @@ type SidebarItem struct {
 	IsTerminal bool
 	PaneID     string
 	IsActive   bool // terminal is currently visible in drawer
+	// Team agent items
+	IsTeamLead   bool   // true when this session leads an agent team
+	IsTeammate   bool   // true for teammate sub-items
+	TeammateName string // role name for display (e.g. "architect")
+	TeamPaneID   string // tmux pane ID for focus switching via SelectPane
 }
 
 // TerminalTab tracks a terminal pane managed by the drawer.
@@ -374,14 +379,19 @@ func (m Model) View() tea.View {
 				styledName = normalStyle.Render(name)
 			}
 
-			// Append status label after styling (so underline doesn't extend)
+			// Append agent tag for non-default agents.
 			suffix := ""
+			if item.IsTeamLead {
+				suffix = " " + normalStyle.Render("[team]")
+			} else if tag := agentTag(item.AgentKey); tag != "" {
+				suffix = " " + normalStyle.Render(tag)
+			}
 			if item.Status == "idle" {
-				suffix = " " + dotIdle.Render("idle")
+				suffix += " " + dotIdle.Render("idle")
 			} else if item.Status == "permission" {
-				suffix = " " + dotPermission.Render("perm")
+				suffix += " " + dotPermission.Render("perm")
 			} else if item.Status == "external" {
-				suffix = " " + dotExternal.Render("ext")
+				suffix += " " + dotExternal.Render("ext")
 			}
 			// Git-backed strays carry branch info; show it so the row is
 			// distinguishable from other repos of the same basename.
@@ -558,6 +568,25 @@ func renderDot(status string) string {
 		return dotExternal.Render("●")
 	default:
 		return dotNone.Render("○")
+	}
+}
+
+// agentTag returns a short parenthesized label for non-default agents.
+// Empty or "c" (Claude) returns "" since Claude is the implied default.
+func agentTag(key string) string {
+	if key == "" || key == "c" {
+		return ""
+	}
+	// Map well-known keys to friendly names; fall back to the key itself.
+	switch key {
+	case "g":
+		return "(gemini)"
+	case "x":
+		return "(codex)"
+	case "p":
+		return "(pi)"
+	default:
+		return "(" + key + ")"
 	}
 }
 
@@ -742,11 +771,26 @@ func (m *Model) refreshState() {
 			Section:    p.Section,
 			Branch:     p.Branch,
 			Dirty:      p.Dirty,
+			IsTeamLead: len(p.Teammates) > 0,
 		}
 		if p.Section == "external" {
 			externalItems = append(externalItems, row)
 		} else {
 			projectItems = append(projectItems, row)
+			// Emit teammate sub-items immediately after the lead
+			for _, tm := range p.Teammates {
+				projectItems = append(projectItems, SidebarItem{
+					Name:         tm.Name,
+					IsTeammate:   true,
+					TeammateName: tm.Name,
+					TeamPaneID:   tm.PaneID,
+					Status:       tm.Status,
+					Parent:       p.Name,  // triggers indent
+					WindowID:     p.WindowID,
+					WindowName:   p.WindowName,
+					Section:      "projects",
+				})
+			}
 		}
 	}
 	items = append(items, projectItems...)
@@ -1879,6 +1923,13 @@ func (m Model) switchToSelected() tea.Cmd {
 		}
 
 		item := m.items[m.cursor]
+
+		// Teammate items: focus the teammate's pane within the same window.
+		if item.IsTeammate && item.TeamPaneID != "" {
+			m.tmux.SelectPane(item.TeamPaneID)
+			return sidebarStatusMsg("focused " + item.TeammateName)
+		}
+
 		var target string
 		switch {
 		case item.IsHome:

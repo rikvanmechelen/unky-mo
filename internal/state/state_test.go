@@ -150,6 +150,101 @@ func TestIndexOmitemptyStripsZero(t *testing.T) {
 	}
 }
 
+func TestTeammateStateRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	in := &StateFile{
+		TmuxSession: "mo",
+		Projects: []ProjectState{
+			{
+				Name:       "my-project",
+				Path:       "/ws/my-project",
+				WindowName: "my-project",
+				Status:     "active",
+				SessionID:  "lead-sess",
+				TeamName:   "review-team",
+				TeamRole:   "lead",
+				Teammates: []TeammateState{
+					{Name: "architect", Status: "active", PaneID: "%3"},
+					{Name: "tester", Status: "idle", PaneID: "%4"},
+				},
+			},
+		},
+	}
+
+	if err := Write(path, in); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	p := got.Projects[0]
+	if p.TeamName != "review-team" {
+		t.Errorf("TeamName: got %q, want %q", p.TeamName, "review-team")
+	}
+	if p.TeamRole != "lead" {
+		t.Errorf("TeamRole: got %q, want %q", p.TeamRole, "lead")
+	}
+	if len(p.Teammates) != 2 {
+		t.Fatalf("Teammates count: got %d, want 2", len(p.Teammates))
+	}
+	if p.Teammates[0].Name != "architect" || p.Teammates[0].Status != "active" || p.Teammates[0].PaneID != "%3" {
+		t.Errorf("Teammates[0]: %+v", p.Teammates[0])
+	}
+	if p.Teammates[1].Name != "tester" || p.Teammates[1].Status != "idle" || p.Teammates[1].PaneID != "%4" {
+		t.Errorf("Teammates[1]: %+v", p.Teammates[1])
+	}
+}
+
+func TestTeammateStateBackwardCompat(t *testing.T) {
+	// State file without team fields should parse cleanly (all team fields zero).
+	path := filepath.Join(t.TempDir(), "state.json")
+	in := &StateFile{
+		TmuxSession: "mo",
+		Projects: []ProjectState{
+			{Name: "old-project", Path: "/ws/old", WindowName: "old-project", Status: "idle"},
+		},
+	}
+
+	if err := Write(path, in); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	p := got.Projects[0]
+	if p.TeamName != "" {
+		t.Errorf("TeamName should be empty, got %q", p.TeamName)
+	}
+	if p.TeamRole != "" {
+		t.Errorf("TeamRole should be empty, got %q", p.TeamRole)
+	}
+	if p.Teammates != nil {
+		t.Errorf("Teammates should be nil, got %v", p.Teammates)
+	}
+}
+
+func TestTeammateFieldsOmittedWhenEmpty(t *testing.T) {
+	// Team fields with zero values should be omitted from JSON (omitempty).
+	s := &StateFile{
+		Projects: []ProjectState{{Name: "p"}},
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	str := string(data)
+	for _, field := range []string{"team_name", "team_role", "teammates"} {
+		if containsField(data, field) {
+			t.Errorf("field %q should be omitted from JSON when empty, got %s", field, str)
+		}
+	}
+}
+
 func containsField(b []byte, field string) bool {
 	s := string(b)
 	// Looking for "index" as a JSON object key (naive but sufficient for the tiny fixture).
