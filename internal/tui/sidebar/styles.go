@@ -55,6 +55,14 @@ var (
 	termActiveStyle = lipgloss.NewStyle().
 			Foreground(colorSuccess)
 
+	// Git status markers for file tree
+	gitStatusM = lipgloss.NewStyle().Foreground(colorWarning) // Modified: yellow
+	gitStatusA = lipgloss.NewStyle().Foreground(colorSuccess) // Added: green
+	gitStatusD = lipgloss.NewStyle().Foreground(colorDanger)  // Deleted: red
+	gitStatusU = lipgloss.NewStyle().Foreground(colorInfo)    // Untracked: blue
+	gitStatusR = lipgloss.NewStyle().Foreground(colorPrimary) // Renamed: purple
+	gitDirDot  = lipgloss.NewStyle().Foreground(colorWarning) // Dir changed indicator
+
 	// Claude usage line (above footer)
 	usageLineStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)

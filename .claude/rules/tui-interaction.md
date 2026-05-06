@@ -24,7 +24,7 @@ Runs in tmux window 0. Three screens:
 Runs as pane `.1` in each project window. Two focus sections:
 
 - **Sessions section**: `up`/`down`, `enter` (switch window or focus terminal tab), `t` (toggle terminal drawer), `T` (new terminal tab), `tab`/`shift+tab` (cycle tabs), `x` (close terminal), `` ` `` (popup), `s` (sync push), `ctrl+r` (restart).
-- **Files section** (arrow down past sessions): `up`/`down` (navigate files, skip directory nodes), `enter`/`d` (git diff popup), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor).
+- **Files section** (arrow down past sessions): `up`/`down` (navigate files), `enter`/`d` (git diff popup for changed files; open editor for clean files), `v` (open in `$EDITOR` popup), `o` (open in VS Code / default editor), `.` (toggle between "Changed" and "Files" full-tree mode), `enter`/`space` on directory nodes (expand/collapse in full-tree mode).
 
 `t`, `T`, `tab`, `x`, `s`, `d`, `v`, and `` ` `` are handled **only** in the sidebar; the main TUI ignores them. "Fixing" terminal-open behavior in `internal/tui/app.go` won't change anything — edit the sidebar.
 
@@ -55,5 +55,6 @@ Backtick (`` ` ``) opens a floating popup that attaches a nested tmux client to 
 - **Usage strip** — reads `UsageState` from state file, renders 5h / weekly bars. No API calls.
 - **Per-session token counter** — `usage.SessionTokens` against live session's JSONL.
 - **Active shells** — `claude.ActiveShellsForSession` lists Claude's Bash-tool subprocesses.
-- **Changed files** — `git status --porcelain` + `git diff --numstat` populates the Files section.
+- **Changed files** — `git status --porcelain` + `git diff --numstat` populates the Files section (changed-only mode). Also feeds `gitStatusMap` for status markers in full-tree mode.
+- **Full file tree** — `git ls-files` on a 5s cadence (every 5th tick) builds a `dirNode` tree with expand/collapse state preserved across rebuilds. Toggled with `.` key.
 - **Sync status** — read once on init via `moSync.ListLocal` (no network), re-checked after a local push.

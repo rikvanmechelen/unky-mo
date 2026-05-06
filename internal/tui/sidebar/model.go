@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -84,9 +85,15 @@ type Model struct {
 	// Active Claude shells (Bash tool subprocesses)
 	activeShells []claude.ActiveShell
 	// Changed files (from git status)
-	changedFiles   []string // raw file paths from git status --porcelain
-	changedAdded   int      // total lines added
-	changedRemoved int      // total lines removed
+	changedFiles   []string           // raw file paths from git status --porcelain
+	changedAdded   int                // total lines added
+	changedRemoved int                // total lines removed
+	gitStatusMap   map[string]string  // path → status label (M/A/D/?/R) from git status
+	// Full project file tree
+	fileTreeMode        fileTreeMode  // changed-only vs full tree
+	dirTree             *dirNode      // cached full directory tree
+	dirTreeRaw          string        // cached git ls-files output for change detection
+	dirTreeRefreshTick  int           // counter for 5s cadence (refresh every 5 ticks)
 	// Focus section: "sessions", "shells", or "files"
 	focusSection string
 	shellCursor  int
@@ -130,6 +137,7 @@ func NewModelWithDeps(sessionName, stateFile string, tmux TmuxClient, claude Cla
 		windowPath:    windowPath,
 		activeTermIdx: -1,
 		focusSection:  "sessions",
+		fileTreeMode:  fileTreeModeFull,
 	}
 	m.items = append(m.items, SidebarItem{
 		Name:   "Unky Mo Home",
@@ -205,7 +213,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "down", "j":
 			if m.focusSection == "files" {
-				if m.fileCursor < len(m.changedFiles)-1 {
+				max := m.fileLineCount()
+				if m.fileCursor < max-1 {
 					m.fileCursor++
 				} else {
 					m.focusSection = "sessions"
@@ -215,7 +224,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.focusSection == "shells" {
 				if m.shellCursor < len(m.activeShells)-1 {
 					m.shellCursor++
-				} else if len(m.changedFiles) > 0 {
+				} else if m.fileLineCount() > 0 {
 					m.focusSection = "files"
 					m.fileCursor = 0
 				} else {
@@ -233,7 +242,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.activeShells) > 0 {
 						m.focusSection = "shells"
 						m.shellCursor = 0
-					} else if len(m.changedFiles) > 0 {
+					} else if m.fileLineCount() > 0 {
 						m.focusSection = "files"
 						m.fileCursor = 0
 					}
@@ -242,27 +251,62 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureCursorVisible()
 				}
 			}
-		case "enter":
+		case "enter", " ":
 			if m.focusSection == "shells" && m.shellCursor < len(m.activeShells) {
 				return m, m.showShellOutput(m.activeShells[m.shellCursor])
 			}
-			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
-				return m, m.showDiffPopup(m.changedFiles[m.fileCursor])
+			if m.focusSection == "files" {
+				path, isDir, hasStatus := m.resolveFilePath()
+				if isDir {
+					// Toggle expand/collapse on directory node
+					if node := findDirNodeFromRoot(m.dirTree, path); node != nil {
+						node.expanded = !node.expanded
+					}
+					return m, nil
+				} else if path != "" {
+					if hasStatus {
+						return m, m.showDiffPopup(path)
+					}
+					return m, m.openFileInEditor(path)
+				}
+			}
+			if msg.String() == " " {
+				// Space only acts on files section; elsewhere ignore
+				return m, nil
 			}
 			return m, m.handleEnter()
 		case "d":
-			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
-				return m, m.showDiffPopup(m.changedFiles[m.fileCursor])
+			if m.focusSection == "files" {
+				path, isDir, hasStatus := m.resolveFilePath()
+				if !isDir && path != "" && hasStatus {
+					return m, m.showDiffPopup(path)
+				}
 			}
 		case "v":
-			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
-				return m, m.openFileInEditor(m.changedFiles[m.fileCursor])
+			if m.focusSection == "files" {
+				path, isDir, _ := m.resolveFilePath()
+				if !isDir && path != "" {
+					return m, m.openFileInEditor(path)
+				}
 			}
 		case "o":
-			if m.focusSection == "files" && m.fileCursor < len(m.changedFiles) {
-				return m, m.openFileExternal(m.changedFiles[m.fileCursor])
+			if m.focusSection == "files" {
+				path, isDir, _ := m.resolveFilePath()
+				if !isDir && path != "" {
+					return m, m.openFileExternal(path)
+				}
 			} else {
 				return m, m.openProjectExternal()
+			}
+		case ".":
+			if m.focusSection == "files" {
+				if m.fileTreeMode == fileTreeModeChanged {
+					m.fileTreeMode = fileTreeModeFull
+				} else {
+					m.fileTreeMode = fileTreeModeChanged
+				}
+				m.fileCursor = 0
+				return m, nil
 			}
 		case "t":
 			return m, m.toggleDrawer()
@@ -450,45 +494,99 @@ func (m Model) View() tea.View {
 		}
 	}
 
-	// Changed files tree
-	if len(m.changedFiles) > 0 && remaining > 3 {
+	// File tree section — two modes: Changed (default) and Full
+	showFileSection := false
+	switch m.fileTreeMode {
+	case fileTreeModeChanged:
+		showFileSection = len(m.changedFiles) > 0
+	case fileTreeModeFull:
+		showFileSection = m.dirTree != nil && len(m.dirTree.children) > 0
+	}
+	if showFileSection && remaining > 3 {
 		maxFileLines := remaining - 2
 		if maxFileLines > 0 {
 			b.WriteString("\n")
-			noun := "files"
-			if len(m.changedFiles) == 1 {
-				noun = "file"
-			}
-			stats := fmt.Sprintf("%d %s", len(m.changedFiles), noun)
-			if m.changedAdded > 0 || m.changedRemoved > 0 {
-				stats += " " + dotIdle.Render(fmt.Sprintf("+%d", m.changedAdded)) + " " + dotPermission.Render(fmt.Sprintf("-%d", m.changedRemoved))
-			}
-			b.WriteString(headerStyle.Render("Changed") + " " + stats + "\n")
 
-			// Build tree lines with file index mapping
-			treeLines := buildFileTreeLines(m.changedFiles)
-			rendered := 0
-			for _, tl := range treeLines {
-				if rendered >= maxFileLines {
-					more := len(m.changedFiles) - rendered
-					if more > 0 {
-						b.WriteString(footerStyle.Render(fmt.Sprintf("  +%d more", more)) + "\n")
-						rendered++
+			switch m.fileTreeMode {
+			case fileTreeModeChanged:
+				// Header: ──── Changed 4 files +12 -3 ────
+				noun := "files"
+				if len(m.changedFiles) == 1 {
+					noun = "file"
+				}
+				label := fmt.Sprintf("Changed %d %s", len(m.changedFiles), noun)
+				if m.changedAdded > 0 || m.changedRemoved > 0 {
+					label += fmt.Sprintf(" +%d -%d", m.changedAdded, m.changedRemoved)
+				}
+				b.WriteString(renderSectionHeader(label, m.width) + "\n")
+
+				// Build tree lines with file index mapping
+				treeLines := buildFileTreeLines(m.changedFiles)
+				rendered := 0
+				for _, tl := range treeLines {
+					if rendered >= maxFileLines {
+						more := len(m.changedFiles) - rendered
+						if more > 0 {
+							b.WriteString(footerStyle.Render(fmt.Sprintf("  +%d more", more)) + "\n")
+							rendered++
+						}
+						break
 					}
-					break
+					isFocused := m.focusSection == "files" && tl.fileIndex >= 0 && m.fileCursor == tl.fileIndex
+					if isFocused {
+						b.WriteString(selectedStyle.Render("▸"+tl.indent+tl.display) + "\n")
+					} else if tl.fileIndex >= 0 {
+						b.WriteString(normalStyle.Render(" "+tl.indent+tl.display) + "\n")
+					} else {
+						// Directory line (not selectable)
+						b.WriteString(footerStyle.Render(" "+tl.indent+tl.display+"/") + "\n")
+					}
+					rendered++
 				}
-				isFocused := m.focusSection == "files" && tl.fileIndex >= 0 && m.fileCursor == tl.fileIndex
-				if isFocused {
-					b.WriteString(selectedStyle.Render("▸"+tl.indent+tl.display) + "\n")
-				} else if tl.fileIndex >= 0 {
-					b.WriteString(normalStyle.Render(" "+tl.indent+tl.display) + "\n")
-				} else {
-					// Directory line (not selectable)
-					b.WriteString(footerStyle.Render(" "+tl.indent+tl.display+"/") + "\n")
+				remaining -= rendered + 2
+
+			case fileTreeModeFull:
+				// Header: ──── Files (5 changed) ────
+				label := "Files"
+				if len(m.changedFiles) > 0 {
+					label += fmt.Sprintf(" (%d changed)", len(m.changedFiles))
 				}
-				rendered++
+				b.WriteString(renderSectionHeader(label, m.width) + "\n")
+
+				treeLines := m.visibleFileLines()
+				rendered := 0
+				for lineIdx, tl := range treeLines {
+					if rendered >= maxFileLines {
+						break
+					}
+					isFocused := m.focusSection == "files" && lineIdx == m.fileCursor
+
+					// Git status marker
+					statusStr := ""
+					if tl.gitStatus != "" {
+						statusStr = renderGitStatusMarker(tl.gitStatus) + " "
+					}
+
+					if tl.isDir {
+						// Directory with expand/collapse icon
+						icon := "▸"
+						if node := findDirNodeFromRoot(m.dirTree, tl.path); node != nil && node.expanded {
+							icon = "▾"
+						}
+						if isFocused {
+							b.WriteString(selectedStyle.Render(icon+tl.indent+tl.display+"/") + " " + statusStr + "\n")
+						} else {
+							b.WriteString(footerStyle.Render(icon+tl.indent+tl.display+"/") + " " + statusStr + "\n")
+						}
+					} else if isFocused {
+						b.WriteString(selectedStyle.Render("▸"+tl.indent+statusStr+tl.display) + "\n")
+					} else {
+						b.WriteString(normalStyle.Render(" "+tl.indent+statusStr+tl.display) + "\n")
+					}
+					rendered++
+				}
+				remaining -= rendered + 2
 			}
-			remaining -= rendered + 2
 		}
 	}
 
@@ -518,11 +616,24 @@ func (m Model) View() tea.View {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ view output") + "\n")
 		b.WriteString(footerStyle.Render(" ` popup  s sync  o open") + "\n")
 		b.WriteString(footerStyle.Render(" ^r refresh"))
-	} else if m.focusSection == "files" && len(m.changedFiles) > 0 {
-		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/d diff") + "\n")
-		b.WriteString(footerStyle.Render(" v edit   o open") + "\n")
-		b.WriteString(footerStyle.Render(" ` popup  s sync") + "\n")
-		b.WriteString(footerStyle.Render(" ^r refresh"))
+	} else if m.focusSection == "files" && m.fileLineCount() > 0 {
+		if m.fileTreeMode == fileTreeModeFull {
+			_, isDir, hasStatus := m.resolveFilePath()
+			if isDir {
+				b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ expand/collapse") + "\n")
+			} else if hasStatus {
+				b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/d diff  v edit") + "\n")
+			} else {
+				b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/v edit  o open") + "\n")
+			}
+			b.WriteString(footerStyle.Render(" . changed  ` popup") + "\n")
+			b.WriteString(footerStyle.Render(" ^r refresh"))
+		} else {
+			b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎/d diff") + "\n")
+			b.WriteString(footerStyle.Render(" v edit   o open  . files") + "\n")
+			b.WriteString(footerStyle.Render(" ` popup  s sync") + "\n")
+			b.WriteString(footerStyle.Render(" ^r refresh"))
+		}
 	} else {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ select") + "\n")
 		b.WriteString(footerStyle.Render(" t drawer T +term") + "\n")
@@ -814,6 +925,7 @@ func (m *Model) refreshState() {
 	}
 	m.refreshTerminals()
 	m.refreshChangedFiles()
+	m.refreshDirTree()
 	if isClaude {
 		m.activeShells = m.claude.ActiveShellsForSession(m.windowPath)
 	} else {
@@ -938,27 +1050,23 @@ func (m *Model) refreshFromSessions() {
 func (m *Model) refreshChangedFiles() {
 	if m.windowPath == "" {
 		m.changedFiles = nil
+		m.gitStatusMap = nil
 		return
 	}
 	cmd := exec.Command("git", "-C", m.windowPath, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		m.changedFiles = nil
+		m.gitStatusMap = nil
 		return
 	}
+	m.gitStatusMap = parseGitStatus(strings.TrimSpace(string(out)))
 	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		// Strip the 2-char status prefix + space
-		file := strings.TrimSpace(line[2:])
-		// Handle renames: "old -> new"
-		if idx := strings.Index(file, " -> "); idx >= 0 {
-			file = file[idx+4:]
-		}
-		files = append(files, file)
+	for path := range m.gitStatusMap {
+		files = append(files, path)
 	}
+	// Stable ordering: sort so the tree renders deterministically.
+	sort.Strings(files)
 	m.changedFiles = files
 
 	// Get line-level stats
@@ -979,11 +1087,350 @@ func (m *Model) refreshChangedFiles() {
 	}
 }
 
+// refreshDirTree refreshes the full project directory tree on a 5s cadence
+// (every 5th tick). It runs `git ls-files` and rebuilds the tree only when
+// the output has changed, preserving expand/collapse state across rebuilds.
+func (m *Model) refreshDirTree() {
+	if m.windowPath == "" {
+		m.dirTree = nil
+		return
+	}
+	m.dirTreeRefreshTick++
+	if m.dirTree != nil && m.dirTreeRefreshTick%5 != 0 {
+		return // use cached tree
+	}
+	out, err := exec.Command("git", "-C", m.windowPath, "ls-files").Output()
+	if err != nil {
+		return
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == m.dirTreeRaw && m.dirTree != nil {
+		return // unchanged
+	}
+	// Parse files
+	var files []string
+	for _, line := range strings.Split(raw, "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	// Also include untracked files from gitStatusMap
+	tracked := make(map[string]bool, len(files))
+	for _, f := range files {
+		tracked[f] = true
+	}
+	for path, status := range m.gitStatusMap {
+		if !tracked[path] && status == "?" {
+			files = append(files, path)
+		}
+	}
+	sort.Strings(files)
+
+	// Preserve expand state from old tree
+	var oldState map[string]bool
+	if m.dirTree != nil {
+		oldState = preserveExpandedState(m.dirTree)
+	}
+	m.dirTree = buildDirTree(files)
+	if oldState != nil {
+		restoreExpandedState(m.dirTree, oldState, 0)
+	} else {
+		// First load: expand top-level directories
+		restoreExpandedState(m.dirTree, map[string]bool{}, 1)
+	}
+	m.dirTreeRaw = raw
+}
+
+// fileTreeMode selects which file listing to show in the sidebar.
+type fileTreeMode int
+
+const (
+	fileTreeModeChanged fileTreeMode = iota // current behavior: git status only
+	fileTreeModeFull                        // full project tree from git ls-files
+)
+
+// dirNode represents a directory or file in the full project tree.
+type dirNode struct {
+	name     string
+	path     string               // relative path from repo root
+	children map[string]*dirNode
+	order    []string             // insertion-order child names
+	isDir    bool
+	expanded bool
+}
+
+// buildDirTree creates a persistent directory tree from a list of file paths.
+// All directories default to expanded=false (collapsed).
+func buildDirTree(files []string) *dirNode {
+	root := &dirNode{
+		children: make(map[string]*dirNode),
+		isDir:    true,
+	}
+	for _, file := range files {
+		parts := strings.Split(file, "/")
+		cur := root
+		for i, part := range parts {
+			if _, ok := cur.children[part]; !ok {
+				isDir := i < len(parts)-1
+				path := strings.Join(parts[:i+1], "/")
+				child := &dirNode{
+					name:     part,
+					path:     path,
+					children: make(map[string]*dirNode),
+					isDir:    isDir,
+				}
+				cur.children[part] = child
+				cur.order = append(cur.order, part)
+			} else if i < len(parts)-1 {
+				// Ensure intermediate nodes are marked as directories
+				cur.children[part].isDir = true
+			}
+			cur = cur.children[part]
+		}
+	}
+	return root
+}
+
+// preserveExpandedState snapshots the expanded state of all directories
+// in a tree as a map of path → bool.
+func preserveExpandedState(root *dirNode) map[string]bool {
+	state := make(map[string]bool)
+	var walk func(n *dirNode)
+	walk = func(n *dirNode) {
+		for _, name := range n.order {
+			child := n.children[name]
+			if child.isDir {
+				state[child.path] = child.expanded
+				walk(child)
+			}
+		}
+	}
+	walk(root)
+	return state
+}
+
+// restoreExpandedState restores expanded state from a snapshot. Directories
+// present in the snapshot get their saved state. New directories (not in
+// snapshot) get expanded=true if their depth is <= defaultDepth.
+func restoreExpandedState(root *dirNode, state map[string]bool, defaultDepth int) {
+	var walk func(n *dirNode, depth int)
+	walk = func(n *dirNode, depth int) {
+		for _, name := range n.order {
+			child := n.children[name]
+			if child.isDir {
+				if saved, ok := state[child.path]; ok {
+					child.expanded = saved
+				} else if depth <= defaultDepth {
+					child.expanded = true
+				}
+				walk(child, depth+1)
+			}
+		}
+	}
+	walk(root, 1)
+}
+
+// flattenDirTree walks a dirNode tree respecting expanded flags and produces
+// renderable fileTreeLine entries. Collapsed directories appear as a single
+// line; their children are hidden. A running file index is assigned to visible
+// file nodes (dirs get -1).
+func flattenDirTree(root *dirNode) []fileTreeLine {
+	var lines []fileTreeLine
+	fileIdx := 0
+	var walk func(n *dirNode, indent string)
+	walk = func(n *dirNode, indent string) {
+		for _, name := range n.order {
+			child := n.children[name]
+			if child.isDir {
+				lines = append(lines, fileTreeLine{
+					display:   child.name,
+					indent:    indent,
+					fileIndex: -1,
+					isDir:     true,
+					path:      child.path,
+				})
+				if child.expanded {
+					walk(child, indent+"  ")
+				}
+			} else {
+				lines = append(lines, fileTreeLine{
+					display:   child.name,
+					indent:    indent,
+					fileIndex: fileIdx,
+					isDir:     false,
+					path:      child.path,
+				})
+				fileIdx++
+			}
+		}
+	}
+	walk(root, " ")
+	return lines
+}
+
+// renderGitStatusMarker returns a styled single-char git status indicator.
+func renderGitStatusMarker(status string) string {
+	switch status {
+	case "M":
+		return gitStatusM.Render("M")
+	case "A":
+		return gitStatusA.Render("A")
+	case "D":
+		return gitStatusD.Render("D")
+	case "?":
+		return gitStatusU.Render("?")
+	case "R":
+		return gitStatusR.Render("R")
+	case "●":
+		return gitDirDot.Render("●")
+	default:
+		return status
+	}
+}
+
+// visibleFileLines returns the flattened+annotated lines for the full tree mode.
+// Used by both View() and Update() to stay in sync.
+func (m *Model) visibleFileLines() []fileTreeLine {
+	if m.dirTree == nil {
+		return nil
+	}
+	lines := flattenDirTree(m.dirTree)
+	return annotateTreeWithStatus(lines, m.gitStatusMap)
+}
+
+// fileLineCount returns the number of navigable lines in the current file mode.
+func (m *Model) fileLineCount() int {
+	switch m.fileTreeMode {
+	case fileTreeModeFull:
+		return len(m.visibleFileLines())
+	default:
+		return len(m.changedFiles)
+	}
+}
+
+// resolveFilePath returns the file path at the current fileCursor position.
+// In changed-files mode this indexes into changedFiles. In full-tree mode
+// this indexes into the flattened lines.
+func (m *Model) resolveFilePath() (path string, isDir bool, hasGitStatus bool) {
+	switch m.fileTreeMode {
+	case fileTreeModeFull:
+		lines := m.visibleFileLines()
+		if m.fileCursor < 0 || m.fileCursor >= len(lines) {
+			return "", false, false
+		}
+		tl := lines[m.fileCursor]
+		return tl.path, tl.isDir, tl.gitStatus != ""
+	default:
+		if m.fileCursor < 0 || m.fileCursor >= len(m.changedFiles) {
+			return "", false, false
+		}
+		return m.changedFiles[m.fileCursor], false, true
+	}
+}
+
+// findDirNode locates a dirNode by its full path within a subtree.
+func findDirNode(root *dirNode, path string) *dirNode {
+	if root.path == path {
+		return root
+	}
+	for _, name := range root.order {
+		child := root.children[name]
+		if child.isDir {
+			if child.path == path {
+				return child
+			}
+			if strings.HasPrefix(path, child.path+"/") {
+				if found := findDirNode(child, path); found != nil {
+					return found
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// findDirNodeFromRoot locates a dirNode by path starting from the tree root.
+func findDirNodeFromRoot(root *dirNode, path string) *dirNode {
+	for _, name := range root.order {
+		child := root.children[name]
+		if child.path == path {
+			return child
+		}
+		if child.isDir && strings.HasPrefix(path, child.path+"/") {
+			if found := findDirNode(child, path); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+// annotateTreeWithStatus overlays git status markers onto flattened tree
+// lines. File lines get their exact status (M/A/D/?/R). Directory lines get
+// a "●" marker if any file in the statusMap has the directory's path as a prefix.
+func annotateTreeWithStatus(lines []fileTreeLine, statusMap map[string]string) []fileTreeLine {
+	if lines == nil {
+		return nil
+	}
+	result := make([]fileTreeLine, len(lines))
+	copy(result, lines)
+	for i := range result {
+		if result[i].isDir {
+			// Check if any changed file is under this directory
+			prefix := result[i].path + "/"
+			for path := range statusMap {
+				if strings.HasPrefix(path, prefix) {
+					result[i].gitStatus = "●"
+					break
+				}
+			}
+		} else if s, ok := statusMap[result[i].path]; ok {
+			result[i].gitStatus = s
+		}
+	}
+	return result
+}
+
+// parseGitStatus parses `git status --porcelain` output into a map of
+// relative file path → single-char status label (M, A, D, ?, R).
+func parseGitStatus(porcelainOutput string) map[string]string {
+	result := make(map[string]string)
+	for _, line := range strings.Split(porcelainOutput, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		x, y := line[0], line[1]
+		file := strings.TrimSpace(line[2:])
+		// Handle renames: "old -> new"
+		if idx := strings.Index(file, " -> "); idx >= 0 {
+			file = file[idx+4:]
+		}
+		// Pick the most informative single-char label.
+		// Priority: worktree status (Y), then index status (X).
+		var label byte
+		switch {
+		case y == '?' || x == '?':
+			label = '?'
+		case y != ' ' && y != 0:
+			label = y
+		case x != ' ' && x != 0:
+			label = x
+		default:
+			continue
+		}
+		result[file] = string(label)
+	}
+	return result
+}
+
 // fileTreeLine is a single rendered line of the file tree.
 type fileTreeLine struct {
 	display   string // the text to show (filename or directory name)
 	indent    string // leading spaces
 	fileIndex int    // index into changedFiles (-1 for directory nodes)
+	isDir     bool   // true for directory nodes (expand/collapse target)
+	path      string // full relative path from repo root
+	gitStatus string // "M", "A", "D", "?", "R", or "" for clean files
 }
 
 // buildFileTreeLines creates an indented tree from file paths.
