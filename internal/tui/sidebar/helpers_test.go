@@ -858,3 +858,47 @@ func TestRenderGitStatusMarkerUnknown(t *testing.T) {
 		t.Errorf("unknown status should pass through, got %q", got)
 	}
 }
+
+// --- ensureFileCursorVisible tests ---
+
+func TestEnsureFileCursorVisibleScrollsDown(t *testing.T) {
+	m := Model{fileCursor: 15, fileViewStart: 0}
+	m.ensureFileCursorVisible(10)
+	// Cursor at 15, viewport of 10 → viewStart should be 6 (15-10+1)
+	if m.fileViewStart != 6 {
+		t.Errorf("fileViewStart = %d, want 6", m.fileViewStart)
+	}
+}
+
+func TestEnsureFileCursorVisibleScrollsUp(t *testing.T) {
+	m := Model{fileCursor: 2, fileViewStart: 5}
+	m.ensureFileCursorVisible(10)
+	// Cursor at 2, viewStart at 5 → viewStart should snap to 2
+	if m.fileViewStart != 2 {
+		t.Errorf("fileViewStart = %d, want 2", m.fileViewStart)
+	}
+}
+
+func TestEnsureFileCursorVisibleNoChange(t *testing.T) {
+	m := Model{fileCursor: 5, fileViewStart: 3}
+	m.ensureFileCursorVisible(10)
+	// Cursor at 5 is within [3, 13) — no change
+	if m.fileViewStart != 3 {
+		t.Errorf("fileViewStart = %d, want 3 (no change)", m.fileViewStart)
+	}
+}
+
+// --- Default mode is full tree ---
+
+func TestFirstLoadAllDirsCollapsed(t *testing.T) {
+	// Simulates what refreshDirTree does on first load (no prior state)
+	root := buildDirTree([]string{"a/b.go", "c/d/e.go", "f.go"})
+	restoreExpandedState(root, map[string]bool{}, 0)
+	// All dirs should be collapsed
+	if root.children["a"].expanded {
+		t.Error("a should be collapsed on first load (defaultDepth=0)")
+	}
+	if root.children["c"].expanded {
+		t.Error("c should be collapsed on first load (defaultDepth=0)")
+	}
+}

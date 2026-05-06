@@ -95,9 +95,10 @@ type Model struct {
 	dirTreeRaw          string        // cached git ls-files output for change detection
 	dirTreeRefreshTick  int           // counter for 5s cadence (refresh every 5 ticks)
 	// Focus section: "sessions", "shells", or "files"
-	focusSection string
-	shellCursor  int
-	fileCursor   int
+	focusSection  string
+	shellCursor   int
+	fileCursor    int
+	fileViewStart int // scroll offset for file tree viewport
 	// Claude usage snapshot (populated from state file; nil until main TUI
 	// has fetched at least once).
 	usage *state.UsageState
@@ -306,7 +307,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.fileTreeMode = fileTreeModeChanged
 				}
 				m.fileCursor = 0
+				m.fileViewStart = 0
 				return m, nil
+			}
+		case "pgdown":
+			// Jump to next section
+			switch m.focusSection {
+			case "sessions":
+				if len(m.activeShells) > 0 {
+					m.focusSection = "shells"
+					m.shellCursor = 0
+				} else if m.fileLineCount() > 0 {
+					m.focusSection = "files"
+					m.fileCursor = 0
+					m.fileViewStart = 0
+				}
+			case "shells":
+				if m.fileLineCount() > 0 {
+					m.focusSection = "files"
+					m.fileCursor = 0
+					m.fileViewStart = 0
+				}
+			case "files":
+				m.focusSection = "sessions"
+				m.cursor = 0
+				m.ensureCursorVisible()
+			}
+		case "pgup":
+			// Jump to previous section
+			switch m.focusSection {
+			case "sessions":
+				if m.fileLineCount() > 0 {
+					m.focusSection = "files"
+					m.fileCursor = 0
+					m.fileViewStart = 0
+				} else if len(m.activeShells) > 0 {
+					m.focusSection = "shells"
+					m.shellCursor = 0
+				}
+			case "shells":
+				m.focusSection = "sessions"
+				m.cursor = 0
+				m.ensureCursorVisible()
+			case "files":
+				if len(m.activeShells) > 0 {
+					m.focusSection = "shells"
+					m.shellCursor = 0
+				} else {
+					m.focusSection = "sessions"
+					m.cursor = 0
+					m.ensureCursorVisible()
+				}
 			}
 		case "t":
 			return m, m.toggleDrawer()
@@ -522,16 +573,13 @@ func (m Model) View() tea.View {
 
 				// Build tree lines with file index mapping
 				treeLines := buildFileTreeLines(m.changedFiles)
+				m.ensureFileCursorVisible(maxFileLines)
 				rendered := 0
-				for _, tl := range treeLines {
+				for i := m.fileViewStart; i < len(treeLines); i++ {
 					if rendered >= maxFileLines {
-						more := len(m.changedFiles) - rendered
-						if more > 0 {
-							b.WriteString(footerStyle.Render(fmt.Sprintf("  +%d more", more)) + "\n")
-							rendered++
-						}
 						break
 					}
+					tl := treeLines[i]
 					isFocused := m.focusSection == "files" && tl.fileIndex >= 0 && m.fileCursor == tl.fileIndex
 					if isFocused {
 						b.WriteString(selectedStyle.Render("▸"+tl.indent+tl.display) + "\n")
@@ -542,6 +590,13 @@ func (m Model) View() tea.View {
 						b.WriteString(footerStyle.Render(" "+tl.indent+tl.display+"/") + "\n")
 					}
 					rendered++
+				}
+				// Scroll indicators
+				if m.fileViewStart > 0 {
+					remaining-- // reserve a line
+				}
+				if m.fileViewStart+maxFileLines < len(treeLines) {
+					remaining-- // reserve a line
 				}
 				remaining -= rendered + 2
 
@@ -554,11 +609,13 @@ func (m Model) View() tea.View {
 				b.WriteString(renderSectionHeader(label, m.width) + "\n")
 
 				treeLines := m.visibleFileLines()
+				m.ensureFileCursorVisible(maxFileLines)
 				rendered := 0
-				for lineIdx, tl := range treeLines {
+				for lineIdx := m.fileViewStart; lineIdx < len(treeLines); lineIdx++ {
 					if rendered >= maxFileLines {
 						break
 					}
+					tl := treeLines[lineIdx]
 					isFocused := m.focusSection == "files" && lineIdx == m.fileCursor
 
 					// Git status marker
@@ -584,6 +641,13 @@ func (m Model) View() tea.View {
 						b.WriteString(normalStyle.Render(" "+tl.indent+statusStr+tl.display) + "\n")
 					}
 					rendered++
+				}
+				// Scroll indicators
+				if m.fileViewStart > 0 {
+					remaining-- // reserve a line
+				}
+				if m.fileViewStart+maxFileLines < len(treeLines) {
+					remaining-- // reserve a line
 				}
 				remaining -= rendered + 2
 			}
@@ -1135,8 +1199,8 @@ func (m *Model) refreshDirTree() {
 	if oldState != nil {
 		restoreExpandedState(m.dirTree, oldState, 0)
 	} else {
-		// First load: expand top-level directories
-		restoreExpandedState(m.dirTree, map[string]bool{}, 1)
+		// First load: all directories collapsed
+		restoreExpandedState(m.dirTree, map[string]bool{}, 0)
 	}
 	m.dirTreeRaw = raw
 }
@@ -1285,6 +1349,20 @@ func renderGitStatusMarker(status string) string {
 		return gitDirDot.Render("●")
 	default:
 		return status
+	}
+}
+
+// ensureFileCursorVisible adjusts fileViewStart so that fileCursor is within
+// the visible window of maxLines height.
+func (m *Model) ensureFileCursorVisible(maxLines int) {
+	if maxLines <= 0 {
+		return
+	}
+	if m.fileCursor < m.fileViewStart {
+		m.fileViewStart = m.fileCursor
+	}
+	if m.fileCursor >= m.fileViewStart+maxLines {
+		m.fileViewStart = m.fileCursor - maxLines + 1
 	}
 }
 
