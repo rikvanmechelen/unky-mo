@@ -77,22 +77,41 @@ func findOutputFile(pid int) string {
 }
 
 // extractEvalCommand pulls the user command from Claude's shell wrapper.
-// Input:  /bin/zsh -c source .../.claude/shell-snapshots/... && eval 'PORT=3000 bundle exec foreman start' ...
-// Output: PORT=3000 bundle exec foreman start
+// Claude emits two shapes depending on whether the command needs quoting:
+//
+//	... && eval 'PORT=3000 bundle exec foreman start' < /dev/null && pwd -P >| /tmp/claude-XXXX-cwd
+//	... && eval bin/dev < /dev/null && pwd -P >| /tmp/claude-XXXX-cwd
+//
+// Both terminate the user command at ` < /dev/null` before the cwd-capture tail.
 func extractEvalCommand(cmd string) string {
-	// Find "eval '" and extract until the closing quote
-	idx := strings.Index(cmd, "eval '")
+	idx := strings.Index(cmd, "eval ")
 	if idx < 0 {
 		return ""
 	}
-	rest := cmd[idx+6:] // skip "eval '"
-	end := strings.Index(rest, "'")
-	if end < 0 {
-		return rest // no closing quote, return what we have
-	}
-	extracted := rest[:end]
+	rest := cmd[idx+5:] // skip "eval "
 
-	// Clean up: remove common wrappers
+	var extracted string
+	if strings.HasPrefix(rest, "'") {
+		rest = rest[1:]
+		end := strings.Index(rest, "'")
+		if end < 0 {
+			extracted = rest
+		} else {
+			extracted = rest[:end]
+		}
+	} else {
+		// Unquoted form: command runs until the ` < /dev/null` sentinel Claude appends.
+		end := strings.Index(rest, " < /dev/null")
+		if end < 0 {
+			end = strings.Index(rest, " </dev/null")
+		}
+		if end < 0 {
+			extracted = rest
+		} else {
+			extracted = rest[:end]
+		}
+	}
+
 	extracted = strings.TrimSpace(extracted)
 
 	// Truncate long commands
