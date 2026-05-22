@@ -8,6 +8,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/claude"
 	gh "github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/project"
+	"github.com/rvanmech/unky-mo/internal/status"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 )
 
@@ -64,7 +65,7 @@ func newDashModel(projects []project.Project, sessions []dashSessionItem) Model 
 		dashSessionItems:  sessions,
 		dashSessionCursor: 0,
 		dashRightFocus:    dashRightSessions,
-		notifState:        make(sessionStateMap),
+		statusMgr:         status.NewManager(),
 		ticketsExpanded:   map[tickets.Bucket]bool{},
 		width:             120,
 		height:            50,
@@ -83,7 +84,7 @@ func newProjectModel(rows []detailRow, prs []gh.PullRequest) Model {
 		detailPRs:      prs,
 		detailPRCursor: 0,
 		detailFocusLeft: true,
-		notifState:     make(sessionStateMap),
+		statusMgr:      status.NewManager(),
 		ticketsExpanded: map[tickets.Bucket]bool{},
 		width:          120,
 		height:         50,
@@ -507,7 +508,7 @@ func TestMouseWheelProjectDetailRight(t *testing.T) {
 func TestMouseClickHelpScreenIsNoop(t *testing.T) {
 	m := Model{
 		screen:      ScreenHelp,
-		notifState:  make(sessionStateMap),
+		statusMgr:   status.NewManager(),
 		width:       120,
 		height:      50,
 		ready:       true,
@@ -522,7 +523,7 @@ func TestMouseClickHelpScreenIsNoop(t *testing.T) {
 func TestMouseClickTicketScreenIsNoop(t *testing.T) {
 	m := Model{
 		screen:      ScreenTicket,
-		notifState:  make(sessionStateMap),
+		statusMgr:   status.NewManager(),
 		width:       120,
 		height:      50,
 		ready:       true,

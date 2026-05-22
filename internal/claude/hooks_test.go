@@ -204,3 +204,112 @@ func TestHooksInstalledFalseByDefault(t *testing.T) {
 		t.Error("no settings file → not installed")
 	}
 }
+
+// --- V2 hooks tests ---
+
+func TestInstallHooksV2_AddsExpandedHookSet(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+		t.Fatal(err)
+	}
+	if !HooksV2Installed() {
+		t.Fatal("HooksV2Installed should report true after install")
+	}
+	settings := readSettingsFile(t)
+	hooks := settings["hooks"].(map[string]interface{})
+
+	expected := []string{"UserPromptSubmit", "Stop", "PreToolUse", "Notification", "PermissionRequest", "SessionStart", "SessionEnd"}
+	for _, name := range expected {
+		entries, ok := hooks[name].([]interface{})
+		if !ok || len(entries) == 0 {
+			t.Errorf("hook type %q missing after V2 install", name)
+		}
+	}
+
+	// Verify Notification has a matcher.
+	notif := hooks["Notification"].([]interface{})
+	entry := notif[len(notif)-1].(map[string]interface{})
+	if entry["matcher"] != "idle_prompt|permission_prompt" {
+		t.Errorf("Notification matcher: got %v", entry["matcher"])
+	}
+}
+
+func TestInstallHooksV2_PreservesExistingHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	os.MkdirAll(claudeDir, 0755)
+	preexisting := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/my/hook.sh","timeout":2}]}]}}`
+	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(preexisting), 0644)
+
+	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := readSettingsFile(t)
+	hooks := settings["hooks"].(map[string]interface{})
+	ptEntries := hooks["PreToolUse"].([]interface{})
+	// Should have 2 entries: the user's and ours.
+	if len(ptEntries) != 2 {
+		t.Errorf("PreToolUse: want 2 entries (user + mo), got %d", len(ptEntries))
+	}
+}
+
+func TestInstallHooksV2_ReplacesV1Hooks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Install V1 first.
+	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
+		t.Fatal(err)
+	}
+	if !HooksInstalled() {
+		t.Fatal("V1 not installed")
+	}
+
+	// Install V2 — should replace V1 markers.
+	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := readSettingsFile(t)
+	hooks := settings["hooks"].(map[string]interface{})
+	dump, _ := json.Marshal(hooks)
+	dumpStr := string(dump)
+
+	// Old V1 scripts should be gone.
+	if strings.Contains(dumpStr, "notify.sh") {
+		t.Error("V1 notify script should have been replaced")
+	}
+	if strings.Contains(dumpStr, "stop.sh # unky-mo") {
+		// The V2 Stop hook will contain "status-hook.sh # unky-mo", not "stop.sh"
+		t.Error("V1 stop script should have been replaced")
+	}
+
+	// V2 script should be present.
+	if !strings.Contains(dumpStr, "status-hook.sh") {
+		t.Error("V2 status-hook.sh should be present")
+	}
+}
+
+func TestUninstallHooks_RemovesBothV1AndV2(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Install V2.
+	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+		t.Fatal(err)
+	}
+	if !HooksV2Installed() {
+		t.Fatal("V2 not installed")
+	}
+
+	// Uninstall should remove all.
+	if err := UninstallHooks(); err != nil {
+		t.Fatal(err)
+	}
+	if HooksInstalled() {
+		t.Error("V1 check should be false after uninstall")
+	}
+	if HooksV2Installed() {
+		t.Error("V2 check should be false after uninstall")
+	}
+}

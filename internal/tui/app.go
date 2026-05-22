@@ -22,6 +22,7 @@ import (
 	gh "github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/notify"
+	"github.com/rvanmech/unky-mo/internal/status"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
@@ -144,13 +145,11 @@ func (m Model) refreshGitStatuses() tea.Cmd {
 	}
 }
 
-// sessionStateMap holds notification-based status overrides. Keyed by
-// claude session ID so concurrent sessions sharing a CWD don't bleed
-// into each other.
-type sessionStateMap map[string]SessionStatus
-
 // notificationMsg wraps a notification received from the Unix socket.
 type notificationMsg notify.Notification
+
+// statusChangeMsg wraps a status change from the status manager.
+type statusChangeMsg status.StatusChange
 
 // Model is the root Bubbletea model.
 type Model struct {
@@ -163,7 +162,9 @@ type Model struct {
 	agents         []config.AgentConfig
 	agentChoices   map[string]string // project:branch → agent key (persisted preferences)
 	notifServer    *notify.Server
-	notifState     sessionStateMap // status overrides from notification system
+	statusMgr      *status.Manager  // central source of truth for session statuses
+	statusWatcher  *status.Watcher  // fsnotify watcher for JSONL reconciliation
+	statusSub      <-chan status.StatusChange // subscription to status changes
 	statusMsg      string
 	activeSessions int
 	attentionCount int
@@ -269,7 +270,7 @@ type Model struct {
 	externalSessions map[string]string
 	// sessionViews is the source of truth for dashboard rows + state file
 	// entries: one entry per live Claude session. Populated by
-	// updateProjectStatuses from the poll result plus notifState overrides.
+	// updateProjectStatuses from the poll result (status manager is source of truth).
 	sessionViews []sessionView
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
@@ -311,14 +312,14 @@ type Model struct {
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
 	opsCtx := ops.NewContext(tmuxClient)
-	return NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, stateFilePath, ticketsCfg, agents)
+	return NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, nil, stateFilePath, ticketsCfg, agents)
 }
 
 // NewModelWithDeps is the test-friendly constructor — accepts ops interface
 // implementations so tests can inject mocks directly. Production code calls
 // NewModel, which wraps the concrete *ttmux.Client and claude package via
 // ops.NewContext.
-func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
+func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, statusMgr *status.Manager, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
 	if opsCtx == nil {
 		opsCtx = &ops.Context{
 			Tmux:         tmuxClient,
@@ -357,6 +358,17 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 
 	agentChoices, _ := config.LoadAgentChoices()
 
+	if statusMgr == nil {
+		statusMgr = status.NewManager()
+	}
+	statusSub := statusMgr.Subscribe()
+
+	// Create the fsnotify JSONL watcher for reconciliation.
+	var statusWatcher *status.Watcher
+	statusWatcher, _ = status.NewWatcher(func(sessionID, path string) {
+		statusMgr.ProcessJSONLChange(sessionID, path)
+	})
+
 	return Model{
 		screen:             ScreenDashboard,
 		list:               l,
@@ -367,7 +379,9 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 		agents:             agents,
 		agentChoices:       agentChoices,
 		notifServer:        notifServer,
-		notifState:         make(sessionStateMap),
+		statusMgr:          statusMgr,
+		statusWatcher:      statusWatcher,
+		statusSub:          statusSub,
 		dashFocusLeft:      true,
 		stateFilePath:      stateFilePath,
 		ticketsDisabled:    ticketsCfg.Disabled,
@@ -421,6 +435,9 @@ func (m Model) Init() tea.Cmd {
 	if m.notifServer != nil {
 		cmds = append(cmds, m.waitForNotification())
 	}
+	if m.statusSub != nil {
+		cmds = append(cmds, m.waitForStatusChange())
+	}
 	// Kick off the first tickets fetch immediately so the panel populates on
 	// first paint. Subsequent fetches come from ticketsTick.
 	if len(m.ticketsProviders) > 0 {
@@ -433,6 +450,16 @@ func (m Model) waitForNotification() tea.Cmd {
 	return func() tea.Msg {
 		n := <-m.notifServer.Messages()
 		return notificationMsg(n)
+	}
+}
+
+func (m Model) waitForStatusChange() tea.Cmd {
+	return func() tea.Msg {
+		change, ok := <-m.statusSub
+		if !ok {
+			return nil
+		}
+		return statusChangeMsg(change)
 	}
 }
 
@@ -1228,10 +1255,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case notificationMsg:
-		m.handleNotification(notify.Notification(msg))
+		m.routeNotificationToStatusMgr(notify.Notification(msg))
 		cmds := []tea.Cmd{m.refreshSessions()}
 		if m.notifServer != nil {
 			cmds = append(cmds, m.waitForNotification())
+		}
+		return m, tea.Batch(cmds...)
+
+	case statusChangeMsg:
+		// Status manager detected a change — refresh immediately.
+		cmds := []tea.Cmd{m.refreshSessions()}
+		if m.statusSub != nil {
+			cmds = append(cmds, m.waitForStatusChange())
 		}
 		return m, tea.Batch(cmds...)
 
@@ -2230,6 +2265,8 @@ func (m Model) refreshSessions() tea.Cmd {
 	if claudeClient == nil {
 		claudeClient = ops.NewDefaultClaudeReader()
 	}
+	mgr := m.statusMgr
+	watcher := m.statusWatcher
 	return func() tea.Msg {
 		sessions, _ := claudeClient.LiveSessions()
 		var hostPIDs map[int]bool
@@ -2240,25 +2277,48 @@ func (m Model) refreshSessions() tea.Cmd {
 		// PID chains once. Used to populate sessionView.WindowName/WindowID/Index.
 		windowBySession := resolveSessionWindows(tmuxClient, claudeClient, sessions)
 
+		// Track which sessions are still alive for watcher management.
+		liveSIDs := make(map[string]bool, len(sessions))
+
 		views := make([]sessionView, 0, len(sessions))
 		externalPIDs := make(map[string]int)
 		externalSessions := make(map[string]string)
 
 		for _, s := range sessions {
+			liveSIDs[s.SessionID] = true
 			isExternal := len(hostPIDs) > 0 && !claudeClient.IsDescendantOf(s.PID, hostPIDs)
 
-			status := StatusActive
+			var st SessionStatus
 			if isExternal {
-				status = StatusExternal
-			} else if claudeClient.IsSessionIdle(s.CWD, s.SessionID) {
-				status = StatusIdle
+				st = StatusExternal
+			} else if mgr != nil {
+				st = mgrStatusToTUI(mgr.Status(s.SessionID))
+				// If the status manager has no state yet for this session,
+				// bootstrap it via a JSONL read and start watching.
+				if st == StatusNone {
+					jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
+					if mgr != nil {
+						mgr.ProcessJSONLChange(s.SessionID, jsonlPath)
+						st = mgrStatusToTUI(mgr.Status(s.SessionID))
+					}
+				}
+			}
+			// Default to Active if we still don't know.
+			if st == StatusNone && !isExternal {
+				st = StatusActive
+			}
+
+			// Register watcher for JSONL reconciliation.
+			if watcher != nil && !isExternal {
+				jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
+				watcher.WatchSession(s.SessionID, jsonlPath)
 			}
 
 			v := sessionView{
 				SessionID: s.SessionID,
 				PID:       s.PID,
 				CWD:       s.CWD,
-				Status:    status,
+				Status:    st,
 				External:  isExternal,
 			}
 
@@ -2543,7 +2603,8 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.externalPIDs = polled.externalPIDs
 	m.externalSessions = polled.externalSessions
 
-	views := applyNotifOverrides(polled.views, m.notifState)
+	// Status manager is the source of truth — no notification overrides needed.
+	views := polled.views
 	m.sessionViews = views
 
 	// Aggregate per project path for the left-column ProjectItem dot.
@@ -2597,31 +2658,6 @@ func (m *Model) updateProjectStatuses(polled sessionRefreshMsg) {
 	m.refreshDashSessions()
 	m.syncWindowTitles()
 	m.writeStateFile()
-}
-
-// applyNotifOverrides returns a copy of polled views with per-session
-// notification status overrides merged in. Permission always wins; Idle only
-// wins when the polled status is Active (so a poll-detected end_turn isn't
-// clobbered by a stale idle notification). Pure function — extracted for
-// testability out of updateProjectStatuses.
-func applyNotifOverrides(polled []sessionView, overrides sessionStateMap) []sessionView {
-	views := make([]sessionView, len(polled))
-	copy(views, polled)
-	if len(overrides) == 0 {
-		return views
-	}
-	for i := range views {
-		override, ok := overrides[views[i].SessionID]
-		if !ok {
-			continue
-		}
-		if override == StatusPermission {
-			views[i].Status = StatusPermission
-		} else if override == StatusIdle && views[i].Status == StatusActive {
-			views[i].Status = StatusIdle
-		}
-	}
-	return views
 }
 
 // rank orders SessionStatus values for project-level aggregation.
@@ -3462,23 +3498,45 @@ func formatAge(d time.Duration) string {
 	}
 }
 
-func (m *Model) handleNotification(n notify.Notification) {
-	// notifState is keyed by session ID — a permission prompt on one
-	// sibling must not color the other. If the hook payload lacks a
-	// session ID (older hook script), fall back to the project path.
+func (m *Model) routeNotificationToStatusMgr(n notify.Notification) {
+	if m.statusMgr == nil {
+		return
+	}
 	key := n.SessionID
 	if key == "" {
 		key = n.ProjectPath
 	}
+	var evt status.HookEvent
+	evt.SessionID = key
+	evt.ProjectPath = n.ProjectPath
 	switch n.Type {
 	case notify.NotifyIdlePrompt:
-		m.notifState[key] = StatusIdle
+		evt.Type = status.EventNotificationIdle
 		m.list.NewStatusMessage(fmt.Sprintf("● %s needs input", filepath.Base(n.ProjectPath)))
 	case notify.NotifyPermissionPrompt:
-		m.notifState[key] = StatusPermission
+		evt.Type = status.EventNotificationPerm
 		m.list.NewStatusMessage(fmt.Sprintf("● %s needs permission", filepath.Base(n.ProjectPath)))
 	case notify.NotifySessionStop:
-		delete(m.notifState, key)
+		evt.Type = status.EventStop
+	default:
+		return
+	}
+	m.statusMgr.ProcessHookEvent(evt)
+}
+
+// mgrStatusToTUI converts a status.SessionStatus to the TUI's SessionStatus.
+func mgrStatusToTUI(s status.SessionStatus) SessionStatus {
+	switch s {
+	case status.StatusActive:
+		return StatusActive
+	case status.StatusIdle:
+		return StatusIdle
+	case status.StatusPermission:
+		return StatusPermission
+	case status.StatusExternal:
+		return StatusExternal
+	default:
+		return StatusNone
 	}
 }
 

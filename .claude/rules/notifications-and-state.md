@@ -2,19 +2,24 @@
 paths:
   - "internal/notify/**"
   - "internal/state/**"
+  - "internal/status/**"
 ---
 
 # Notifications & State
 
-## Notification flow
+## Status detection flow
 
 ```
-Claude hooks → notify-hook.sh → Unix socket → Main TUI → state file → Sidebars
+Claude hooks → status-hook.sh → Unix socket → status.Manager → Main TUI → state file → Sidebars
+                                                    ↑
+                                     fsnotify JSONL watcher (reconciliation)
 ```
 
-- Hooks installed in `~/.claude/settings.json` with `# unky-mo` marker comment
-- Notification types: `idle_prompt`, `permission_prompt` (from Claude), `session_stop` (from Stop hook)
-- State file written atomically (temp + rename) on every 5s poll and on notification events
+- V2 hooks installed in `~/.claude/settings.json` with `# unky-mo` marker comment via `claude.InstallHooksV2`
+- Hook events: `UserPromptSubmit`, `Stop`, `PreToolUse`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `Notification` (idle_prompt/permission_prompt)
+- `status.Manager` is the single source of truth for session status (active/idle/permission). The TUI reads from it via `statusMgr.Status(sessionID)`.
+- fsnotify `status.Watcher` monitors JSONL files and triggers `ProcessJSONLChange` for reconciliation when hooks are missed.
+- State file written atomically (temp + rename) on every 5s poll, on status change events, and after user actions that change state.
 
 ## State file schema
 

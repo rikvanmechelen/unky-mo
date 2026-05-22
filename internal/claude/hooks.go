@@ -72,6 +72,73 @@ func InstallHooks(notifyScript, stopScript string) error {
 	return writeSettings(settings)
 }
 
+// v2HookTypes lists all hook event types that InstallHooksV2 registers.
+var v2HookTypes = []struct {
+	name    string
+	matcher string // empty = no matcher (fires for all events of this type)
+}{
+	{"UserPromptSubmit", ""},
+	{"Stop", ""},
+	{"PreToolUse", ""},
+	{"Notification", "idle_prompt|permission_prompt"},
+	{"PermissionRequest", ""},
+	{"SessionStart", ""},
+	{"SessionEnd", ""},
+}
+
+// InstallHooksV2 installs the expanded hook set using a single unified script.
+// It replaces any existing V1 hooks (Notification + Stop) with the full set.
+func InstallHooksV2(statusScript string) error {
+	settings, err := readSettings()
+	if err != nil {
+		return fmt.Errorf("reading settings: %w", err)
+	}
+
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	if hooks == nil {
+		hooks = make(map[string]interface{})
+	}
+
+	for _, ht := range v2HookTypes {
+		entries := filterOutUnkyMo(hooks, ht.name)
+		hookEntry := map[string]interface{}{
+			"hooks": []interface{}{
+				map[string]interface{}{
+					"type":    "command",
+					"command": fmt.Sprintf("HOOK_EVENT_NAME=%s %s # %s", ht.name, statusScript, hookMarker),
+					"timeout": 5,
+				},
+			},
+		}
+		if ht.matcher != "" {
+			hookEntry["matcher"] = ht.matcher
+		}
+		entries = append(entries, hookEntry)
+		hooks[ht.name] = entries
+	}
+
+	settings["hooks"] = hooks
+	return writeSettings(settings)
+}
+
+// HooksV2Installed checks if the expanded V2 hook set is present.
+func HooksV2Installed() bool {
+	settings, err := readSettings()
+	if err != nil {
+		return false
+	}
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	if hooks == nil {
+		return false
+	}
+	for _, ht := range v2HookTypes {
+		if !hasUnkyMoHook(hooks, ht.name) {
+			return false
+		}
+	}
+	return true
+}
+
 // UninstallHooks removes Unky Mo hooks from Claude's global settings.
 func UninstallHooks() error {
 	settings, err := readSettings()
@@ -84,8 +151,19 @@ func UninstallHooks() error {
 		return nil
 	}
 
-	hooks["Notification"] = filterOutUnkyMo(hooks, "Notification")
-	hooks["Stop"] = filterOutUnkyMo(hooks, "Stop")
+	// Remove both V1 (Notification, Stop) and V2 hook types.
+	hookTypes := []string{"Notification", "Stop"}
+	for _, ht := range v2HookTypes {
+		hookTypes = append(hookTypes, ht.name)
+	}
+	seen := make(map[string]bool)
+	for _, ht := range hookTypes {
+		if seen[ht] {
+			continue
+		}
+		seen[ht] = true
+		hooks[ht] = filterOutUnkyMo(hooks, ht)
+	}
 
 	// Clean up empty arrays
 	for key, val := range hooks {

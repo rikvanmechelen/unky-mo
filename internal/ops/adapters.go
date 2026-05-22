@@ -99,9 +99,6 @@ func (defaultClaudeReader) IsAlive(pid int) bool { return claude.IsAlive(pid) }
 func (defaultClaudeReader) IsDescendantOf(pid int, hostPIDs map[int]bool) bool {
 	return claude.IsDescendantOf(pid, hostPIDs)
 }
-func (defaultClaudeReader) IsSessionIdle(projectPath, sessionID string) bool {
-	return claude.IsSessionIdle(projectPath, sessionID)
-}
 func (defaultClaudeReader) CustomTitleFor(projectPath, sessionID string) string {
 	return claude.CustomTitleFor(projectPath, sessionID)
 }

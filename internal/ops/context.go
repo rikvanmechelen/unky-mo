@@ -64,7 +64,6 @@ type ClaudeReader interface {
 	SessionsForPath(path string) []claude.Session
 	IsAlive(pid int) bool
 	IsDescendantOf(pid int, hostPIDs map[int]bool) bool
-	IsSessionIdle(projectPath, sessionID string) bool
 	CustomTitleFor(projectPath, sessionID string) string
 	LastMessages(projectPath, sessionID string, count int) []claude.SessionMessage
 	RecentSessions(projectPath string, maxResults int) []claude.RecentSession

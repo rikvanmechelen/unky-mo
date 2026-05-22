@@ -863,24 +863,19 @@ func hooksCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "install",
-		Short: "Install Unky Mo notification hooks into Claude settings",
+		Short: "Install Unky Mo status hooks into Claude settings",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			notifyScript, _ := filepath.Abs("scripts/notify-hook.sh")
-			stopScript, _ := filepath.Abs("scripts/stop-hook.sh")
+			statusScript, _ := filepath.Abs("scripts/status-hook.sh")
 
-			// Check scripts exist
-			for _, s := range []string{notifyScript, stopScript} {
-				if _, err := os.Stat(s); err != nil {
-					return fmt.Errorf("script not found: %s\nRun this from the unky-mo project directory", s)
-				}
+			if _, err := os.Stat(statusScript); err != nil {
+				return fmt.Errorf("script not found: %s\nRun this from the unky-mo project directory", statusScript)
 			}
 
-			if err := claude.InstallHooks(notifyScript, stopScript); err != nil {
+			if err := claude.InstallHooksV2(statusScript); err != nil {
 				return fmt.Errorf("installing hooks: %w", err)
 			}
 			fmt.Println("Hooks installed into", claude.ClaudeSettingsPath())
-			fmt.Println("  Notification hook:", notifyScript)
-			fmt.Println("  Stop hook:", stopScript)
+			fmt.Println("  Status hook:", statusScript)
 			return nil
 		},
 	})
@@ -901,8 +896,11 @@ func hooksCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Check if Unky Mo hooks are installed",
 		Run: func(cmd *cobra.Command, args []string) {
-			if claude.HooksInstalled() {
-				fmt.Println("Hooks are installed in", claude.ClaudeSettingsPath())
+			if claude.HooksV2Installed() {
+				fmt.Println("Hooks (v2) are installed in", claude.ClaudeSettingsPath())
+			} else if claude.HooksInstalled() {
+				fmt.Println("Hooks (v1) are installed in", claude.ClaudeSettingsPath())
+				fmt.Println("Run 'mo hooks install' to upgrade to v2.")
 			} else {
 				fmt.Println("Hooks are NOT installed. Run 'mo hooks install' to set up.")
 			}

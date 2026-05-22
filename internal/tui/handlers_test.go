@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
-	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
+	"github.com/rvanmech/unky-mo/internal/status"
+	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"go.uber.org/mock/gomock"
 )
 
@@ -189,72 +190,18 @@ func TestFocusPrimaryIfLiveNoSession(t *testing.T) {
 	}
 }
 
-// TestApplyNotifOverridesPermissionWins locks in the notification-state
-// ordering: a per-session StatusPermission override always beats the polled
-// status.
-func TestApplyNotifOverridesPermissionWins(t *testing.T) {
-	overrides := sessionStateMap{"sessA": StatusPermission}
-	polled := []sessionView{
-		{SessionID: "sessA", Status: StatusActive, ProjectPath: "/ws/alpha"},
-		{SessionID: "sessB", Status: StatusActive, ProjectPath: "/ws/beta"},
+// TestMgrStatusToTUI verifies the status.SessionStatus → tui.SessionStatus mapping.
+func TestMgrStatusToTUI(t *testing.T) {
+	cases := map[status.SessionStatus]SessionStatus{
+		status.StatusNone:       StatusNone,
+		status.StatusActive:     StatusActive,
+		status.StatusIdle:       StatusIdle,
+		status.StatusPermission: StatusPermission,
+		status.StatusExternal:   StatusExternal,
 	}
-	got := applyNotifOverrides(polled, overrides)
-
-	var gotA, gotB SessionStatus
-	for _, v := range got {
-		switch v.SessionID {
-		case "sessA":
-			gotA = v.Status
-		case "sessB":
-			gotB = v.Status
+	for in, want := range cases {
+		if got := mgrStatusToTUI(in); got != want {
+			t.Errorf("mgrStatusToTUI(%v) = %v, want %v", in, got, want)
 		}
-	}
-	if gotA != StatusPermission {
-		t.Errorf("sessA: permission override should win, got %v", gotA)
-	}
-	if gotB != StatusActive {
-		t.Errorf("sessB: no override → keep polled Active, got %v", gotB)
-	}
-}
-
-func TestApplyNotifOverridesIdleOnlyUpgradesActive(t *testing.T) {
-	overrides := sessionStateMap{"sessA": StatusIdle, "sessB": StatusIdle}
-	polled := []sessionView{
-		{SessionID: "sessA", Status: StatusActive},
-		{SessionID: "sessB", Status: StatusIdle}, // already idle — no-op
-	}
-	got := applyNotifOverrides(polled, overrides)
-
-	if got[0].Status != StatusIdle {
-		t.Errorf("sessA: idle override should upgrade Active, got %v", got[0].Status)
-	}
-	if got[1].Status != StatusIdle {
-		t.Errorf("sessB stays Idle, got %v", got[1].Status)
-	}
-}
-
-func TestApplyNotifOverridesPermissionBeatsIdlePoll(t *testing.T) {
-	// A poll can report Idle while a notification says Permission — permission
-	// must still win since "needs permission" is the strongest attention signal.
-	overrides := sessionStateMap{"sessA": StatusPermission}
-	polled := []sessionView{
-		{SessionID: "sessA", Status: StatusIdle},
-	}
-	got := applyNotifOverrides(polled, overrides)
-	if got[0].Status != StatusPermission {
-		t.Errorf("Permission should beat polled Idle, got %v", got[0].Status)
-	}
-}
-
-func TestApplyNotifOverridesEmptyReturnsCopy(t *testing.T) {
-	polled := []sessionView{{SessionID: "x", Status: StatusActive}}
-	got := applyNotifOverrides(polled, nil)
-	if len(got) != 1 || got[0].Status != StatusActive {
-		t.Errorf("nil overrides: expected copy, got %+v", got)
-	}
-	// Mutating the returned slice should not affect the input.
-	got[0].Status = StatusIdle
-	if polled[0].Status != StatusActive {
-		t.Error("applyNotifOverrides must return an independent slice")
 	}
 }

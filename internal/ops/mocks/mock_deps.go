@@ -407,20 +407,6 @@ func (mr *MockClaudeReaderMockRecorder) IsDescendantOf(pid, hostPIDs any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDescendantOf", reflect.TypeOf((*MockClaudeReader)(nil).IsDescendantOf), pid, hostPIDs)
 }
 
-// IsSessionIdle mocks base method.
-func (m *MockClaudeReader) IsSessionIdle(projectPath, sessionID string) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsSessionIdle", projectPath, sessionID)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// IsSessionIdle indicates an expected call of IsSessionIdle.
-func (mr *MockClaudeReaderMockRecorder) IsSessionIdle(projectPath, sessionID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSessionIdle", reflect.TypeOf((*MockClaudeReader)(nil).IsSessionIdle), projectPath, sessionID)
-}
-
 // LastMessages mocks base method.
 func (m *MockClaudeReader) LastMessages(projectPath, sessionID string, count int) []claude.SessionMessage {
 	m.ctrl.T.Helper()

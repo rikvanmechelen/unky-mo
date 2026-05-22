@@ -31,9 +31,9 @@ workspace_dirs = ["/path/to/your/workspace"]
 
 Unky Mo will auto-discover all git repositories in these directories.
 
-### 2. Install notification hooks
+### 2. Install status hooks
 
-This adds hooks to `~/.claude/settings.json` so Claude Code can notify Unky Mo when sessions need your attention:
+This adds hooks to `~/.claude/settings.json` so Claude Code can notify Unky Mo of session status changes in real time:
 
 ```bash
 mo hooks install
@@ -421,8 +421,8 @@ mo concurrent <project> [-b]    # Launch a concurrent sibling at project [N]
 mo cleanup <project> -b <br>    # Remove worktree; add --delete-branch + --force-kill
 mo import <pid>                 # Adopt an external Claude session into mo's tmux
 mo scan                         # Re-scan workspace directories
-mo hooks install                # Install notification hooks
-mo hooks uninstall              # Remove notification hooks
+mo hooks install                # Install status hooks (V2)
+mo hooks uninstall              # Remove all hooks (V1 and V2)
 mo hooks status                 # Check if hooks are installed
 mo sync init <repo-url>         # Connect to a private GitHub repo for syncing
 mo sync init-key                # Generate a shared encryption key (run once)
@@ -533,7 +533,7 @@ mo agents default g                             # set the default agent
 
 Agent preferences can be saved per project and branch in `~/.config/unky-mo/agent-choices.toml`. When you use the agent picker (`A`), the chosen agent is used for that launch. Future launches with plain `enter` on the same branch will use the saved preference.
 
-Session detection (idle/active/permission status) currently only works for Claude Code sessions. Other agents show as "active" in the sidebar and dashboard — idle and permission detection requires agent-specific hooks that aren't available yet for most agents.
+Session status detection (idle/active/permission) currently only works for Claude Code sessions. Other agents show as "active" in the sidebar and dashboard — status detection requires agent-specific hooks that aren't available yet for most agents.
 
 ### Project auto-discovery
 
@@ -551,16 +551,22 @@ Unky Mo scans each directory in `workspace_dirs` for subdirectories containing a
 
 Manually defined `[[project]]` entries override auto-discovered settings for the same path.
 
-## How Notifications Work
+## How Status Detection Works
 
-When you run `mo hooks install`, Unky Mo adds two hooks to `~/.claude/settings.json`:
+When you run `mo hooks install`, Unky Mo installs hooks into `~/.claude/settings.json` for seven Claude Code lifecycle events:
 
-1. **Notification hook** — Fires when Claude has been idle for 60+ seconds (`idle_prompt`) or needs a permission approval (`permission_prompt`). Sends a message to Unky Mo's Unix socket.
-2. **Stop hook** — Fires when Claude finishes a turn. Clears the idle/permission status.
+- **UserPromptSubmit** — User sends a prompt → session becomes active
+- **PreToolUse** — Claude calls a tool → reaffirms active status
+- **Stop** — Claude finishes a turn → session becomes idle
+- **PermissionRequest** — Permission dialog appears → session needs attention
+- **Notification** — Fires on `idle_prompt` or `permission_prompt`
+- **SessionStart** / **SessionEnd** — Session lifecycle tracking
 
-The TUI also proactively detects idle sessions by checking the `stop_reason` of the last assistant message in the session JSONL (`end_turn` = idle, `tool_use` = still working). This works even if a notification is missed.
+All hooks send a JSON message to Unky Mo's Unix socket (`/tmp/unky-mo.sock`). A central `status.Manager` processes these events as a state machine — status transitions happen in real time with no polling delay.
 
-The TUI listens on a Unix socket (`/tmp/unky-mo.sock` by default) and updates status indicators in real time. Sidebar instances read a shared state file (`/tmp/unky-mo-state.json`) written by the TUI. If Unky Mo isn't running, the hooks exit silently with no effect on Claude.
+As a reconciliation layer, Unky Mo also watches session JSONL files via `fsnotify`. If a hook is missed (socket unavailable, `nc` error), the next JSONL write triggers a re-read that corrects the status. PID liveness checks on a 5-second tick clean up dead sessions.
+
+Sidebar instances read a shared state file (`/tmp/unky-mo-state.json`) written by the TUI. If Unky Mo isn't running, the hooks exit silently with no effect on Claude.
 
 To remove the hooks:
 
@@ -682,7 +688,7 @@ When developing Mo while using it, `ctrl+r` restarts the TUI and all sidebars to
 
 ### Testing philosophy
 
-Unit tests live alongside the code they cover. Packages with active coverage: `claude`, `config`, `notify`, `state`, `project`, `sync`, `tickets`, `tickets/jira`, `tmux`, `usage`. The TUI (`internal/tui/`) has no automated tests — correctness is validated by running the binary. When adding non-trivial logic, prefer extracting it into a pure helper that can be tested without bubbletea.
+Unit tests live alongside the code they cover. Packages with active coverage: `claude`, `config`, `notify`, `state`, `status`, `project`, `sync`, `tickets`, `tickets/jira`, `tmux`, `usage`. The TUI (`internal/tui/`) has targeted helper/handler tests — full render paths are validated by running the binary. When adding non-trivial logic, prefer extracting it into a pure helper that can be tested without bubbletea.
 
 Tests under the `expectfail` build tag encode claims from `CLAUDE.md` that current code does not yet satisfy — running them reveals drift between docs and implementation. Failures there should be treated as prompts to patch either side, not ignored.
 
@@ -707,6 +713,7 @@ unky-mo/
 │   ├── github/             # GitHub PR fetching via gh CLI
 │   ├── tmux/               # tmux command wrapper (sessions, windows, panes, popups)
 │   ├── notify/             # Unix socket notification server
+│   ├── status/             # Session status state machine (Manager, JSONL reader, fsnotify watcher)
 │   ├── state/              # Shared JSON state file (TUI ↔ sidebars)
 │   ├── sync/               # Encrypted session sync via private git repo
 │   ├── project/            # Project model, scanner, worktree support, git status
@@ -717,8 +724,9 @@ unky-mo/
 │       ├── styles.go       # Lipgloss theme (dark background ~#14191E)
 │       └── sidebar/        # Compact sidebar TUI for tmux panes
 ├── scripts/
-│   ├── notify-hook.sh      # Claude Code notification hook
-│   └── stop-hook.sh        # Claude Code stop hook
+│   ├── status-hook.sh      # Claude Code unified status hook (V2)
+│   ├── notify-hook.sh      # Claude Code notification hook (V1 legacy)
+│   └── stop-hook.sh        # Claude Code stop hook (V1 legacy)
 ├── Makefile
 └── CLAUDE.md
 ```
