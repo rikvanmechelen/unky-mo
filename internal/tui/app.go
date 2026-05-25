@@ -166,8 +166,9 @@ type Model struct {
 	statusWatcher  *status.Watcher  // fsnotify watcher for JSONL reconciliation
 	statusSub      <-chan status.StatusChange // subscription to status changes
 	statusMsg      string
-	activeSessions int
-	attentionCount int
+	activeSessions     int
+	pendingQuitConfirm bool // true while the "quit with active sessions?" prompt is showing
+	attentionCount     int
 	gitStatuses    map[string]project.GitStatus // project path → git status
 	// Dashboard active sessions panel (right side)
 	dashFocusLeft      bool // true = project list, false = sessions/tickets panel
@@ -305,14 +306,20 @@ type Model struct {
 	usage      usage.Snapshot
 	usageReady bool // false until the first fetch completes (success or cache hit)
 	usageAuth  bool // true once a 401 is seen — surfaces an auth-expired banner
-	width      int
-	height     int
-	ready      bool
+	// rawTmux is the concrete *ttmux.Client, kept alongside the ops
+	// interface so disableHomeRespawn can call methods that aren't on
+	// the TmuxClient interface (SetWindowRemainOnExit, UnsetSessionHook).
+	rawTmux *ttmux.Client
+	width   int
+	height  int
+	ready   bool
 }
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
 	opsCtx := ops.NewContext(tmuxClient)
-	return NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, nil, stateFilePath, ticketsCfg, agents)
+	m := NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, nil, stateFilePath, ticketsCfg, agents)
+	m.rawTmux = tmuxClient
+	return m
 }
 
 // NewModelWithDeps is the test-friendly constructor — accepts ops interface
@@ -736,6 +743,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingImportPath = ""
 				m.pendingImportWindow = ""
 				m.pendingImportProject = ""
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Quit confirmation prompt: destructive [y/N].
+		if m.pendingQuitConfirm {
+			switch msg.String() {
+			case "y", "Y":
+				m.disableHomeRespawn()
+				return m, tea.Quit
+			case "n", "N", "enter", "esc", "escape":
+				m.pendingQuitConfirm = false
 				return m, nil
 			}
 			return m, nil
@@ -1179,6 +1199,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = ScreenDashboard
 				return m, nil
 			}
+			if m.activeSessions > 0 {
+				m.pendingQuitConfirm = true
+				return m, nil
+			}
+			m.disableHomeRespawn()
 			return m, tea.Quit
 		}
 
@@ -1943,7 +1968,10 @@ func (m Model) dashboardView() string {
 	usageStrip := m.renderUsageStrip(totalWidth)
 
 	var footer string
-	if m.pendingCleanupActive {
+	if m.pendingQuitConfirm {
+		question := fmt.Sprintf("%d active session(s) — quit Unky Mo? [y/N]", m.activeSessions)
+		footer = m.renderPrompt(question, yesNoBindings("quit"))
+	} else if m.pendingCleanupActive {
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
 	} else if m.pendingNewMenuActive {
@@ -3580,6 +3608,57 @@ func (m Model) restartSidebars() {
 	}
 }
 
+// disableHomeRespawn turns off the respawn hooks so an intentional quit
+// actually closes the window and (if it's the last one) the session.
+func (m Model) disableHomeRespawn() {
+	if m.rawTmux == nil {
+		return
+	}
+	session := m.rawTmux.SessionName
+	target0 := session + ":0"
+	m.rawTmux.SetWindowRemainOnExit(target0, false)
+	m.rawTmux.UnsetSessionHook("window-unlinked")
+}
+
+// installHomeRespawnHooks sets up two tmux safety nets on window 0:
+//
+//  1. remain-on-exit + pane-exited hook: if mo crashes or exits while other
+//     windows exist, the pane respawns mo instead of closing. If window 0 is
+//     the last window, it lets the pane die so the session ends normally.
+//
+//  2. session-level window-unlinked hook: if window 0 is destroyed entirely
+//     (e.g. `tmux kill-window`), a replacement is created at index 0.
+func installHomeRespawnHooks(tc *ttmux.Client) {
+	if tc == nil {
+		return
+	}
+	moBin, err := os.Executable()
+	if err != nil {
+		return
+	}
+	session := tc.SessionName
+	target0 := session + ":0"
+
+	// Keep window 0's pane alive after mo exits so we can respawn it.
+	tc.SetWindowRemainOnExit(target0, true)
+
+	// Pane-exited hook: if other windows exist, respawn mo; otherwise
+	// turn off remain-on-exit so the pane/window die naturally.
+	paneHook := fmt.Sprintf(
+		`if-shell "[ $(tmux list-windows -t '%s' | wc -l) -gt 1 ]" "respawn-pane -k -t '%s' '%s'" "set-window-option -t '%s' remain-on-exit off"`,
+		session, target0, moBin, target0,
+	)
+	tc.SetWindowHook(target0, "pane-exited", paneHook)
+
+	// Session-level hook: if window 0 is destroyed (e.g. tmux kill-window),
+	// create a replacement at index 0 and launch mo in it.
+	windowUnlinkedHook := fmt.Sprintf(
+		`if-shell "! tmux list-windows -t '%s' -F '##{window_index}' | grep -q '^0$'" "new-window -t '%s:0' '%s'"`,
+		session, session, moBin,
+	)
+	tc.SetSessionHook("window-unlinked", windowUnlinkedHook)
+}
+
 type statusMsgEvent string
 type clearStatusMsg struct{}
 
@@ -4683,6 +4762,10 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 		// Ensure mouse support is enabled on this session every launch.
 		// Covers fresh Linux installs where no global `set -g mouse on` exists.
 		tc.EnableMouse()
+		// Install respawn hooks on window 0 so the home TUI survives crashes
+		// and accidental kills. disableHomeRespawn() tears these down before
+		// an intentional quit.
+		installHomeRespawnHooks(tc)
 	}
 
 	// Start notification server

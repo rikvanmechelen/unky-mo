@@ -24,20 +24,41 @@ func ReadJSONLStatus(path string) SessionStatus {
 	}
 	defer f.Close()
 
-	readSize := int64(128 * 1024)
-	if info.Size() < readSize {
-		readSize = info.Size()
-	}
-	if readSize == 0 {
+	fileSize := info.Size()
+	if fileSize == 0 {
 		return StatusNone
 	}
 
-	buf := make([]byte, readSize)
-	_, err = f.ReadAt(buf, info.Size()-readSize)
-	if err != nil {
-		return StatusNone
+	// Progressive read: start with 128KB, double up to 1MB if we only
+	// find skippable entries (file-history-snapshot floods can exceed 128KB).
+	for readSize := int64(128 * 1024); readSize <= 1024*1024; readSize *= 2 {
+		if readSize > fileSize {
+			readSize = fileSize
+		}
+
+		buf := make([]byte, readSize)
+		_, err = f.ReadAt(buf, fileSize-readSize)
+		if err != nil {
+			return StatusNone
+		}
+
+		if st := scanJSONLTail(buf); st != StatusNone {
+			return st
+		}
+
+		// Already read the entire file — no point retrying.
+		if readSize >= fileSize {
+			break
+		}
 	}
 
+	return StatusNone
+}
+
+// scanJSONLTail walks the lines in buf backwards and returns the status
+// implied by the last meaningful JSONL entry, or StatusNone if the buffer
+// contains only skippable metadata.
+func scanJSONLTail(buf []byte) SessionStatus {
 	lines := strings.Split(string(buf), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])

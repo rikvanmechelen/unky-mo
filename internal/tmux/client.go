@@ -441,11 +441,12 @@ func (c *Client) Popup(cwd, title string) error {
 }
 
 // SelectPane focuses a specific pane.
-// SetWindowHook sets a tmux hook on a window. For example,
+// SetWindowHook sets a window-level tmux hook. For example,
 // SetWindowHook("mo:rails", "pane-exited", "kill-window") will kill the
-// window when any pane in it exits.
+// window when any pane in it exits. Uses -w so the hook is scoped to the
+// target window and doesn't collide with hooks on other windows.
 func (c *Client) SetWindowHook(target, hookName, command string) {
-	c.runTmux("set-hook", "-t", target, hookName, command)
+	c.runTmux("set-hook", "-w", "-t", target, hookName, command)
 }
 
 func (c *Client) SelectPane(target string) error {
@@ -457,6 +458,27 @@ func (c *Client) PaneCommand(target string) string {
 	cmd := c.tmuxCmd("display-message", "-t", target, "-p", "#{pane_current_command}")
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
+}
+
+// SetWindowRemainOnExit configures whether the pane stays visible after
+// its process exits. Required for respawn-pane to work.
+func (c *Client) SetWindowRemainOnExit(target string, on bool) {
+	val := "off"
+	if on {
+		val = "on"
+	}
+	c.runTmux("set-window-option", "-t", target, "remain-on-exit", val)
+}
+
+// SetSessionHook installs a session-level tmux hook. Unlike SetWindowHook,
+// this survives individual window destruction.
+func (c *Client) SetSessionHook(hookName, command string) {
+	c.runTmux("set-hook", "-t", c.SessionName, hookName, command)
+}
+
+// UnsetSessionHook removes a session-level tmux hook.
+func (c *Client) UnsetSessionHook(hookName string) {
+	c.runTmux("set-hook", "-u", "-t", c.SessionName, hookName)
 }
 
 // KillServer terminates the tmux server associated with this Client's socket.
