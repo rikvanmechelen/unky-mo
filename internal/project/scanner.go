@@ -51,7 +51,7 @@ func ScanWorkspace(dirs []string) ([]Project, error) {
 			seen[resolved] = true
 			projects = append(projects, Project{
 				Name:     name,
-				Path:     fullPath,
+				Path:     resolved,
 				Language: detectLanguage(fullPath),
 			})
 		}

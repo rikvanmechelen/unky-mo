@@ -18,6 +18,12 @@ install: build
 	mkdir -p $(GOBIN)
 	cp $(BINARY) $(GOBIN)/$(BINARY)
 	@echo "Installed $(BINARY) to $(GOBIN)/$(BINARY)"
+	@# Also install to the PATH location if it differs from GOBIN (e.g. stale ~/go/bin/mo).
+	@PATH_MO=$$(command -v $(BINARY) 2>/dev/null); \
+	if [ -n "$$PATH_MO" ] && [ "$$(cd "$$(dirname "$$PATH_MO")" && pwd)" != "$$(cd "$(GOBIN)" && pwd)" ]; then \
+		cp $(BINARY) "$$PATH_MO"; \
+		echo "Also updated $$PATH_MO"; \
+	fi
 	@case ":$$PATH:" in \
 		*":$(GOBIN):"*) ;; \
 		*) echo "Note: $(GOBIN) is not on your PATH. Add it to run '$(BINARY)' from anywhere." ;; \
