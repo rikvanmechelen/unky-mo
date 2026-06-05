@@ -167,7 +167,6 @@ type Model struct {
 	statusSub      <-chan status.StatusChange // subscription to status changes
 	statusMsg      string
 	activeSessions     int
-	pendingQuitConfirm bool // true while the "quit with active sessions?" prompt is showing
 	attentionCount     int
 	gitStatuses    map[string]project.GitStatus // project path → git status
 	// Dashboard active sessions panel (right side)
@@ -748,18 +747,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Quit confirmation prompt: destructive [y/N].
-		if m.pendingQuitConfirm {
-			switch msg.String() {
-			case "y", "Y":
-				m.disableHomeRespawn()
-				return m, tea.Quit
-			case "n", "N", "enter", "esc", "escape":
-				m.pendingQuitConfirm = false
-				return m, nil
-			}
-			return m, nil
-		}
 
 		switch {
 		case key.Matches(msg, keys.Help):
@@ -1200,8 +1187,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.activeSessions > 0 {
-				m.pendingQuitConfirm = true
-				return m, nil
+				return m, func() tea.Msg {
+					return statusMsgEvent(fmt.Sprintf("%d active session(s) — quit blocked", m.activeSessions))
+				}
 			}
 			m.disableHomeRespawn()
 			return m, tea.Quit
@@ -1968,10 +1956,7 @@ func (m Model) dashboardView() string {
 	usageStrip := m.renderUsageStrip(totalWidth)
 
 	var footer string
-	if m.pendingQuitConfirm {
-		question := fmt.Sprintf("%d active session(s) — quit Unky Mo? [y/N]", m.activeSessions)
-		footer = m.renderPrompt(question, yesNoBindings("quit"))
-	} else if m.pendingCleanupActive {
+	if m.pendingCleanupActive {
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
 	} else if m.pendingNewMenuActive {
