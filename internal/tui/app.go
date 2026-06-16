@@ -145,11 +145,35 @@ func (m Model) refreshGitStatuses() tea.Cmd {
 	}
 }
 
+// projectsRefreshMsg carries a freshly-scanned project list. Handled in
+// Update to merge new projects into the dashboard without losing status dots.
+type projectsRefreshMsg struct {
+	projects []project.Project
+}
+
+func (m Model) refreshProjects() tea.Cmd {
+	dirs := m.workspaceDirs
+	manual := m.manualProjects
+	if len(dirs) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		discovered, _ := project.ScanWorkspace(dirs)
+		merged := project.MergeWithManual(discovered, manual)
+		return projectsRefreshMsg{projects: merged}
+	}
+}
+
 // notificationMsg wraps a notification received from the Unix socket.
 type notificationMsg notify.Notification
 
 // statusChangeMsg wraps a status change from the status manager.
 type statusChangeMsg status.StatusChange
+
+// suspendCompleteMsg signals that SuspendAll finished.
+type suspendCompleteMsg struct {
+	err error
+}
 
 // Model is the root Bubbletea model.
 type Model struct {
@@ -264,6 +288,8 @@ type Model struct {
 	pendingWTExistsProjectName string
 	pendingWTExistsWTPath      string
 	pendingWTExistsPRBranch    bool   // true when triggered from a PR (needs git fetch + reset on recreate)
+	// Suspend-and-quit prompt: active when q pressed with active sessions.
+	pendingSuspendQuitActive bool
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
 	// CWD currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
@@ -309,14 +335,18 @@ type Model struct {
 	// interface so disableHomeRespawn can call methods that aren't on
 	// the TmuxClient interface (SetWindowRemainOnExit, UnsetSessionHook).
 	rawTmux *ttmux.Client
-	width   int
-	height  int
-	ready   bool
+	// workspaceDirs + manualProjects are retained so ctrl+r can re-scan for
+	// new projects without restarting the TUI.
+	workspaceDirs  []string
+	manualProjects []project.Project
+	width          int
+	height         int
+	ready          bool
 }
 
-func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
+func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project) Model {
 	opsCtx := ops.NewContext(tmuxClient)
-	m := NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, nil, stateFilePath, ticketsCfg, agents)
+	m := NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, nil, stateFilePath, ticketsCfg, agents, workspaceDirs, manualProjects)
 	m.rawTmux = tmuxClient
 	return m
 }
@@ -325,7 +355,7 @@ func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer 
 // implementations so tests can inject mocks directly. Production code calls
 // NewModel, which wraps the concrete *ttmux.Client and claude package via
 // ops.NewContext.
-func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, statusMgr *status.Manager, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) Model {
+func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, claudeReader ops.ClaudeReader, opsCtx *ops.Context, notifServer *notify.Server, statusMgr *status.Manager, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project) Model {
 	if opsCtx == nil {
 		opsCtx = &ops.Context{
 			Tmux:         tmuxClient,
@@ -343,6 +373,7 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)        // We use our own footer
+	l.DisableQuitKeybindings()  // We handle q/esc ourselves
 	l.InfiniteScrolling = true  // Circular navigation
 	l.Styles.Title = titleStyle
 
@@ -390,6 +421,8 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 		statusSub:          statusSub,
 		dashFocusLeft:      true,
 		stateFilePath:      stateFilePath,
+		workspaceDirs:      workspaceDirs,
+		manualProjects:     manualProjects,
 		ticketsDisabled:    ticketsCfg.Disabled,
 		ticketsProviders:   providers,
 		ticketProjectMap:   projectMap,
@@ -719,6 +752,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, nil
+		}
+
+		// Suspend-and-quit prompt: destructive, enter cancels.
+		if m.pendingSuspendQuitActive {
+			switch msg.String() {
+			case "s", "S":
+				m.pendingSuspendQuitActive = false
+				return m, m.executeSuspendAll()
+			default:
+				m.pendingSuspendQuitActive = false
+				return m, nil
+			}
 		}
 
 		// Import-external-session prompt captures all input while active.
@@ -1146,7 +1191,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refreshSessions call covers the dashboard side. On the project
 			// detail screen we additionally emit branchesChangedMsg so branch
 			// info (Merged / RemoteGone / worktree attribution) is re-fetched.
+			// Also re-scan workspace dirs so newly cloned repos appear without
+			// a TUI restart.
 			cmds := []tea.Cmd{
+				m.refreshProjects(),
 				m.refreshSessions(),
 				func() tea.Msg { return statusMsgEvent("Refreshed") },
 			}
@@ -1187,9 +1235,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.activeSessions > 0 {
-				return m, func() tea.Msg {
-					return statusMsgEvent(fmt.Sprintf("%d active session(s) — quit blocked", m.activeSessions))
-				}
+				m.pendingSuspendQuitActive = true
+				return m, nil
 			}
 			m.disableHomeRespawn()
 			return m, tea.Quit
@@ -1198,6 +1245,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionTickMsg:
 		m.pruneOrphanedTermSessions()
 		return m, tea.Batch(sessionTick(), m.refreshSessions(), m.refreshGitStatuses())
+
+	case projectsRefreshMsg:
+		items := mergeRefreshedProjects(m.list.Items(), msg.projects)
+		m.list.SetItems(items)
+		// Update the flat projects slice so refreshGitStatuses and other
+		// paths that iterate m.projects see the new set.
+		updated := make([]project.Project, len(items))
+		for i, item := range items {
+			updated[i] = item.(ProjectItem).project
+		}
+		m.projects = updated
+		return m, nil
+
+	case suspendCompleteMsg:
+		if msg.err != nil {
+			return m, func() tea.Msg {
+				return statusMsgEvent(fmt.Sprintf("suspend failed: %v", msg.err))
+			}
+		}
+		m.disableHomeRespawn()
+		return m, tea.Quit
 
 	case sessionRefreshMsg:
 		m.updateProjectStatuses(msg)
@@ -1965,6 +2033,11 @@ func (m Model) dashboardView() string {
 			{"p", "park+new"},
 			{"c", "concurrent"},
 		}))
+	} else if m.pendingSuspendQuitActive {
+		question := fmt.Sprintf("%d active session(s) — suspend all and quit?", m.activeSessions)
+		footer = m.renderPrompt(question, withCancel([]footerBinding{
+			{"S", "suspend + quit"},
+		}))
 	} else if m.pendingImportSessionID != "" {
 		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here) [y/N]", m.pendingImportProject)
 		footer = m.renderPrompt(question, yesNoBindings("import"))
@@ -2688,6 +2761,37 @@ func rank(s SessionStatus) int {
 	default:
 		return 0
 	}
+}
+
+// mergeRefreshedProjects takes the existing list items and a freshly-scanned
+// project slice, and returns a merged item list. Existing projects keep their
+// session status and git status; new projects enter with StatusNone; projects
+// no longer in the scan are dropped. The result is sorted by project name.
+func mergeRefreshedProjects(existing []list.Item, refreshed []project.Project) []list.Item {
+	// Index existing items by path for O(1) lookup.
+	byPath := make(map[string]ProjectItem, len(existing))
+	for _, item := range existing {
+		if pi, ok := item.(ProjectItem); ok {
+			byPath[pi.project.Path] = pi
+		}
+	}
+
+	items := make([]list.Item, 0, len(refreshed))
+	for _, p := range refreshed {
+		if old, ok := byPath[p.Path]; ok {
+			// Preserve status + git, but pick up updated project metadata
+			// (name, language, tags) from the fresh scan.
+			old.project = p
+			items = append(items, old)
+		} else {
+			items = append(items, ProjectItem{project: p, status: StatusNone})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].(ProjectItem).project.Name < items[j].(ProjectItem).project.Name
+	})
+	return items
 }
 
 // syncWindowTitles reads the latest custom-title entry for each live Claude
@@ -4407,6 +4511,43 @@ func (m Model) importExternalSession(pid int, sessionID, cwd, windowName string)
 	}
 }
 
+// executeSuspendAll builds the session-to-stop list from sessionViews,
+// calls ops.SuspendAll, and returns a suspendCompleteMsg.
+func (m Model) executeSuspendAll() tea.Cmd {
+	sessions := make([]ops.SessionToStop, 0, len(m.sessionViews))
+	for _, v := range m.sessionViews {
+		if v.External {
+			continue
+		}
+		sessions = append(sessions, ops.SessionToStop{
+			SuspendedSession: ops.SuspendedSession{
+				WindowName:  v.WindowName,
+				Cwd:         v.CWD,
+				SessionID:   v.SessionID,
+				AgentKey:    v.AgentKey,
+				ProjectName: v.ProjectName,
+				Parent:      v.Parent,
+			},
+			PID: v.PID,
+		})
+	}
+
+	opsCtx := m.ops
+	tmuxSession := ""
+	if m.tmux != nil {
+		tmuxSession = m.tmux.SessionName()
+	}
+
+	return func() tea.Msg {
+		path := ops.SuspendedStatePath()
+		_, err := ops.SuspendAll(opsCtx, path, ops.SuspendParams{
+			Sessions:    sessions,
+			TmuxSession: tmuxSession,
+		})
+		return suspendCompleteMsg{err: err}
+	}
+}
+
 // launchResumeInWindow is a thin TUI adapter over ops.LaunchSession that
 // passes `claude --resume <id>` as the shell command.
 func (m Model) launchResumeInWindow(windowName, projectPath, sessionID string) tea.Msg {
@@ -4734,7 +4875,7 @@ func (m Model) attachSession() tea.Cmd {
 	}
 }
 
-func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig) error {
+func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
 		// Use the actual current session — the user may be in a session
@@ -4763,7 +4904,7 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 		defer ns.Stop()
 	}
 
-	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg, agents)
+	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg, agents, workspaceDirs, manualProjects)
 	p := tea.NewProgram(m)
 	_, err := p.Run()
 

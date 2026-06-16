@@ -4,9 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/list"
 	"github.com/rvanmech/unky-mo/internal/config"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
+	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"go.uber.org/mock/gomock"
@@ -652,6 +654,150 @@ func TestAgentPickerBindingsSingle(t *testing.T) {
 	}
 	if got[0].key != "c" || got[0].desc != "Claude" {
 		t.Errorf("binding = %+v, want {c, Claude}", got[0])
+	}
+}
+
+// --- mergeRefreshedProjects tests ---
+
+func TestMergeRefreshedProjectsAddsNewProjects(t *testing.T) {
+	existing := []list.Item{
+		ProjectItem{project: project.Project{Name: "alpha", Path: "/ws/alpha"}, status: StatusActive},
+	}
+	refreshed := []project.Project{
+		{Name: "alpha", Path: "/ws/alpha"},
+		{Name: "beta", Path: "/ws/beta", Language: "go"},
+	}
+
+	got := mergeRefreshedProjects(existing, refreshed)
+	if len(got) != 2 {
+		t.Fatalf("want 2 items, got %d", len(got))
+	}
+	// Alpha should keep its status.
+	alpha := got[0].(ProjectItem)
+	if alpha.project.Name != "alpha" || alpha.status != StatusActive {
+		t.Errorf("alpha: want (alpha, StatusActive), got (%s, %d)", alpha.project.Name, alpha.status)
+	}
+	// Beta should be new with StatusNone.
+	beta := got[1].(ProjectItem)
+	if beta.project.Name != "beta" || beta.status != StatusNone {
+		t.Errorf("beta: want (beta, StatusNone), got (%s, %d)", beta.project.Name, beta.status)
+	}
+	if beta.project.Language != "go" {
+		t.Errorf("beta language: want 'go', got %q", beta.project.Language)
+	}
+}
+
+func TestMergeRefreshedProjectsPreservesStatuses(t *testing.T) {
+	existing := []list.Item{
+		ProjectItem{project: project.Project{Name: "alpha", Path: "/ws/alpha"}, status: StatusIdle},
+		ProjectItem{project: project.Project{Name: "beta", Path: "/ws/beta"}, status: StatusPermission},
+	}
+	refreshed := []project.Project{
+		{Name: "alpha", Path: "/ws/alpha"},
+		{Name: "beta", Path: "/ws/beta"},
+	}
+
+	got := mergeRefreshedProjects(existing, refreshed)
+	if len(got) != 2 {
+		t.Fatalf("want 2 items, got %d", len(got))
+	}
+	if got[0].(ProjectItem).status != StatusIdle {
+		t.Errorf("alpha status: want Idle, got %d", got[0].(ProjectItem).status)
+	}
+	if got[1].(ProjectItem).status != StatusPermission {
+		t.Errorf("beta status: want Permission, got %d", got[1].(ProjectItem).status)
+	}
+}
+
+func TestMergeRefreshedProjectsRemovesStaleProjects(t *testing.T) {
+	existing := []list.Item{
+		ProjectItem{project: project.Project{Name: "alpha", Path: "/ws/alpha"}, status: StatusActive},
+		ProjectItem{project: project.Project{Name: "deleted", Path: "/ws/deleted"}, status: StatusNone},
+	}
+	refreshed := []project.Project{
+		{Name: "alpha", Path: "/ws/alpha"},
+	}
+
+	got := mergeRefreshedProjects(existing, refreshed)
+	if len(got) != 1 {
+		t.Fatalf("want 1 item (stale removed), got %d", len(got))
+	}
+	if got[0].(ProjectItem).project.Name != "alpha" {
+		t.Errorf("want alpha, got %s", got[0].(ProjectItem).project.Name)
+	}
+}
+
+func TestMergeRefreshedProjectsPreservesGitStatus(t *testing.T) {
+	existing := []list.Item{
+		ProjectItem{
+			project: project.Project{Name: "alpha", Path: "/ws/alpha"},
+			status:  StatusActive,
+			git:     project.GitStatus{Branch: "main", Dirty: 3},
+		},
+	}
+	refreshed := []project.Project{
+		{Name: "alpha", Path: "/ws/alpha"},
+	}
+
+	got := mergeRefreshedProjects(existing, refreshed)
+	alpha := got[0].(ProjectItem)
+	if alpha.git.Branch != "main" || alpha.git.Dirty != 3 {
+		t.Errorf("git status not preserved: got %+v", alpha.git)
+	}
+}
+
+func TestMergeRefreshedProjectsSortedByName(t *testing.T) {
+	existing := []list.Item{}
+	refreshed := []project.Project{
+		{Name: "zulu", Path: "/ws/zulu"},
+		{Name: "alpha", Path: "/ws/alpha"},
+		{Name: "mike", Path: "/ws/mike"},
+	}
+
+	got := mergeRefreshedProjects(existing, refreshed)
+	if len(got) != 3 {
+		t.Fatalf("want 3 items, got %d", len(got))
+	}
+	names := make([]string, len(got))
+	for i, item := range got {
+		names[i] = item.(ProjectItem).project.Name
+	}
+	for i := 0; i+1 < len(names); i++ {
+		if names[i] >= names[i+1] {
+			t.Errorf("not sorted: %v", names)
+			break
+		}
+	}
+}
+
+func TestMergeRefreshedProjectsUpdatesProjectMetadata(t *testing.T) {
+	// If a project's language detection changes on re-scan, pick up the new value.
+	existing := []list.Item{
+		ProjectItem{project: project.Project{Name: "alpha", Path: "/ws/alpha", Language: ""}, status: StatusActive},
+	}
+	refreshed := []project.Project{
+		{Name: "alpha", Path: "/ws/alpha", Language: "go"},
+	}
+
+	got := mergeRefreshedProjects(existing, refreshed)
+	alpha := got[0].(ProjectItem)
+	if alpha.project.Language != "go" {
+		t.Errorf("language not updated: want 'go', got %q", alpha.project.Language)
+	}
+	// Status should still be preserved.
+	if alpha.status != StatusActive {
+		t.Errorf("status not preserved: want Active, got %d", alpha.status)
+	}
+}
+
+func TestMergeRefreshedProjectsEmptyRefreshClearsAll(t *testing.T) {
+	existing := []list.Item{
+		ProjectItem{project: project.Project{Name: "alpha", Path: "/ws/alpha"}, status: StatusActive},
+	}
+
+	got := mergeRefreshedProjects(existing, nil)
+	if len(got) != 0 {
+		t.Fatalf("want 0 items on empty refresh, got %d", len(got))
 	}
 }
 

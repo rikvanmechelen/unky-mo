@@ -46,6 +46,7 @@ func main() {
 	rootCmd.AddCommand(jiraCmd())
 	rootCmd.AddCommand(agentsCmd())
 	rootCmd.AddCommand(teamsCmd())
+	rootCmd.AddCommand(suspendCmd())
 	rootCmd.AddCommand(sidebarCmd())
 	rootCmd.AddCommand(debugCmd())
 	rootCmd.AddCommand(versionCmd())
@@ -66,11 +67,31 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return launchInTmux(cfg.TmuxSession)
 	}
 
+	// Auto-resume suspended sessions before starting the TUI. Done here
+	// (not inside Init) to avoid racing with refreshSessions/ListWindows.
+	suspendPath := ops.SuspendedStatePath()
+	if ops.HasSuspendedState(suspendPath) {
+		tc := tmux.NewClient(cfg.TmuxSession)
+		ctx := ops.NewContext(tc)
+		res, err := ops.ResumeAll(ctx, suspendPath, ops.RestoreParams{Agents: cfg.Agents})
+		if err != nil {
+			fmt.Printf("Resume warning: %v\n", err)
+		} else if res.Resumed > 0 {
+			fmt.Printf("Resumed %d suspended session(s)\n", res.Resumed)
+			if res.Skipped > 0 {
+				fmt.Printf("  %d session(s) skipped\n", res.Skipped)
+			}
+			// Brief pause so Claude processes register their session files
+			// before the TUI's first refreshSessions poll.
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
 	projects, err := cfg.LoadProjects()
 	if err != nil {
 		return fmt.Errorf("loading projects: %w", err)
 	}
-	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents)
+	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents, cfg.WorkspaceDirs, cfg.Projects)
 }
 
 func listCmd() *cobra.Command {
