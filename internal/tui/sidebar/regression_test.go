@@ -1,11 +1,24 @@
 package sidebar
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/state"
 	mock_sidebar "github.com/rvanmech/unky-mo/internal/tui/sidebar/mocks"
 	"go.uber.org/mock/gomock"
 )
+
+// writeRegressionStateFile writes sf to a temp path and returns the path.
+// Wrapper around writeStateFile from state_test.go for tests that don't
+// otherwise care where the file lives.
+func writeRegressionStateFile(t *testing.T, sf *state.StateFile) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.json")
+	writeStateFile(t, path, sf)
+	return path
+}
 
 // Phase 5 regression tests document the WindowID-vs-WindowName drift bugs.
 // Tests that correspond to a shipped fix pass on the default build. Tests
@@ -109,4 +122,72 @@ func TestSwitchToSelectedNoTargetForBlankRow(t *testing.T) {
 		cursor: 0,
 	}
 	m.switchToSelected()()
+}
+
+// TestActiveShellsForConcurrentSiblingsUsesOwnSessionPID guards the
+// "shell shows in both moma-chatbot sidebars" bug. When two concurrent
+// Claude sessions share a CWD (e.g. main + concurrent in the same project),
+// each sidebar must look up shells by its OWN session's PID, not by path —
+// otherwise a path-based lookup returns an arbitrary first match and both
+// sidebars end up displaying the same shell list.
+func TestActiveShellsForConcurrentSiblingsUsesOwnSessionPID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	cr := mock_sidebar.NewMockClaudeReader(ctrl)
+
+	// Two siblings at the same path. Session 100 lives in window @1; session
+	// 200 lives in window @2. Both reachable via SessionsForPath.
+	candidates := []claude.Session{
+		{PID: 100, SessionID: "s1", CWD: "/ws/api"},
+		{PID: 200, SessionID: "s2", CWD: "/ws/api"},
+	}
+	cr.EXPECT().SessionsForPath("/ws/api").Return(candidates).AnyTimes()
+	cr.EXPECT().LiveSessions().Return(candidates, nil).AnyTimes()
+
+	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
+	// Window @2's pane tree contains PID 99 (its shell). Only session 200
+	// is a descendant of that pane.
+	pane2 := map[int]bool{99: true}
+	tmux.EXPECT().WindowPanePIDs("mo:beta").Return(pane2, nil).AnyTimes()
+	cr.EXPECT().IsDescendantOf(100, gomock.Any()).Return(false).AnyTimes()
+	cr.EXPECT().IsDescendantOf(200, gomock.Any()).Return(true).AnyTimes()
+
+	// Distinct shell lists per session. ActiveShells(100) must NOT be called
+	// from the @2 sidebar — gomock fails the test if it is, since we only
+	// expect ActiveShells(200).
+	ownShells := []claude.ActiveShell{{PID: 5000, Command: "rspec"}}
+	cr.EXPECT().ActiveShells(200).Return(ownShells).MinTimes(1)
+	// A no-op for ProjectsDirForPath so the JSONL-token path doesn't blow up.
+	cr.EXPECT().ProjectsDirForPath(gomock.Any()).Return(t.TempDir()).AnyTimes()
+
+	// State file: one project row matching the @2 window. Empty AgentKey ⇒
+	// resolves as Claude. Empty InstanceID ⇒ ownSessionID falls through to
+	// ownWindowSession (which exercises the same disambiguation).
+	sf := writeRegressionStateFile(t, &state.StateFile{
+		Projects: []state.ProjectState{
+			{Name: "api", Path: "/ws/api", WindowID: "@2", WindowName: "beta", Status: "active"},
+		},
+	})
+
+	m := &Model{
+		tmux:          tmux,
+		claude:        cr,
+		resolver:      FakeWindowResolver{Name: "beta", ID: "@2"},
+		stateFile:     sf,
+		windowName:    "beta",
+		windowID:      "@2",
+		windowPath:    "/ws/api",
+		activeTermIdx: -1,
+		focusSection:  "sessions",
+	}
+
+	m.refreshState()
+
+	if len(m.activeShells) != 1 {
+		t.Fatalf("expected 1 shell from own session 200; got %d: %+v",
+			len(m.activeShells), m.activeShells)
+	}
+	if m.activeShells[0].Command != "rspec" {
+		t.Errorf("got shell from wrong session: %+v", m.activeShells[0])
+	}
 }

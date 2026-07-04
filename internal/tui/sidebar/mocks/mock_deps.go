@@ -366,18 +366,18 @@ func (m *MockClaudeReader) EXPECT() *MockClaudeReaderMockRecorder {
 	return m.recorder
 }
 
-// ActiveShellsForSession mocks base method.
-func (m *MockClaudeReader) ActiveShellsForSession(projectPath string) []claude.ActiveShell {
+// ActiveShells mocks base method.
+func (m *MockClaudeReader) ActiveShells(claudePID int) []claude.ActiveShell {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ActiveShellsForSession", projectPath)
+	ret := m.ctrl.Call(m, "ActiveShells", claudePID)
 	ret0, _ := ret[0].([]claude.ActiveShell)
 	return ret0
 }
 
-// ActiveShellsForSession indicates an expected call of ActiveShellsForSession.
-func (mr *MockClaudeReaderMockRecorder) ActiveShellsForSession(projectPath any) *gomock.Call {
+// ActiveShells indicates an expected call of ActiveShells.
+func (mr *MockClaudeReaderMockRecorder) ActiveShells(claudePID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveShellsForSession", reflect.TypeOf((*MockClaudeReader)(nil).ActiveShellsForSession), projectPath)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveShells", reflect.TypeOf((*MockClaudeReader)(nil).ActiveShells), claudePID)
 }
 
 // FormatShellCommand mocks base method.

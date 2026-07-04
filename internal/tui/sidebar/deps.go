@@ -36,7 +36,11 @@ type TmuxClient interface {
 
 // ClaudeReader is the subset of internal/claude the sidebar reads from.
 type ClaudeReader interface {
-	ActiveShellsForSession(projectPath string) []claude.ActiveShell
+	// ActiveShells returns the Bash-tool subprocesses for a specific Claude
+	// PID. The sidebar must pass its OWN session's PID — not any session
+	// matching its CWD — because two concurrent sessions sharing a CWD would
+	// otherwise both display the same shell list.
+	ActiveShells(claudePID int) []claude.ActiveShell
 	FormatShellCommand(cmd string, maxLen int) string
 	IsDescendantOf(pid int, hostPIDs map[int]bool) bool
 	LiveSessions() ([]claude.Session, error)
@@ -145,8 +149,8 @@ func (a *tmuxClientAdapter) ListWindowPanes(target string) ([]ttmux.PaneInfo, er
 // defaultClaudeReader delegates every method to the package-level function.
 type defaultClaudeReader struct{}
 
-func (defaultClaudeReader) ActiveShellsForSession(projectPath string) []claude.ActiveShell {
-	return claude.ActiveShellsForSession(projectPath)
+func (defaultClaudeReader) ActiveShells(claudePID int) []claude.ActiveShell {
+	return claude.ActiveShells(claudePID)
 }
 func (defaultClaudeReader) FormatShellCommand(cmd string, maxLen int) string {
 	return claude.FormatShellCommand(cmd, maxLen)

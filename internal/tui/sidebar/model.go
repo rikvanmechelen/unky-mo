@@ -991,7 +991,16 @@ func (m *Model) refreshState() {
 	m.refreshChangedFiles()
 	m.refreshDirTree()
 	if isClaude {
-		m.activeShells = m.claude.ActiveShellsForSession(m.windowPath)
+		// Look up shells via this window's OWN Claude session PID rather than
+		// by path. When two concurrent sessions share a CWD (e.g. main +
+		// concurrent in the same project), a path-based lookup returns an
+		// arbitrary first match and both sidebars end up showing the same
+		// shells. ownWindowSession disambiguates via pane-PID descent.
+		if live := m.ownWindowSession(); live != nil {
+			m.activeShells = m.claude.ActiveShells(live.PID)
+		} else {
+			m.activeShells = nil
+		}
 	} else {
 		m.activeShells = nil
 	}

@@ -24,9 +24,10 @@ func newTestModel(t *testing.T, name, id string) (*Model, *mock_sidebar.MockTmux
 
 	// Default expectations for things refreshState always calls:
 	//   - ClaudeReader.SessionsForPath (via ownWindowSession) → zero
-	//   - ClaudeReader.ActiveShellsForSession → zero shells
+	//   - ClaudeReader.ActiveShells is only reached when ownWindowSession
+	//     finds a session, so no default expectation is needed.
 	claude.EXPECT().SessionsForPath(gomock.Any()).Return(nil).AnyTimes()
-	claude.EXPECT().ActiveShellsForSession(gomock.Any()).Return(nil).AnyTimes()
+	claude.EXPECT().ActiveShells(gomock.Any()).Return(nil).AnyTimes()
 
 	m := &Model{
 		tmux:          tmux,

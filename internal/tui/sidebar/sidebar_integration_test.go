@@ -66,7 +66,7 @@ func TestIntegrationRefreshTerminalsPrunesRealPane(t *testing.T) {
 	// Build a minimal Model backed by the real tmux adapter + a no-op claude mock.
 	ctrl := gomock.NewController(t)
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
-	claude.EXPECT().ActiveShellsForSession(gomock.Any()).Return(nil).AnyTimes()
+	claude.EXPECT().ActiveShells(gomock.Any()).Return(nil).AnyTimes()
 
 	tmuxAdapter := newTmuxClientAdapter(tc)
 	m := &Model{
@@ -118,7 +118,7 @@ func TestIntegrationDrawerRoundTrip(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
-	claude.EXPECT().ActiveShellsForSession(gomock.Any()).Return(nil).AnyTimes()
+	claude.EXPECT().ActiveShells(gomock.Any()).Return(nil).AnyTimes()
 
 	m := &Model{
 		tmux:          newTmuxClientAdapter(tc),
