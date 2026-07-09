@@ -507,7 +507,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		footerHeight := 3
+		footerHeight := 6
 		headerHeight := 0
 		m.list.SetSize(msg.Width, msg.Height-footerHeight-headerHeight)
 		m.ready = true
@@ -1900,7 +1900,7 @@ func (m Model) dashboardView() string {
 	}
 
 	// Resize list to fit the left panel
-	footerHeight := 3
+	footerHeight := 6
 	m.list.SetSize(leftWidth, m.height-footerHeight)
 
 	// === Left panel: project list ===
@@ -2178,14 +2178,41 @@ type footerBinding struct {
 }
 
 func (m Model) renderFooter(bindings []footerBinding) string {
-	var parts []string
-	for _, b := range bindings {
-		k := footerKeyStyle.Render(b.key)
-		d := footerDescStyle.Render(b.desc)
-		parts = append(parts, k+":"+d)
+	width := m.width
+	if width <= 0 {
+		width = 80
 	}
-	line := strings.Join(parts, "  ")
-	return footerStyle.Width(m.width).Render(line)
+	// Auto-wrap bindings into rows that fit the available width.
+	// Each binding renders as " key desc"; two spaces separate entries.
+	var rows []string
+	var rowParts []string
+	rowWidth := 0
+
+	for _, b := range bindings {
+		entryWidth := 1 + len(b.key) + 1 + len(b.desc) // " key desc"
+		sep := 2                                         // "  " between entries
+		if len(rowParts) == 0 {
+			sep = 0
+		}
+		if rowWidth+sep+entryWidth > width && len(rowParts) > 0 {
+			rows = append(rows, strings.Join(rowParts, ""))
+			rowParts = nil
+			rowWidth = 0
+			sep = 0
+		}
+		entry := " " + footerKeyStyle.Render(b.key) + " " + footerDescStyle.Render(b.desc)
+		if sep > 0 {
+			entry = "  " + entry
+		}
+		rowParts = append(rowParts, entry)
+		rowWidth += sep + entryWidth
+	}
+	if len(rowParts) > 0 {
+		rows = append(rows, strings.Join(rowParts, ""))
+	}
+
+	body := strings.Join(rows, "\n")
+	return footerStyle.Width(width).Render(body)
 }
 
 // yesNoBindings is the canonical footer-binding slice for every yes/no
@@ -3370,7 +3397,7 @@ func (m Model) projectDetailView() string {
 	// Pad content to fill screen, then add footer
 	content := header + body
 	contentLines := strings.Count(content, "\n")
-	footerLines := 3
+	footerLines := 6
 	if contentLines < m.height-footerLines {
 		content += strings.Repeat("\n", m.height-footerLines-contentLines)
 	}
@@ -3581,10 +3608,10 @@ func (m Model) renderPrompt(question string, bindings []footerBinding) string {
 	for _, b := range bindings {
 		k := footerKeyStyle.Render(b.key)
 		d := footerDescStyle.Render(b.desc)
-		parts = append(parts, k+":"+d)
+		parts = append(parts, k+" "+d)
 	}
 	hints := strings.Join(parts, "  ")
-	body := footerKeyStyle.Render(question) + "\n" + footerDescStyle.Render(hints)
+	body := footerKeyStyle.Render(question) + "\n" + hints
 	return footerStyle.Width(m.width).Render(body)
 }
 
@@ -3595,10 +3622,10 @@ func (m Model) renderInputPrompt(question, inputView string, bindings []footerBi
 	for _, b := range bindings {
 		k := footerKeyStyle.Render(b.key)
 		d := footerDescStyle.Render(b.desc)
-		parts = append(parts, k+":"+d)
+		parts = append(parts, k+" "+d)
 	}
 	hints := strings.Join(parts, "  ")
-	body := footerKeyStyle.Render(question) + "\n" + inputView + "\n" + footerDescStyle.Render(hints)
+	body := footerKeyStyle.Render(question) + "\n" + inputView + "\n" + hints
 	return footerStyle.Width(m.width).Render(body)
 }
 

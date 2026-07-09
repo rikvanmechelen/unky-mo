@@ -801,6 +801,58 @@ func TestMergeRefreshedProjectsEmptyRefreshClearsAll(t *testing.T) {
 	}
 }
 
+// --- renderFooter multi-line wrapping tests ---
+
+func TestRenderFooterWrapsAtWidth(t *testing.T) {
+	m := NewModelWithDeps(nil, nil, nil, nil, nil, nil, "", config.TicketsConfig{Disabled: true}, nil, nil, nil)
+	m.width = 40
+
+	footer := m.renderFooter([]footerBinding{
+		{"↑↓", "navigate"},
+		{"←→", "panel"},
+		{"enter", "open"},
+		{"n", "new"},
+		{"a", "attach"},
+		{"q", "quit"},
+	})
+	// At 40 chars wide, all 6 bindings can't fit on one line.
+	// They should wrap to multiple lines.
+	lines := strings.Split(footer, "\n")
+	// Must have more than 2 lines (border + at least 2 content rows).
+	if len(lines) < 3 {
+		t.Errorf("narrow footer should wrap to multiple lines, got %d lines:\n%s", len(lines), footer)
+	}
+}
+
+func TestRenderFooterSingleLineWhenWide(t *testing.T) {
+	m := NewModelWithDeps(nil, nil, nil, nil, nil, nil, "", config.TicketsConfig{Disabled: true}, nil, nil, nil)
+	m.width = 200
+
+	footer := m.renderFooter([]footerBinding{
+		{"q", "quit"},
+		{"?", "help"},
+	})
+	// At 200 chars wide, 2 short bindings fit on one line.
+	lines := strings.Split(footer, "\n")
+	// Border line + 1 content line = 2 lines.
+	if len(lines) != 2 {
+		t.Errorf("wide footer with 2 bindings should be 2 lines (border + content), got %d:\n%s", len(lines), footer)
+	}
+}
+
+func TestRenderFooterUsesSpaceNotColon(t *testing.T) {
+	m := NewModelWithDeps(nil, nil, nil, nil, nil, nil, "", config.TicketsConfig{Disabled: true}, nil, nil, nil)
+	m.width = 80
+
+	footer := m.renderFooter([]footerBinding{
+		{"q", "quit"},
+	})
+	// Should not contain "q:quit" (old colon style).
+	if strings.Contains(footer, ":") {
+		t.Errorf("footer should use space separator, not colon:\n%s", footer)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(substr) == 0 || indexOf(s, substr) >= 0
 }
