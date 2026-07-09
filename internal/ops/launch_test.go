@@ -2,6 +2,8 @@ package ops
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,9 @@ func newTestContext(t *testing.T) (*Context, *mock_ops.MockTmuxClient, *mock_ops
 	ctrl := gomock.NewController(t)
 	tmux := mock_ops.NewMockTmuxClient(ctrl)
 	claude := mock_ops.NewMockClaudeReader(ctrl)
+	// Disable path resolution so test expectations match bare command names.
+	resolveShellCmdFn = func(s string) string { return s }
+	t.Cleanup(func() { resolveShellCmdFn = resolveShellCmd })
 	return &Context{
 		Tmux:         tmux,
 		Claude:       claude,
@@ -366,6 +371,53 @@ func TestLaunchSessionRequiresWindowName(t *testing.T) {
 	_, err := LaunchSession(ctx, LaunchParams{WindowName: ""})
 	if err == nil {
 		t.Error("empty WindowName should error")
+	}
+}
+
+func TestResolveShellCmdAbsolutePathUnchanged(t *testing.T) {
+	got := resolveShellCmd("/usr/bin/claude --resume abc")
+	if got != "/usr/bin/claude --resume abc" {
+		t.Errorf("absolute path should be unchanged, got %q", got)
+	}
+}
+
+func TestResolveShellCmdUnknownBinaryUnchanged(t *testing.T) {
+	got := resolveShellCmd("nonexistent-binary-xyzzy --flag")
+	if got != "nonexistent-binary-xyzzy --flag" {
+		t.Errorf("unknown binary should be unchanged, got %q", got)
+	}
+}
+
+func TestResolveAsdfShimParsesPluginComment(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a fake asdf directory structure.
+	shimDir := filepath.Join(dir, ".asdf", "shims")
+	os.MkdirAll(shimDir, 0o755)
+	installDir := filepath.Join(dir, ".asdf", "installs", "nodejs", "20.0.0", "bin")
+	os.MkdirAll(installDir, 0o755)
+	os.WriteFile(filepath.Join(installDir, "claude"), []byte("#!/bin/sh\n"), 0o755)
+
+	shimPath := filepath.Join(shimDir, "claude")
+	shimContent := "#!/usr/bin/env bash\n# asdf-plugin: nodejs 20.0.0\nexec asdf exec \"claude\" \"$@\"\n"
+	os.WriteFile(shimPath, []byte(shimContent), 0o755)
+
+	// Override HOME so resolveAsdfShim finds our fake install dir.
+	orig := os.Getenv("HOME")
+	os.Setenv("HOME", dir)
+	defer os.Setenv("HOME", orig)
+
+	got := resolveAsdfShim(shimPath, "claude")
+	want := filepath.Join(installDir, "claude")
+	if got != want {
+		t.Errorf("resolveAsdfShim: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveAsdfShimNonShimPathReturnsEmpty(t *testing.T) {
+	got := resolveAsdfShim("/usr/local/bin/claude", "claude")
+	if got != "" {
+		t.Errorf("non-shim path should return empty, got %q", got)
 	}
 }
 

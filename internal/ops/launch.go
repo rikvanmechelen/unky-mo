@@ -2,6 +2,10 @@ package ops
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 )
@@ -28,6 +32,10 @@ type LaunchResult struct {
 	AgentKey     string // coding agent mnemonic stored as @mo_agent window option
 	SwitchedTo   bool   // true when SwitchFocus was requested and tmux switched
 }
+
+// resolveShellCmdFn is the function used to resolve shell commands to absolute
+// paths. Tests override this to avoid environment-dependent path resolution.
+var resolveShellCmdFn = resolveShellCmd
 
 // LaunchSession creates a new tmux window, execs the Claude command in pane
 // .0, wires up the sidebar pane (when requested), installs the
@@ -76,6 +84,11 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 		res.ClaudePaneID = id
 	}
 
+	// Resolve the binary in ShellCmd to its absolute path so that `exec`
+	// bypasses directory-scoped version-manager shims (e.g. asdf) that may
+	// not have the required runtime configured in the target's .tool-versions.
+	p.ShellCmd = resolveShellCmdFn(p.ShellCmd)
+
 	// Use "exec" so the shell is replaced — when Claude exits, the pane
 	// closes immediately instead of leaving a lingering shell prompt.
 	if err := ctx.Tmux.SendKeys(target, "exec "+p.ShellCmd); err != nil {
@@ -112,4 +125,70 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 	}
 
 	return res, nil
+}
+
+// resolveShellCmd resolves the binary in a shell command to its absolute path,
+// bypassing version-manager shims (e.g. asdf) that fail in directories whose
+// .tool-versions doesn't list the required runtime.
+func resolveShellCmd(cmd string) string {
+	parts := strings.SplitN(cmd, " ", 2)
+	binary := parts[0]
+
+	if filepath.IsAbs(binary) {
+		return cmd
+	}
+
+	resolved, err := exec.LookPath(binary)
+	if err != nil {
+		return cmd
+	}
+
+	// If the resolved path is an asdf shim, parse it to find the real binary.
+	if real := resolveAsdfShim(resolved, binary); real != "" {
+		resolved = real
+	}
+
+	parts[0] = resolved
+	return strings.Join(parts, " ")
+}
+
+// resolveAsdfShim checks whether path is an asdf shim and, if so, returns the
+// absolute path to the actual binary installed by the plugin. Returns "" when
+// path is not a shim or the real binary cannot be located.
+//
+// asdf shims contain comments like "# asdf-plugin: nodejs 22.3.0" listing
+// which plugin+version provides the command. We use the first match whose
+// install directory contains the binary.
+func resolveAsdfShim(shimPath, binary string) string {
+	if !strings.Contains(shimPath, "/.asdf/shims/") {
+		return ""
+	}
+
+	data, err := os.ReadFile(shimPath)
+	if err != nil {
+		return ""
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "# asdf-plugin: ") {
+			continue
+		}
+		fields := strings.Fields(line[len("# asdf-plugin: "):])
+		if len(fields) < 2 {
+			continue
+		}
+		plugin, version := fields[0], fields[1]
+		candidate := filepath.Join(home, ".asdf", "installs", plugin, version, "bin", binary)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	return ""
 }
