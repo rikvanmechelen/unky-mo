@@ -298,6 +298,10 @@ type Model struct {
 	// entries: one entry per live Claude session. Populated by
 	// updateProjectStatuses from the poll result (status manager is source of truth).
 	sessionViews []sessionView
+	// newProjectInput is non-nil when the user is entering a folder name for a
+	// new project (N key on dashboard). While set, key events route to the input.
+	newProjectInput     *textinput.Model
+	newProjectParentDir string // first workspace dir; set when the prompt opens
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
@@ -554,6 +558,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `y` on ticket detail yanks the derived branch name.
 		if m.screen == ScreenTicket && msg.String() == "y" {
 			return m.handleTicketYank()
+		}
+
+		// New-project input captures all input while active (dashboard, N key).
+		if m.newProjectInput != nil {
+			switch msg.String() {
+			case "enter":
+				name := strings.TrimSpace(m.newProjectInput.Value())
+				m.newProjectInput = nil
+				if name == "" {
+					return m, nil
+				}
+				return m, m.doCreateProject(name)
+			case "esc", "escape":
+				m.newProjectInput = nil
+				return m, nil
+			}
+			updated, cmd := m.newProjectInput.Update(msg)
+			m.newProjectInput = &updated
+			return m, cmd
 		}
 
 		// New-worktree input captures all input while active.
@@ -1014,6 +1037,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case key.Matches(msg, keys.NewProject):
+			if m.screen == ScreenDashboard && m.dashFocusLeft {
+				if len(m.workspaceDirs) == 0 {
+					m.statusMsg = "no workspace_dirs configured"
+					return m, nil
+				}
+				ti := textinput.New()
+				ti.Placeholder = "folder-name"
+				ti.Focus()
+				m.newProjectInput = &ti
+				m.newProjectParentDir = m.workspaceDirs[0]
+				return m, nil
+			}
+
 		case key.Matches(msg, keys.Attach):
 			if m.screen == ScreenDashboard || m.screen == ScreenProject {
 				return m, m.attachSession()
@@ -1257,6 +1294,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.projects = updated
 		return m, nil
+
+	case newProjectCreatedMsg:
+		agent := m.defaultAgent()
+		p := ops.LaunchParams{
+			WindowName:    msg.name,
+			Cwd:           msg.path,
+			ShellCmd:      agent.Cmd,
+			AgentKey:      agent.Key,
+			AttachSidebar: true,
+			SwitchFocus:   true,
+		}
+		opsCtx := m.ops
+		return m, tea.Batch(
+			func() tea.Msg {
+				if _, err := ops.LaunchSession(opsCtx, p); err != nil {
+					return statusMsgEvent(fmt.Sprintf("launch session: %v", err))
+				}
+				return statusMsgEvent(fmt.Sprintf("Created and launched %s", msg.name))
+			},
+			m.refreshProjects(),
+		)
 
 	case suspendCompleteMsg:
 		if msg.err != nil {
@@ -2043,6 +2101,12 @@ func (m Model) dashboardView() string {
 		footer = m.renderPrompt(question, yesNoBindings("import"))
 	} else if m.pendingAgentPickerActive {
 		footer = m.renderPrompt("Launch with:", withCancel(m.agentPickerBindings()))
+	} else if m.newProjectInput != nil {
+		question := fmt.Sprintf("New project in %s — folder name:", m.newProjectParentDir)
+		footer = m.renderInputPrompt(question, m.newProjectInput.View(), []footerBinding{
+			{"enter", "create"},
+			{"esc", "cancel"},
+		})
 	} else {
 		footer = m.renderFooter([]footerBinding{
 			{"↑↓", "navigate"},
@@ -2050,6 +2114,7 @@ func (m Model) dashboardView() string {
 			{"enter", "open"},
 			{"A", "agent"},
 			{"n", "new session"},
+			{"N", "new project"},
 			{"a", "attach"},
 			{"/", "filter"},
 			{"?", "help"},
@@ -4044,6 +4109,28 @@ func (m Model) focusIfExists(windowName string) (bool, error) {
 		return false, nil
 	}
 	return true, m.tmux.SwitchToWindow(m.safeWindowTarget(windowName, ""))
+}
+
+// newProjectCreatedMsg is returned by doCreateProject on success.
+type newProjectCreatedMsg struct {
+	name string
+	path string
+}
+
+// doCreateProject creates the project folder + git repo in the background and
+// returns a newProjectCreatedMsg on success or a statusMsgEvent on failure.
+func (m Model) doCreateProject(name string) tea.Cmd {
+	parentDir := m.newProjectParentDir
+	return func() tea.Msg {
+		res, err := ops.CreateProject(ops.CreateProjectParams{
+			ParentDir:  parentDir,
+			FolderName: name,
+		})
+		if err != nil {
+			return statusMsgEvent("create project: " + err.Error())
+		}
+		return newProjectCreatedMsg{name: name, path: res.Path}
+	}
 }
 
 func (m Model) launchSession() tea.Cmd {

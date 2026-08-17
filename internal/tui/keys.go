@@ -7,6 +7,7 @@ type keyMap struct {
 	AgentLaunch      key.Binding // "A" — pick which coding agent to launch
 	Back             key.Binding
 	New              key.Binding
+	NewProject       key.Binding // "N" — create a new project folder, git-init it, launch claude
 	Attach           key.Binding
 	Resume           key.Binding
 	NewWorktree      key.Binding // "w" — create worktree for the branch under cursor
@@ -40,6 +41,10 @@ var keys = keyMap{
 	New: key.NewBinding(
 		key.WithKeys("n"),
 		key.WithHelp("n", "new session"),
+	),
+	NewProject: key.NewBinding(
+		key.WithKeys("N"),
+		key.WithHelp("N", "new project"),
 	),
 	Attach: key.NewBinding(
 		key.WithKeys("a"),
