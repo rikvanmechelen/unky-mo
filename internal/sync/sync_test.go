@@ -124,7 +124,7 @@ func initTestSyncRepo(t *testing.T, key Key, projectName, sessionID string) stri
 		t.Helper()
 		runIn(syncDir, args...)
 	}
-	run("init")
+	run("init", "-b", "main")
 	run("config", "user.email", "test@test.com")
 	run("config", "user.name", "test")
 	run("remote", "add", "origin", bareDir)
