@@ -195,6 +195,22 @@ func (c *Client) SendRawKeys(target, keys string) error {
 	return c.runTmux("send-keys", "-t", target, keys)
 }
 
+// SendLiteralText types text into target exactly as written, with no tmux
+// key-name interpretation (unlike SendKeys/SendRawKeys) — safe for arbitrary
+// user input, including text that would otherwise collide with a tmux key
+// name such as "Up" or "Escape". Submits with a trailing Enter. text must
+// not contain embedded newlines; callers are responsible for rejecting
+// multi-line input before calling this (tmux's literal mode sends a raw
+// newline byte, not an Enter keypress — untested against Claude Code's
+// actual multi-line-prompt keybinding, so this method intentionally does not
+// attempt to support it).
+func (c *Client) SendLiteralText(target, text string) error {
+	if err := c.runTmux("send-keys", "-l", "-t", target, "--", text); err != nil {
+		return err
+	}
+	return c.runTmux("send-keys", "-t", target, "Enter")
+}
+
 // SwitchToWindow switches the client to the specified window.
 func (c *Client) SwitchToWindow(target string) error {
 	return c.runTmux("select-window", "-t", target)

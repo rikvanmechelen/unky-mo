@@ -19,7 +19,7 @@ func TestHandlePRs(t *testing.T) {
 	mockPRs := mock_web.NewMockPRClient(ctrl)
 	mockPRs.EXPECT().ListPRs("/ws/a").Return([]github.PullRequest{{Number: 1, Title: "fix"}}, nil).Times(1)
 
-	srv := NewServer(Deps{Projects: mockProjects, PRs: mockPRs}, 0)
+	srv := NewServer(Deps{Projects: mockProjects, PRs: mockPRs}, 0, "test")
 
 	// Two requests within the cache TTL should only hit ListPRs once.
 	for i := 0; i < 2; i++ {
@@ -38,7 +38,7 @@ func TestHandlePRDetail(t *testing.T) {
 	mockPRs := mock_web.NewMockPRClient(ctrl)
 	mockPRs.EXPECT().GetPRDetail("/ws/a", 7).Return(&github.PRDetail{Number: 7, Title: "fix"}, nil)
 
-	srv := NewServer(Deps{Projects: mockProjects, PRs: mockPRs}, 0)
+	srv := NewServer(Deps{Projects: mockProjects, PRs: mockPRs}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects/a/prs/7", nil))
 
@@ -56,7 +56,7 @@ func TestHandlePRDetailBadNumber(t *testing.T) {
 	mockProjects := mock_web.NewMockProjectLister(ctrl)
 	mockProjects.EXPECT().LoadProjects().Return([]project.Project{{Name: "a", Path: "/ws/a"}}, nil)
 
-	srv := NewServer(Deps{Projects: mockProjects}, 0)
+	srv := NewServer(Deps{Projects: mockProjects}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects/a/prs/not-a-number", nil))
 

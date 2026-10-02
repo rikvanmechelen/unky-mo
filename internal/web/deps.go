@@ -1,8 +1,10 @@
 // Package web serves a read-only HTTP/JSON dashboard over the data mo
-// already tracks (session status, worktrees, PRs, tickets, usage). It never
-// touches tmux or the hook socket — those are owned exclusively by the
-// running main TUI process — so it reads the shared state file plus a few
-// existing read-only package functions instead.
+// already tracks (session status, worktrees, PRs, tickets, usage), plus a
+// chat-style live transcript of a session (tailed from its JSONL file) with
+// a prompt box that injects text into the live session via tmux. It never
+// touches the hook socket or status.Manager — those are owned exclusively by
+// the running main TUI process — so session status (used to gate prompt
+// submission on the session being idle) comes from the shared state file.
 package web
 
 import (
@@ -12,9 +14,10 @@ import (
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tickets"
+	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -43,6 +46,11 @@ type TicketSource interface {
 	Detail(ctx context.Context, providerName, id string) (*tickets.TicketDetail, error)
 }
 
+// PromptSender injects a prompt into a live session's tmux pane.
+type PromptSender interface {
+	SendLiteralText(target, text string) error
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -50,6 +58,7 @@ type Deps struct {
 	Worktrees WorktreeReader
 	PRs       PRClient
 	Tickets   TicketSource
+	Prompts   PromptSender
 }
 
 // realStateReader wraps state.Read for production use.
@@ -112,6 +121,15 @@ func (r realTicketSource) Detail(ctx context.Context, providerName, id string) (
 		}
 	}
 	return nil, errUnknownProvider(providerName)
+}
+
+// realPromptSender wraps a *tmux.Client for production use.
+type realPromptSender struct{ client *tmux.Client }
+
+func NewPromptSender(client *tmux.Client) PromptSender { return realPromptSender{client: client} }
+
+func (r realPromptSender) SendLiteralText(target, text string) error {
+	return r.client.SendLiteralText(target, text)
 }
 
 type errUnknownProvider string

@@ -20,7 +20,7 @@ func TestHandleTickets(t *testing.T) {
 		[]tickets.FetchResult{{Provider: "jira", Err: errors.New("timeout")}},
 	)
 
-	srv := NewServer(Deps{Tickets: mockTickets}, 0)
+	srv := NewServer(Deps{Tickets: mockTickets}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tickets", nil))
 
@@ -43,7 +43,7 @@ func TestHandleTicketDetail(t *testing.T) {
 		Ticket: tickets.Ticket{ID: "OP-1"},
 	}, nil)
 
-	srv := NewServer(Deps{Tickets: mockTickets}, 0)
+	srv := NewServer(Deps{Tickets: mockTickets}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tickets/OP-1?provider=jira", nil))
 
@@ -57,7 +57,7 @@ func TestHandleTicketDetail(t *testing.T) {
 }
 
 func TestHandleTicketDetailMissingProvider(t *testing.T) {
-	srv := NewServer(Deps{}, 0)
+	srv := NewServer(Deps{}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tickets/OP-1", nil))
 

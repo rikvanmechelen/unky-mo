@@ -5,23 +5,29 @@ import (
 	"io/fs"
 	"net/http"
 	"time"
+
+	"github.com/rvanmech/unky-mo/internal/claude"
 )
 
-// Server is the read-only web dashboard's HTTP handler. It holds no mutable
-// state of its own beyond small TTL caches for rate-limited upstream calls —
-// every request re-reads the shared state file / git / gh / ticket
-// providers through Deps.
+// Server is the web dashboard's HTTP handler. It holds no mutable state of
+// its own beyond small TTL caches for rate-limited upstream calls and the
+// transcript hub's live-tail state — every request re-reads the shared
+// state file / git / gh / ticket providers through Deps.
 type Server struct {
-	deps Deps
-	mux  *http.ServeMux
+	deps        Deps
+	mux         *http.ServeMux
+	tmuxSession string
 
 	prCache     *ttlCache
 	ticketCache *ttlCache
+	transcripts *transcriptHub
 }
 
 // NewServer builds a Server. ticketRefresh is the ticket cache TTL
-// (typically cfg.Tickets.RefreshSeconds).
-func NewServer(deps Deps, ticketRefresh time.Duration) *Server {
+// (typically cfg.Tickets.RefreshSeconds). tmuxSession is the tmux session
+// name sessions live in (typically cfg.TmuxSession), used to address a
+// session's Claude pane for prompt injection.
+func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Server {
 	if ticketRefresh <= 0 {
 		ticketRefresh = 5 * time.Minute
 	}
@@ -29,8 +35,10 @@ func NewServer(deps Deps, ticketRefresh time.Duration) *Server {
 	s := &Server{
 		deps:        deps,
 		mux:         http.NewServeMux(),
+		tmuxSession: tmuxSession,
 		prCache:     newTTLCache(90 * time.Second),
 		ticketCache: newTTLCache(ticketRefresh),
+		transcripts: newTranscriptHub(),
 	}
 	s.routes()
 	return s
@@ -47,9 +55,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{name}/prs/{number}", s.handlePRDetail)
 	s.mux.HandleFunc("GET /api/tickets", s.handleTickets)
 	s.mux.HandleFunc("GET /api/tickets/{id}", s.handleTicketDetail)
+	s.mux.HandleFunc("GET /api/transcript/{windowID}", s.handleTranscript)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/prompt", s.handlePrompt)
 
 	static, err := fs.Sub(staticFiles, "static")
 	if err == nil {
+		s.mux.HandleFunc("GET /chat", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, static, "chat.html")
+		})
 		s.mux.Handle("/", http.FileServerFS(static))
 	}
 }
@@ -78,4 +91,22 @@ func (s *Server) findProjectPath(name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// resolveSession looks up the live session at windowID (its tmux window ID,
+// e.g. "@5") via the shared state file, returning its JSONL transcript path,
+// Claude session ID, and current status ("active"/"idle"/"permission"). ok
+// is false if no live session exists at that window.
+func (s *Server) resolveSession(windowID string) (jsonlPath, sessionID, status string, ok bool) {
+	st, err := s.deps.State.Read()
+	if err != nil {
+		return "", "", "", false
+	}
+	for _, p := range st.Projects {
+		if p.WindowID == windowID && p.SessionID != "" {
+			path := claude.ProjectsDirForPath(p.Path) + "/" + p.SessionID + ".jsonl"
+			return path, p.SessionID, p.Status, true
+		}
+	}
+	return "", "", "", false
 }

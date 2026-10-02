@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Unky Mo — Chat</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; flex-direction: column; height: 100vh; margin: 0; }
+  #status-badge { font: 12px monospace; padding: 0.4rem 0.75rem; color: #666; }
+  #transcript { flex: 1; overflow-y: auto; padding: 1rem; }
+  .msg { margin-bottom: 0.75rem; max-width: 70ch; }
+  .msg.user { margin-left: auto; text-align: right; }
+  .msg .bubble { display: inline-block; padding: 0.5rem 0.75rem; border-radius: 0.5rem; white-space: pre-wrap; text-align: left; }
+  .msg.user .bubble { background: #2b3a4f; color: #eee; }
+  .msg.assistant .bubble { background: #f4f4f4; color: #222; }
+  .msg.meta .bubble { background: none; color: #888; font-style: italic; padding: 0.1rem 0; }
+  .tool-card { border: 1px solid #ccc; border-radius: 0.5rem; margin: 0.5rem 0; padding: 0.4rem 0.6rem; font-family: monospace; font-size: 0.85rem; max-width: 70ch; }
+  .tool-card.error { border-color: #c0392b; }
+  .tool-card summary { cursor: pointer; }
+  .tool-card pre { white-space: pre-wrap; word-break: break-word; }
+  .diff-add { color: #2e7d32; }
+  .diff-del { color: #c0392b; }
+  #composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #ddd; }
+  #prompt-input { flex: 1; font: inherit; padding: 0.4rem; }
+  #send-error { color: #c0392b; font: 12px monospace; padding: 0 0.75rem; }
+</style>
+</head>
+<body>
+<div id="status-badge"></div>
+<div id="transcript"></div>
+<div id="send-error"></div>
+<form id="composer">
+  <input id="prompt-input" type="text" placeholder="Message Claude…" autocomplete="off">
+  <button id="send-btn" type="submit">Send</button>
+</form>
+<script src="/chat.js"></script>
+</body>
+</html>

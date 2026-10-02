@@ -217,6 +217,34 @@ func TestIntegrationPopupKeyTableBindings(t *testing.T) {
 	}
 }
 
+// TestIntegrationSendLiteralTextTypesLiteralNotControlKey verifies that
+// SendLiteralText's -l (literal) mode actually suppresses tmux's key-name
+// interpretation — sending the text "Up" must type the two characters, not
+// invoke the Up-arrow key, which is the entire point of the method existing
+// (SendKeys/SendRawKeys would send the Up-arrow keypress for this same
+// input). Only a real tmux exercise can verify this safety property.
+func TestIntegrationSendLiteralTextTypesLiteralNotControlKey(t *testing.T) {
+	c := newTestClient(t)
+	target, err := c.CreateWindow("prompttest", "/tmp")
+	if err != nil {
+		t.Fatalf("CreateWindow: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond) // let the shell prompt settle
+
+	if err := c.SendLiteralText(target+".0", "Up"); err != nil {
+		t.Fatalf("SendLiteralText: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	out, err := c.tmuxCmd("capture-pane", "-p", "-t", target+".0").Output()
+	if err != nil {
+		t.Fatalf("capture-pane: %v", err)
+	}
+	if !strings.Contains(string(out), "Up") {
+		t.Fatalf("expected literal \"Up\" typed into the pane, got:\n%s", out)
+	}
+}
+
 // Docstring check: a test that runs with no SocketName (SocketName="") and
 // therefore would touch the host tmux server is intentionally absent —
 // tests that need real tmux state MUST use newTestClient.

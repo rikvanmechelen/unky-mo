@@ -413,9 +413,11 @@ mo web                  # serve on http://127.0.0.1:7890
 mo web --addr :8080     # custom address
 ```
 
-A read-only dashboard — sessions, usage, projects, worktrees/branches, pull requests, and Jira tickets — viewable in a browser. It's a separate process from the TUI: it doesn't need to run inside tmux, and it reads the same shared state file the sidebars use rather than talking to tmux directly, so it's safe to leave running alongside (or instead of) the TUI.
+A dashboard — sessions, usage, projects, worktrees/branches, pull requests, and Jira tickets — viewable in a browser. It's a separate process from the TUI: it doesn't need to run inside tmux, and it reads the same shared state file the sidebars use rather than talking to tmux directly, so it's safe to leave running alongside (or instead of) the TUI.
 
-This is a v1: plain polling (every 2s for session status, less often for projects/PRs/tickets), no authentication (binds to `127.0.0.1` only), and a bare-bones frontend with no visual design pass yet. No actions (launch/park/cleanup/etc.) are available from the browser — view-only for now.
+Click **chat** next to any live session to open a chat-style view of that session: the full conversation history (user prompts, assistant replies, collapsible tool-use/tool-result cards — e.g. `Bash` shows its description, `Edit`/`Write`/`Read` show the file path relative to the project root) renders immediately, and new turns stream in live as Claude works. There's a message box too — type a prompt and it's typed into the real session via tmux, same as if you'd typed it yourself; the send button is disabled whenever the session isn't idle (mid-turn or awaiting a permission decision), so you can't collide with Claude mid-response.
+
+This is a v1: plain polling for the dashboard's own session/project/PR/ticket lists (every 2s for session status, less often for the rest — the chat view itself is push-based, not polled), no authentication (binds to `127.0.0.1` only), and a bare-bones frontend with no visual design pass yet. Prompts are single-line only for now (an embedded newline is rejected rather than guessed at). A session needs at least one prior turn before it'll accept a prompt from the browser — a freshly-started session sitting at its first prompt reports as busy rather than idle until it's had a real exchange.
 
 ## CLI Commands
 
@@ -452,7 +454,7 @@ mo jira fetch                   # Run one Jira fetch and print result (diagnosti
 mo jira issue <KEY>             # Print one issue's metadata + description (diagnostic)
 mo jira show-token              # Print current Jira API token
 mo debug <project>              # Dump session/worktree debug info
-mo web [--addr host:port]       # Serve the read-only web dashboard
+mo web [--addr host:port]       # Serve the web dashboard + chat view
 mo version                      # Print version
 ```
 
@@ -729,7 +731,7 @@ unky-mo/
 │   ├── state/              # Shared JSON state file (TUI ↔ sidebars)
 │   ├── sync/               # Encrypted session sync via private git repo
 │   ├── project/            # Project model, scanner, worktree support, git status
-│   ├── web/                # Read-only web dashboard (mo web) — HTTP handlers + embedded static frontend
+│   ├── web/                # Web dashboard + chat view (mo web) — HTTP handlers + embedded static frontend
 │   └── tui/
 │       ├── app.go          # Main TUI model, views, key handling
 │       ├── delegate.go     # Project list item renderer (with git status)

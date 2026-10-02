@@ -26,7 +26,10 @@ function renderSessions(projects) {
   for (const p of projects || []) {
     if (!p.session_id && p.status === "none") continue;
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.name}</td><td>${p.window_name}</td><td>${p.branch || ""}</td><td>${p.status}</td>`;
+    const chatLink = p.window_id
+      ? `<a href="/chat?window=${encodeURIComponent(p.window_id)}" target="_blank">chat</a>`
+      : "";
+    tr.innerHTML = `<td>${p.name}</td><td>${p.window_name}</td><td>${p.branch || ""}</td><td>${p.status}</td><td>${chatLink}</td>`;
     tbody.appendChild(tr);
   }
 }

@@ -24,7 +24,7 @@ func TestHandleState(t *testing.T) {
 	mockState := mock_web.NewMockStateReader(ctrl)
 	mockState.EXPECT().Read().Return(st, nil)
 
-	srv := NewServer(Deps{State: mockState}, 0)
+	srv := NewServer(Deps{State: mockState}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/state", nil))
 
@@ -45,7 +45,7 @@ func TestHandleStateError(t *testing.T) {
 	mockState := mock_web.NewMockStateReader(ctrl)
 	mockState.EXPECT().Read().Return(nil, errors.New("boom"))
 
-	srv := NewServer(Deps{State: mockState}, 0)
+	srv := NewServer(Deps{State: mockState}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/state", nil))
 
@@ -62,7 +62,7 @@ func TestHandleUsage(t *testing.T) {
 	mockState := mock_web.NewMockStateReader(ctrl)
 	mockState.EXPECT().Read().Return(st, nil)
 
-	srv := NewServer(Deps{State: mockState}, 0)
+	srv := NewServer(Deps{State: mockState}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/usage", nil))
 

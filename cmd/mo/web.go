@@ -9,6 +9,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 	"github.com/rvanmech/unky-mo/internal/tickets/jira"
+	"github.com/rvanmech/unky-mo/internal/tmux"
 	"github.com/rvanmech/unky-mo/internal/web"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +19,7 @@ func webCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "web",
-		Short: "Serve a read-only web dashboard (sessions, worktrees, PRs, tickets, usage)",
+		Short: "Serve a web dashboard (sessions, worktrees, PRs, tickets, usage) with a live chat view per session",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -31,10 +32,11 @@ func webCmd() *cobra.Command {
 				Worktrees: web.NewWorktreeReader(),
 				PRs:       web.NewPRClient(github.NewClient(nil)),
 				Tickets:   web.NewTicketSource(jira.BuildProviders(jiraInstancesFromConfig(cfg.Tickets))),
+				Prompts:   web.NewPromptSender(tmux.NewClient(cfg.TmuxSession)),
 			}
 
 			refresh := time.Duration(cfg.Tickets.RefreshSeconds) * time.Second
-			srv := web.NewServer(deps, refresh)
+			srv := web.NewServer(deps, refresh, cfg.TmuxSession)
 
 			fmt.Printf("mo web listening on http://%s\n", addr)
 			return http.ListenAndServe(addr, srv)

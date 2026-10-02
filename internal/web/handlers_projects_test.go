@@ -16,7 +16,7 @@ func TestHandleProjects(t *testing.T) {
 	mockProjects := mock_web.NewMockProjectLister(ctrl)
 	mockProjects.EXPECT().LoadProjects().Return([]project.Project{{Name: "a", Path: "/ws/a"}}, nil)
 
-	srv := NewServer(Deps{Projects: mockProjects}, 0)
+	srv := NewServer(Deps{Projects: mockProjects}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects", nil))
 
@@ -36,7 +36,7 @@ func TestHandleWorktrees(t *testing.T) {
 	mockWorktrees := mock_web.NewMockWorktreeReader(ctrl)
 	mockWorktrees.EXPECT().ListBranches("/ws/a").Return([]project.Branch{{Name: "main", IsMain: true}}, nil)
 
-	srv := NewServer(Deps{Projects: mockProjects, Worktrees: mockWorktrees}, 0)
+	srv := NewServer(Deps{Projects: mockProjects, Worktrees: mockWorktrees}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects/a/worktrees", nil))
 
@@ -57,7 +57,7 @@ func TestHandleWorktreesUnknownProject(t *testing.T) {
 	mockProjects := mock_web.NewMockProjectLister(ctrl)
 	mockProjects.EXPECT().LoadProjects().Return([]project.Project{}, nil)
 
-	srv := NewServer(Deps{Projects: mockProjects}, 0)
+	srv := NewServer(Deps{Projects: mockProjects}, 0, "test")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects/missing/worktrees", nil))
 
