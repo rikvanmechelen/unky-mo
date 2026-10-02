@@ -44,6 +44,10 @@ The CLI's subcommands (`cmd/mo/*.go`) follow the same pattern: each `RunE` build
 
 Sidebar bug regression tests gated by `//go:build sidebarregression` live in `internal/tui/sidebar/regression_todo_test.go` and document known gaps (e.g. `refreshSyncStatus` not surviving window renames). Fixed bugs move their tests into the default-build `regression_test.go`.
 
+## Web dashboard testing
+
+`internal/web/` (the `mo web` read-only dashboard) follows the same scoped-interface pattern as `ops.Context`: `StateReader`, `ProjectLister`, `WorktreeReader`, `PRClient`, `TicketSource` in `deps.go`, generated into `internal/web/mocks/`. Handlers are tested with `httptest.NewRecorder()` against gomock fakes — no real file IO, git, `gh`, or Jira calls in unit tests. The `ttlCache` backing the PR/ticket caches takes an injectable `now func() time.Time` so TTL-expiry tests don't need real `time.Sleep`. No tmux integration harness applies here — this package never touches tmux, `ops.Context`, or the hook socket.
+
 ## View() testing
 
 Full render paths (`View()` / `Update()` end-to-end with the `bubbles/v2/list` component) are still not unit-tested — they require a list.Model populated from a slice of `list.Item`, which is expensive to set up. For those, keep extracting pure helpers (see `applyNotifOverrides` for the pattern) and test the helper rather than the whole Update branch. `internal/tui/helpers_test.go` + `internal/tui/sidebar/helpers_test.go` cover the already-extracted pure functions (status ranking, window-name parsing, file-tree rendering, etc.).

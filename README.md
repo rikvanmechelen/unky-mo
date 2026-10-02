@@ -406,6 +406,17 @@ Multiple `[[tickets.jira]]` blocks are supported for people with more than one A
 - Nothing is written to disk during `mo jira setup` until the credentials verify against Jira.
 - `mo jira fetch` uses the same code path as the background TUI fetch — no credentials ever leave the process.
 
+## Web Dashboard
+
+```bash
+mo web                  # serve on http://127.0.0.1:7890
+mo web --addr :8080     # custom address
+```
+
+A read-only dashboard — sessions, usage, projects, worktrees/branches, pull requests, and Jira tickets — viewable in a browser. It's a separate process from the TUI: it doesn't need to run inside tmux, and it reads the same shared state file the sidebars use rather than talking to tmux directly, so it's safe to leave running alongside (or instead of) the TUI.
+
+This is a v1: plain polling (every 2s for session status, less often for projects/PRs/tickets), no authentication (binds to `127.0.0.1` only), and a bare-bones frontend with no visual design pass yet. No actions (launch/park/cleanup/etc.) are available from the browser — view-only for now.
+
 ## CLI Commands
 
 ```bash
@@ -441,6 +452,7 @@ mo jira fetch                   # Run one Jira fetch and print result (diagnosti
 mo jira issue <KEY>             # Print one issue's metadata + description (diagnostic)
 mo jira show-token              # Print current Jira API token
 mo debug <project>              # Dump session/worktree debug info
+mo web [--addr host:port]       # Serve the read-only web dashboard
 mo version                      # Print version
 ```
 
@@ -717,6 +729,7 @@ unky-mo/
 │   ├── state/              # Shared JSON state file (TUI ↔ sidebars)
 │   ├── sync/               # Encrypted session sync via private git repo
 │   ├── project/            # Project model, scanner, worktree support, git status
+│   ├── web/                # Read-only web dashboard (mo web) — HTTP handlers + embedded static frontend
 │   └── tui/
 │       ├── app.go          # Main TUI model, views, key handling
 │       ├── delegate.go     # Project list item renderer (with git status)
