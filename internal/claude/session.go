@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,9 +11,16 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	moexec "github.com/rvanmech/unky-mo/internal/exec"
 )
 
-// Session represents a running Claude Code session from ~/.claude/sessions/{PID}.json
+// sessionsCommander is the exec seam ReadSessions/LiveSessions shell out
+// through. Overridden in tests with a gomock Commander.
+var sessionsCommander moexec.Commander = moexec.DefaultCommander
+
+// Session represents a running or recently-finished Claude Code session, as
+// reported by `claude agents --json`.
 type Session struct {
 	PID        int    `json:"pid"`
 	SessionID  string `json:"sessionId"`
@@ -49,37 +57,30 @@ func (s SessionStatus) String() string {
 	}
 }
 
-// SessionsDir returns the path to Claude's sessions directory.
-func SessionsDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "sessions")
+// ReadSessions returns every session `claude agents --json --all` reports:
+// live sessions plus recently-finished background ones. Callers that only
+// want currently-running sessions should use LiveSessions.
+func ReadSessions() ([]Session, error) {
+	return sessionsViaCLI(true)
 }
 
-// ReadSessions reads all session files from the sessions directory.
-func ReadSessions() ([]Session, error) {
-	dir := SessionsDir()
-	entries, err := os.ReadDir(dir)
+// sessionsViaCLI shells out to `claude agents --json` (the CLI's own
+// session-discovery command) and maps its output onto Session.
+func sessionsViaCLI(all bool) ([]Session, error) {
+	agents, err := LiveAgents(context.Background(), sessionsCommander, all)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-
-	var sessions []Session
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var s Session
-		if err := json.Unmarshal(data, &s); err != nil {
-			continue
-		}
-		sessions = append(sessions, s)
+	sessions := make([]Session, 0, len(agents))
+	for _, a := range agents {
+		sessions = append(sessions, Session{
+			PID:       a.PID,
+			SessionID: a.SessionID,
+			CWD:       a.CWD,
+			StartedAt: a.StartedAt,
+			Kind:      a.Kind,
+			Name:      a.Name,
+		})
 	}
 	return sessions, nil
 }
@@ -124,14 +125,16 @@ func IsDescendantOf(pid int, hostPIDs map[int]bool) bool {
 	return false
 }
 
-// LiveSessions returns only sessions whose PID is still alive.
+// LiveSessions returns only currently-running sessions. `claude agents
+// --json` already filters to live PIDs; the IsAlive check here is a cheap
+// defensive re-check against the gap between that snapshot and our use of it.
 func LiveSessions() ([]Session, error) {
-	all, err := ReadSessions()
+	sessions, err := sessionsViaCLI(false)
 	if err != nil {
 		return nil, err
 	}
 	var live []Session
-	for _, s := range all {
+	for _, s := range sessions {
 		if IsAlive(s.PID) {
 			live = append(live, s)
 		}

@@ -41,6 +41,20 @@ func fakeClaudePath(t *testing.T) string {
 	return ""
 }
 
+// putFakeClaudeOnPath symlinks fake-claude.sh to a temp dir as literally
+// "claude" and prepends that dir to $PATH, so claude.LiveSessions() (which
+// shells out to the bare command "claude agents --json") resolves to the
+// fake instead of the real CLI. The pane-launched "live session" side of
+// these tests execs fake-claude.sh by absolute path and is unaffected.
+func putFakeClaudeOnPath(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.Symlink(fakeClaudePath(t), filepath.Join(bin, "claude")); err != nil {
+		t.Fatalf("symlinking fake claude onto PATH: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func newIsolatedTmux(t *testing.T) *tmux.Client {
 	t.Helper()
 	// Force SHELL=/bin/sh so the tmux server — and every pane's default
@@ -97,6 +111,7 @@ func TestClaudeSessionDetectionViaTmuxPane(t *testing.T) {
 	// Isolate HOME so fake-claude's session files don't pollute the user's dir.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	putFakeClaudeOnPath(t)
 	// Working directory that will be reported by fake-claude as the session's cwd.
 	projectDir := filepath.Join(home, "workspace", "myproj")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -178,6 +193,7 @@ func TestClaudeSessionDetectionViaTmuxPane(t *testing.T) {
 func TestClaudeSessionIdleDetectionOnSpawnedSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	putFakeClaudeOnPath(t)
 	projectDir := filepath.Join(home, "workspace", "idletest")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		t.Fatal(err)

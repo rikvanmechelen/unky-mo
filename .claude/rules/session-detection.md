@@ -8,7 +8,7 @@ paths:
 
 ## Claude session data
 
-- **Live sessions**: `~/.claude/sessions/{PID}.json` — PID, SessionID, CWD, name
+- **Live sessions**: discovered via `claude agents --json` (shelled out from `internal/claude/agents.go:LiveAgents`, mockable through the `sessionsCommander` seam) — PID, SessionID, CWD, name, Kind, a live Status ("busy"/"idle"). `ReadSessions()` passes `--all` (adds finished background sessions); `LiveSessions()` omits it and defensively re-checks `IsAlive` on each PID. This replaced directly reading `~/.claude/sessions/{PID}.json` (the file the CLI itself still writes per-PID, and what the fake-claude.sh test binary emulates, dual-moded to also answer `agents --json` for integration tests).
 - **Session history**: `~/.claude/projects/{encoded-path}/{SessionID}.jsonl` — full conversation
 - **Path encoding**: Claude replaces `/`, `_`, and `.` with `-` in directory names
   - e.g. `/Users/rvanmech/workspace/mla_wrapper_app` → `-Users-rvanmech-workspace-mla-wrapper-app`

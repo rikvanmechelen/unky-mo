@@ -2,6 +2,11 @@
 # fake-claude.sh — stand-in for the real `claude` binary used by integration
 # tests. Writes the session marker + JSONL then blocks on stdin until killed.
 #
+# Also answers `claude agents --json [--all]` (the real CLI's own
+# session-discovery command) by scanning the same sessions dir this script
+# writes to when acting as a live session — so it can sit on $PATH as
+# literally "claude" and serve both roles.
+#
 # Required env:
 #   FAKE_CLAUDE_HOME — overrides HOME for session file placement
 # Optional env:
@@ -13,6 +18,34 @@
 set -u
 
 home="${FAKE_CLAUDE_HOME:-$HOME}"
+
+# Discovery mode: `claude agents --json [--all]`. Dead sessions are
+# distinguished only in behavior that matters to callers today — this fake
+# doesn't model "finished background" sessions, so --all is a no-op here.
+if [ "${1:-}" = "agents" ]; then
+    sessions_dir="${home}/.claude/sessions"
+    entries=""
+    if [ -d "$sessions_dir" ]; then
+        for f in "$sessions_dir"/*.json; do
+            [ -e "$f" ] || continue
+            candidate_pid=$(basename "$f" .json)
+            kill -0 "$candidate_pid" 2>/dev/null || continue
+            cwd=$(sed -n 's/.*"cwd":"\([^"]*\)".*/\1/p' "$f")
+            session_id=$(sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p' "$f")
+            started=$(sed -n 's/.*"startedAt":\([0-9]*\).*/\1/p' "$f")
+            entry=$(printf '{"pid":%s,"cwd":"%s","kind":"interactive","startedAt":%s,"sessionId":"%s","name":"","status":"idle"}' \
+                "$candidate_pid" "$cwd" "$started" "$session_id")
+            if [ -z "$entries" ]; then
+                entries="$entry"
+            else
+                entries="$entries,$entry"
+            fi
+        done
+    fi
+    printf '[%s]\n' "$entries"
+    exit 0
+fi
+
 pid=$$
 session_id="fake-${pid}-$(date +%s)"
 cwd="${FAKE_CLAUDE_CWD:-$PWD}"

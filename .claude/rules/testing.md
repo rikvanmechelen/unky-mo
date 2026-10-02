@@ -12,6 +12,8 @@ Interfaces carry `//go:generate mockgen ...` directives. Generated mocks live un
 
 `//go:build integration` tests spin up an isolated tmux server via `tmux -L <unique-socket>` and a fake `claude` binary (`internal/tmux/testdata/fake-claude.sh`) to exercise real session detection, PPID-chain attribution, and JSONL idle reads end-to-end. Tests live in `internal/integration/` and `internal/tmux/client_integration_test.go`. They set `SHELL=/bin/sh` on the tmux server to bypass the user's interactive-shell first-run wizards (zsh-newuser, fish config).
 
+`fake-claude.sh` is dual-mode: launched with no args (as today's "live session" pane process) it writes the PID/JSONL files and blocks on stdin as before; invoked as `claude agents --json [--all]` it instead scans that same sessions dir and emits matching discovery JSON, since `claude.LiveSessions`/`ReadSessions` (`internal/claude/session.go`) now shell out to the real CLI's `agents --json` rather than reading the PID files directly. For that to intercept the real `claude` binary, integration tests call `putFakeClaudeOnPath(t)` (`internal/integration/claude_tmux_integration_test.go`) to symlink the script onto a temp dir as literally `claude` and prepend it to `$PATH` before any `claude.LiveSessions()` call.
+
 ## Expected-to-fail tests
 
 Guarded by `//go:build expectfail` — encode CLAUDE.md claims that may have drifted from the code. Run with `make test-expectfail` (non-blocking in CI). A failure here means either the code or the docs need to change — do not silence these without making that decision explicit. Current drift: `config.Load()`'s missing-file branch skips `StateFilePath` and `Tickets.*` defaults (see `internal/config/config_expectfail_test.go`).
