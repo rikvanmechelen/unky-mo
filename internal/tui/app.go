@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ const (
 	StatusActive                   // Claude is processing
 	StatusIdle                     // Waiting for user input
 	StatusPermission               // Needs permission approval
+	StatusQuestion                 // Blocked on an interactive tool (e.g. AskUserQuestion)
 	StatusExternal                 // Live claude running outside mo's tmux — not joinable, offer to import
 )
 
@@ -2405,12 +2407,17 @@ type sessionView struct {
 	Dirty       int           // git-backed strays only
 	IsStray     bool
 	IsWorktree  bool
-	External    bool          // PID not descendant of mo tmux panes (StatusExternal)
+	External    bool // PID not descendant of mo tmux panes (StatusExternal)
+
+	// Set iff Status == StatusQuestion — Claude is blocked on an interactive
+	// tool (e.g. AskUserQuestion) and needs a human answer to proceed.
+	PendingQuestionTool  string
+	PendingQuestionInput json.RawMessage
 
 	// Team fields — populated when session is part of a Claude Code agent team.
-	TeamName  string          // team name from ~/.claude/teams/{name}/config.json
-	TeamRole  string          // "lead" or "teammate"
-	Teammates []teammateView  // populated for leads only
+	TeamName  string         // team name from ~/.claude/teams/{name}/config.json
+	TeamRole  string         // "lead" or "teammate"
+	Teammates []teammateView // populated for leads only
 }
 
 // teammateView describes a teammate pane within a team lead's window.
@@ -2498,6 +2505,9 @@ func (m Model) refreshSessions() tea.Cmd {
 				CWD:       s.CWD,
 				Status:    st,
 				External:  isExternal,
+			}
+			if mgr != nil && st == StatusQuestion {
+				v.PendingQuestionTool, v.PendingQuestionInput, _ = mgr.PendingQuestion(s.SessionID)
 			}
 
 			switch {
@@ -3102,17 +3112,19 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 		name = rowBaseName + " [" + suffix + "]"
 	}
 	ps := state.ProjectState{
-		Name:       name,
-		Path:       v.CWD,
-		WindowName: v.WindowName,
-		WindowID:   v.WindowID,
-		InstanceID: v.InstanceID,
-		AgentKey:   v.AgentKey,
-		Status:     statusToString(v.Status),
-		Section:    v.Section,
-		SessionID:  v.SessionID,
-		Index:      v.Index,
-		Parent:     parent,
+		Name:                 name,
+		Path:                 v.CWD,
+		WindowName:           v.WindowName,
+		WindowID:             v.WindowID,
+		InstanceID:           v.InstanceID,
+		AgentKey:             v.AgentKey,
+		Status:               statusToString(v.Status),
+		Section:              v.Section,
+		SessionID:            v.SessionID,
+		Index:                v.Index,
+		Parent:               parent,
+		PendingQuestionTool:  v.PendingQuestionTool,
+		PendingQuestionInput: v.PendingQuestionInput,
 	}
 	if v.IsStray {
 		ps.Branch = v.Branch
@@ -3166,6 +3178,8 @@ func statusToString(s SessionStatus) string {
 		return "idle"
 	case StatusPermission:
 		return "permission"
+	case StatusQuestion:
+		return "question"
 	case StatusExternal:
 		return "external"
 	default:
@@ -3742,6 +3756,8 @@ func mgrStatusToTUI(s status.SessionStatus) SessionStatus {
 		return StatusIdle
 	case status.StatusPermission:
 		return StatusPermission
+	case status.StatusQuestion:
+		return StatusQuestion
 	case status.StatusExternal:
 		return StatusExternal
 	default:

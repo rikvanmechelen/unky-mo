@@ -1,6 +1,7 @@
 package status
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 )
@@ -13,6 +14,7 @@ const (
 	StatusActive                   // Claude is processing (generating, running tools)
 	StatusIdle                     // Waiting for user input
 	StatusPermission               // Needs permission approval
+	StatusQuestion                 // Blocked on an interactive tool (e.g. AskUserQuestion)
 	StatusExternal                 // Live Claude running outside mo's tmux
 )
 
@@ -24,6 +26,8 @@ func (s SessionStatus) String() string {
 		return "idle"
 	case StatusPermission:
 		return "permission"
+	case StatusQuestion:
+		return "question"
 	case StatusExternal:
 		return "external"
 	default:
@@ -35,14 +39,14 @@ func (s SessionStatus) String() string {
 type HookEventType string
 
 const (
-	EventUserPromptSubmit   HookEventType = "UserPromptSubmit"
-	EventStop               HookEventType = "Stop"
-	EventPreToolUse         HookEventType = "PreToolUse"
-	EventPermissionRequest  HookEventType = "PermissionRequest"
-	EventSessionStart       HookEventType = "SessionStart"
-	EventSessionEnd         HookEventType = "SessionEnd"
-	EventNotificationIdle   HookEventType = "NotificationIdle"
-	EventNotificationPerm   HookEventType = "NotificationPermission"
+	EventUserPromptSubmit  HookEventType = "UserPromptSubmit"
+	EventStop              HookEventType = "Stop"
+	EventPreToolUse        HookEventType = "PreToolUse"
+	EventPermissionRequest HookEventType = "PermissionRequest"
+	EventSessionStart      HookEventType = "SessionStart"
+	EventSessionEnd        HookEventType = "SessionEnd"
+	EventNotificationIdle  HookEventType = "NotificationIdle"
+	EventNotificationPerm  HookEventType = "NotificationPermission"
 )
 
 // HookEvent represents a parsed hook event from Claude Code.
@@ -50,7 +54,8 @@ type HookEvent struct {
 	Type        HookEventType
 	SessionID   string
 	ProjectPath string
-	ToolName    string // populated for PreToolUse
+	ToolName    string          // populated for PreToolUse
+	ToolInput   json.RawMessage // populated for PreToolUse
 }
 
 // StatusChange is emitted when a session's status transitions.
@@ -62,8 +67,18 @@ type StatusChange struct {
 
 // sessionState tracks the current status of a single session.
 type sessionState struct {
-	Status     SessionStatus
-	LastHookAt time.Time
+	Status       SessionStatus
+	LastHookAt   time.Time
+	PendingTool  string          // tool name Claude is blocked on, set iff Status == StatusQuestion
+	PendingInput json.RawMessage // that tool's raw input, set iff Status == StatusQuestion
+}
+
+// isInteractiveTool reports whether a tool is known to block waiting on a
+// human choice rather than running to completion on its own. Only
+// AskUserQuestion today; easy to extend if others turn out to behave the
+// same way.
+func isInteractiveTool(name string) bool {
+	return name == "AskUserQuestion"
 }
 
 // Manager is the central source of truth for all session statuses.
@@ -96,6 +111,17 @@ func (m *Manager) Status(sessionID string) SessionStatus {
 	return StatusNone
 }
 
+// PendingQuestion returns the tool name + raw tool input Claude is currently
+// blocked on for sessionID, if its status is StatusQuestion.
+func (m *Manager) PendingQuestion(sessionID string) (tool string, input json.RawMessage, ok bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, found := m.sessions[sessionID]; found && s.Status == StatusQuestion {
+		return s.PendingTool, s.PendingInput, true
+	}
+	return "", nil, false
+}
+
 // AllStatuses returns a snapshot of all tracked session statuses.
 func (m *Manager) AllStatuses() map[string]SessionStatus {
 	m.mu.RLock()
@@ -123,10 +149,20 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 	defer m.mu.Unlock()
 
 	var newStatus SessionStatus
+	var pendingTool string
+	var pendingInput json.RawMessage
 	remove := false
 
 	switch evt.Type {
-	case EventUserPromptSubmit, EventPreToolUse, EventSessionStart:
+	case EventPreToolUse:
+		if isInteractiveTool(evt.ToolName) {
+			newStatus = StatusQuestion
+			pendingTool = evt.ToolName
+			pendingInput = evt.ToolInput
+		} else {
+			newStatus = StatusActive
+		}
+	case EventUserPromptSubmit, EventSessionStart:
 		newStatus = StatusActive
 	case EventStop, EventNotificationIdle:
 		newStatus = StatusIdle
@@ -153,8 +189,15 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 		m.sessions[evt.SessionID] = s
 	}
 	old := s.Status
+	// Always refresh the pending question, even when the status itself
+	// isn't transitioning (e.g. two AskUserQuestion calls back-to-back both
+	// land on StatusQuestion — the second one's content must still replace
+	// the first's, even though there's no status change to emit for it).
+	s.PendingTool = pendingTool
+	s.PendingInput = pendingInput
 	if old == newStatus {
-		// No transition — don't emit.
+		// No status transition — don't emit, but the pending-question
+		// refresh above still applies.
 		s.LastHookAt = time.Now()
 		return
 	}

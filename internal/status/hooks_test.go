@@ -31,12 +31,31 @@ func TestParseHookPayload_Stop(t *testing.T) {
 }
 
 func TestParseHookPayload_PreToolUse(t *testing.T) {
-	data := []byte(`{"hook_event_name":"PreToolUse","session_id":"s1","project_path":"/ws","tool_name":"Bash"}`)
+	// Real wire shape: status-hook.sh forwards Claude's entire PreToolUse
+	// stdin JSON wholesale into hook_input — tool_name is never promoted to
+	// the top level.
+	data := []byte(`{"hook_event_name":"PreToolUse","session_id":"s1","project_path":"/ws","hook_input":{"tool_name":"Bash","tool_input":{"command":"ls"}}}`)
 	evt, err := ParseHookPayload(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if evt.Type != EventPreToolUse || evt.ToolName != "Bash" {
+		t.Errorf("got %+v", evt)
+	}
+	if string(evt.ToolInput) != `{"command":"ls"}` {
+		t.Errorf("ToolInput: got %s", evt.ToolInput)
+	}
+}
+
+func TestParseHookPayload_PreToolUse_MissingHookInput(t *testing.T) {
+	// No hook_input at all — should still parse as PreToolUse, just with an
+	// empty tool name/input, not error out.
+	data := []byte(`{"hook_event_name":"PreToolUse","session_id":"s1","project_path":"/ws"}`)
+	evt, err := ParseHookPayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evt.Type != EventPreToolUse || evt.ToolName != "" {
 		t.Errorf("got %+v", evt)
 	}
 }

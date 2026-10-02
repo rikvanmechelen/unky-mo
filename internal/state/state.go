@@ -14,21 +14,26 @@ type ProjectState struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	WindowName string `json:"window_name"`
-	WindowID   string `json:"window_id,omitempty"` // stable tmux window id (e.g. "@5"); survives renames
-	Status     string `json:"status"`               // "none", "active", "idle", "permission", "external"
-	Parent     string `json:"parent,omitempty"`     // non-empty for worktree entries
-	Section    string `json:"section,omitempty"`    // "projects" (default) or "external" — for stray-session grouping
-	Branch     string `json:"branch,omitempty"`     // git branch (populated for git-backed strays)
-	Dirty      int    `json:"dirty,omitempty"`      // dirty file count (populated for git-backed strays)
+	WindowID   string `json:"window_id,omitempty"`   // stable tmux window id (e.g. "@5"); survives renames
+	Status     string `json:"status"`                // "none", "active", "idle", "permission", "question", "external"
+	Parent     string `json:"parent,omitempty"`      // non-empty for worktree entries
+	Section    string `json:"section,omitempty"`     // "projects" (default) or "external" — for stray-session grouping
+	Branch     string `json:"branch,omitempty"`      // git branch (populated for git-backed strays)
+	Dirty      int    `json:"dirty,omitempty"`       // dirty file count (populated for git-backed strays)
 	SessionID  string `json:"session_id,omitempty"`  // Claude session ID running in this window (empty if none)
 	InstanceID string `json:"instance_id,omitempty"` // mo-generated instance ID (from @mo_instance_id window option)
 	AgentKey   string `json:"agent_key,omitempty"`   // coding agent mnemonic (from @mo_agent window option); empty = default
 	Index      int    `json:"index,omitempty"`       // 0 = primary, 2+ = sibling ordinal; for stable sort
 
+	// Set iff Status == "question" — Claude is blocked on an interactive
+	// tool (e.g. AskUserQuestion) and needs a human answer to proceed.
+	PendingQuestionTool  string          `json:"pending_question_tool,omitempty"`
+	PendingQuestionInput json.RawMessage `json:"pending_question_input,omitempty"`
+
 	// Team fields — populated when session is part of a Claude Code agent team.
-	TeamName  string          `json:"team_name,omitempty"`  // team name from ~/.claude/teams/{name}/config.json
-	TeamRole  string          `json:"team_role,omitempty"`  // "lead" or "teammate"
-	Teammates []TeammateState `json:"teammates,omitempty"`  // only populated on the lead's row
+	TeamName  string          `json:"team_name,omitempty"` // team name from ~/.claude/teams/{name}/config.json
+	TeamRole  string          `json:"team_role,omitempty"` // "lead" or "teammate"
+	Teammates []TeammateState `json:"teammates,omitempty"` // only populated on the lead's row
 }
 
 // TeammateState represents a teammate pane within a team lead's window.

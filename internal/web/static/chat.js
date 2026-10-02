@@ -43,6 +43,36 @@ function toolSummaryDetail(block, cwd) {
   return null;
 }
 
+// renderQuestionBanner builds the pending-question banner's content for a
+// given tool name + input (already a parsed JS value — /api/state's JSON
+// response embeds it verbatim, same as Go's json.RawMessage does on the wire
+// — not a string to re-parse). The AskUserQuestion shape
+// ({questions:[{question,header,options:[{label,description}]}]}) is
+// rendered readably; anything else (a future interactive tool, or a shape
+// that doesn't match) falls back to pretty-printed JSON so something is
+// still visible instead of nothing.
+function renderQuestionBanner(tool, input) {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(el("div", { class: "q-tool", text: tool }));
+
+  if (input && Array.isArray(input.questions)) {
+    for (const q of input.questions) {
+      if (q.header) frag.appendChild(el("div", { class: "q-tool", text: q.header }));
+      frag.appendChild(el("div", { class: "q-text", text: q.question || "" }));
+      if (Array.isArray(q.options)) {
+        const list = el("ol", { class: "q-options" }, q.options.map((o, i) =>
+          el("li", { text: o.label + (o.description ? " — " + o.description : "") })
+        ));
+        frag.appendChild(list);
+      }
+    }
+    return frag;
+  }
+
+  frag.appendChild(el("pre", { text: JSON.stringify(input, null, 2) }));
+  return frag;
+}
+
 // renderDiff turns an Edit tool's structuredPatch (array of unified-diff
 // hunks, each with a "lines" array of already-prefixed +/-/space strings)
 // into colored <pre> content — no diffing algorithm needed, the hunks are
@@ -69,6 +99,7 @@ function main() {
   const promptInput = document.getElementById("prompt-input");
   const sendBtn = document.getElementById("send-btn");
   const sendError = document.getElementById("send-error");
+  const questionBanner = document.getElementById("question-banner");
 
   if (!windowID) {
     transcript.textContent = "no ?window=@N given";
@@ -173,13 +204,29 @@ function main() {
   async function pollStatus() {
     try {
       const res = await fetch("/api/state");
-      const state = await res.json();
-      const p = (state.projects || []).find((p) => p.window_id === windowID);
+      const data = await res.json();
+      const p = (data.projects || []).find((p) => p.window_id === windowID);
       const status = p ? p.status : "none";
       statusBadge.textContent = status;
-      const idle = status === "idle";
-      sendBtn.disabled = !idle;
-      sendBtn.textContent = idle ? "Send" : "Claude is working…";
+
+      // A pending interactive question (e.g. AskUserQuestion) isn't in the
+      // transcript at all — Claude hasn't written it to the JSONL yet (it's
+      // blocked waiting on exactly this answer) — so it rides this same
+      // /api/state poll that already drives the status badge, not the SSE
+      // transcript stream.
+      if (status === "question" && p.pending_question_tool) {
+        questionBanner.replaceChildren(renderQuestionBanner(p.pending_question_tool, p.pending_question_input));
+        questionBanner.style.display = "block";
+      } else {
+        questionBanner.style.display = "none";
+      }
+
+      const canSend = status === "idle" || status === "question";
+      sendBtn.disabled = !canSend;
+      sendBtn.textContent = canSend ? "Send" : "Claude is working…";
+      promptInput.placeholder = status === "question"
+        ? "Type a number or your answer…"
+        : "Message Claude…";
     } catch (err) {
       // transient — leave the last known status showing
     }

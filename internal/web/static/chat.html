@@ -23,11 +23,20 @@
   #composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #ddd; }
   #prompt-input { flex: 1; font: inherit; padding: 0.4rem; }
   #send-error { color: #c0392b; font: 12px monospace; padding: 0 0.75rem; }
+  #question-banner {
+    display: none; margin: 0 1rem 0.75rem; padding: 0.6rem 0.8rem;
+    background: #fff8e1; border: 1px solid #f0c674; border-radius: 0.5rem;
+  }
+  #question-banner .q-tool { font: 12px monospace; color: #8a6d00; margin-bottom: 0.3rem; }
+  #question-banner .q-text { font-weight: 600; margin-bottom: 0.3rem; }
+  #question-banner .q-options { margin: 0; padding-left: 1.2rem; }
+  #question-banner pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
 </style>
 </head>
 <body>
 <div id="status-badge"></div>
 <div id="transcript"></div>
+<div id="question-banner"></div>
 <div id="send-error"></div>
 <form id="composer">
   <input id="prompt-input" type="text" placeholder="Message Claude…" autocomplete="off">

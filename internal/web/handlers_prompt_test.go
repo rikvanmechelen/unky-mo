@@ -69,6 +69,42 @@ func TestHandlePrompt409WhenNotIdle(t *testing.T) {
 	}
 }
 
+func TestHandlePrompt200WhenStatusIsQuestion(t *testing.T) {
+	// A pending AskUserQuestion is exactly the case answering unblocks —
+	// must be accepted like idle, not rejected like a genuine permission
+	// prompt.
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	mockState.EXPECT().Read().Return(&state.StateFile{
+		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: "question"}},
+	}, nil)
+	mockPrompts := mock_web.NewMockPromptSender(ctrl)
+	mockPrompts.EXPECT().SendLiteralText("test:@1.0", "1").Return(nil)
+
+	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	rec := postPrompt(t, srv, "@1", `{"text":"1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlePrompt409WhenStatusIsPermission(t *testing.T) {
+	// A genuine permission dialog stays rejected — we don't yet capture
+	// enough from Claude Code's PermissionRequest hook to safely show/answer
+	// it from the web UI (see handlePrompt's doc comment).
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	mockState.EXPECT().Read().Return(&state.StateFile{
+		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: "permission"}},
+	}, nil)
+
+	srv := NewServer(Deps{State: mockState}, 0, "test")
+	rec := postPrompt(t, srv, "@1", `{"text":"1"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: want 409, got %d", rec.Code)
+	}
+}
+
 func TestHandlePrompt200CallsSendLiteralTextWithResolvedTarget(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockState := mock_web.NewMockStateReader(ctrl)

@@ -8,10 +8,13 @@ import (
 )
 
 // handlePrompt injects a prompt into a live session's tmux pane, gated on
-// the session currently being idle (so we never type into a pane that's
-// mid-turn or showing a permission dialog). The actual response is not in
-// this response body — it streams back over the session's already-open
-// /api/transcript/{windowID} SSE connection.
+// the session currently being idle or blocked on an interactive question
+// (status "question" — e.g. AskUserQuestion) — answering is exactly what's
+// needed to unblock those. A genuine "permission" status stays rejected: we
+// don't yet know the tool/input Claude Code's PermissionRequest hook carries,
+// so there's nothing to safely render or confirm the user is answering. The
+// actual response is not in this response body — it streams back over the
+// session's already-open /api/transcript/{windowID} SSE connection.
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 
@@ -37,7 +40,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
 		return
 	}
-	if status != "idle" {
+	if status != "idle" && status != "question" {
 		writeError(w, http.StatusConflict, fmt.Errorf("session is %s, not idle", status))
 		return
 	}

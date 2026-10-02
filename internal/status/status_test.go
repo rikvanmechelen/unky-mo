@@ -62,6 +62,66 @@ func TestHookEvent_PreToolUse_RecoverFromIdle(t *testing.T) {
 	}
 }
 
+func TestHookEvent_PreToolUse_AskUserQuestion_SetsQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
+	mgr.ProcessHookEvent(HookEvent{
+		Type: EventPreToolUse, SessionID: "s1",
+		ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[{"question":"Which?"}]}`),
+	})
+	if got := mgr.Status("s1"); got != StatusQuestion {
+		t.Errorf("after PreToolUse(AskUserQuestion): got %v, want StatusQuestion", got)
+	}
+	tool, input, ok := mgr.PendingQuestion("s1")
+	if !ok || tool != "AskUserQuestion" || string(input) != `{"questions":[{"question":"Which?"}]}` {
+		t.Errorf("PendingQuestion: got tool=%q input=%s ok=%v", tool, input, ok)
+	}
+}
+
+func TestHookEvent_PreToolUse_OrdinaryTool_NoPendingQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "Bash"})
+	if got := mgr.Status("s1"); got != StatusActive {
+		t.Errorf("after PreToolUse(Bash): got %v, want StatusActive", got)
+	}
+	if _, _, ok := mgr.PendingQuestion("s1"); ok {
+		t.Error("expected no pending question for an ordinary tool")
+	}
+}
+
+func TestHookEvent_PreToolUse_ConsecutiveQuestions_RefreshesContent(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{
+		Type: EventPreToolUse, SessionID: "s1",
+		ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[{"question":"First?"}]}`),
+	})
+	// A second AskUserQuestion while already in StatusQuestion: no status
+	// transition, but the pending content must still refresh.
+	mgr.ProcessHookEvent(HookEvent{
+		Type: EventPreToolUse, SessionID: "s1",
+		ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[{"question":"Second?"}]}`),
+	})
+	_, input, ok := mgr.PendingQuestion("s1")
+	if !ok || string(input) != `{"questions":[{"question":"Second?"}]}` {
+		t.Errorf("expected refreshed pending question, got %s (ok=%v)", input, ok)
+	}
+}
+
+func TestHookEvent_Stop_ClearsPendingQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{
+		Type: EventPreToolUse, SessionID: "s1",
+		ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[{"question":"Which?"}]}`),
+	})
+	mgr.ProcessHookEvent(HookEvent{Type: EventStop, SessionID: "s1"})
+	if got := mgr.Status("s1"); got != StatusIdle {
+		t.Fatalf("after Stop: got %v, want StatusIdle", got)
+	}
+	if _, _, ok := mgr.PendingQuestion("s1"); ok {
+		t.Error("expected pending question cleared after Stop")
+	}
+}
+
 func TestHookEvent_SessionStart_SetsActive(t *testing.T) {
 	mgr := NewManager()
 	mgr.ProcessHookEvent(HookEvent{Type: EventSessionStart, SessionID: "s1"})
@@ -240,6 +300,7 @@ func TestStatusString(t *testing.T) {
 		StatusActive:     "active",
 		StatusIdle:       "idle",
 		StatusPermission: "permission",
+		StatusQuestion:   "question",
 		StatusExternal:   "external",
 	}
 	for s, want := range cases {

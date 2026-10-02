@@ -13,7 +13,6 @@ type hookPayload struct {
 	SessionID     string          `json:"session_id"`
 	ProjectPath   string          `json:"project_path"`
 	CWD           string          `json:"cwd"`
-	ToolName      string          `json:"tool_name,omitempty"`
 	HookInput     json.RawMessage `json:"hook_input,omitempty"`
 
 	// Legacy format fields (from old notify-hook.sh / stop-hook.sh).
@@ -62,7 +61,21 @@ func parseUnifiedEvent(p hookPayload, evt HookEvent) (HookEvent, error) {
 		evt.Type = EventStop
 	case "PreToolUse":
 		evt.Type = EventPreToolUse
-		evt.ToolName = p.ToolName
+		// Claude's own PreToolUse stdin JSON carries tool_name/tool_input;
+		// status-hook.sh forwards that JSON wholesale into hook_input rather
+		// than promoting fields to the top level, so parse it from there
+		// (same pattern as the Notification case below) — a top-level
+		// "tool_name" is never actually sent.
+		if len(p.HookInput) > 0 {
+			var tp struct {
+				ToolName  string          `json:"tool_name"`
+				ToolInput json.RawMessage `json:"tool_input"`
+			}
+			if json.Unmarshal(p.HookInput, &tp) == nil {
+				evt.ToolName = tp.ToolName
+				evt.ToolInput = tp.ToolInput
+			}
+		}
 	case "PermissionRequest":
 		evt.Type = EventPermissionRequest
 	case "SessionStart":
