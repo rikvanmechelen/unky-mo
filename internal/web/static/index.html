@@ -2,36 +2,58 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Unky Mo</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<h1>Unky Mo</h1>
+<div class="page">
 
-<section id="usage"></section>
+  <header class="dash-header">
+    <div class="dash-header__brand">
+      <div class="dash-header__wordmark">Unky Mo</div>
+      <div class="dash-header__subtitle" id="subtitle">mo web</div>
+    </div>
+    <div class="dash-header__usage" id="usage"></div>
+  </header>
 
-<section>
-<h2>Sessions</h2>
-<table id="sessions">
-<thead><tr><th>Project</th><th>Window</th><th>Branch</th><th>Status</th><th>Chat</th></tr></thead>
-<tbody></tbody>
-</table>
-</section>
+  <section class="section">
+    <div class="section__heading">
+      <h2>Sessions</h2>
+      <span class="section__count" id="sessions-count"></span>
+    </div>
+    <div>
+      <div class="sessions-head">
+        <span>Status</span><span>Project</span><span>Window</span><span>Branch</span><span></span><span></span>
+      </div>
+      <div class="sessions-body" id="sessions-body"></div>
+    </div>
+  </section>
 
-<section>
-<h2>Projects</h2>
-<ul id="projects"></ul>
-<div id="project-detail"></div>
-</section>
+  <div class="content-grid">
+    <section class="section content-grid__projects">
+      <div class="section__heading">
+        <h2>Projects</h2>
+        <span class="section__count" id="projects-count"></span>
+      </div>
+      <div class="projects-list" id="projects-list"></div>
+    </section>
 
-<section>
-<h2>Tickets</h2>
-<table id="tickets">
-<thead><tr><th>ID</th><th>Title</th><th>Bucket</th><th>Priority</th></tr></thead>
-<tbody></tbody>
-</table>
-</section>
+    <section class="section content-grid__tickets">
+      <div class="section__heading">
+        <h2>Tickets</h2>
+        <span class="section__count" id="tickets-count"></span>
+      </div>
+      <div>
+        <div class="tickets-head">
+          <span>Ticket</span><span>Title</span><span>Bucket</span><span>Priority</span>
+        </div>
+        <div class="tickets-body" id="tickets-body"></div>
+      </div>
+    </section>
+  </div>
 
+</div>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -2,46 +2,39 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Unky Mo — Chat</title>
 <link rel="stylesheet" href="/style.css">
-<style>
-  body { display: flex; flex-direction: column; height: 100vh; margin: 0; }
-  #status-badge { font: 12px monospace; padding: 0.4rem 0.75rem; color: #666; }
-  #transcript { flex: 1; overflow-y: auto; padding: 1rem; }
-  .msg { margin-bottom: 0.75rem; max-width: 70ch; }
-  .msg.user { margin-left: auto; text-align: right; }
-  .msg .bubble { display: inline-block; padding: 0.5rem 0.75rem; border-radius: 0.5rem; white-space: pre-wrap; text-align: left; }
-  .msg.user .bubble { background: #2b3a4f; color: #eee; }
-  .msg.assistant .bubble { background: #f4f4f4; color: #222; }
-  .msg.meta .bubble { background: none; color: #888; font-style: italic; padding: 0.1rem 0; }
-  .tool-card { border: 1px solid #ccc; border-radius: 0.5rem; margin: 0.5rem 0; padding: 0.4rem 0.6rem; font-family: monospace; font-size: 0.85rem; max-width: 70ch; }
-  .tool-card.error { border-color: #c0392b; }
-  .tool-card summary { cursor: pointer; }
-  .tool-card pre { white-space: pre-wrap; word-break: break-word; }
-  .diff-add { color: #2e7d32; }
-  .diff-del { color: #c0392b; }
-  #composer { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid #ddd; }
-  #prompt-input { flex: 1; font: inherit; padding: 0.4rem; }
-  #send-error { color: #c0392b; font: 12px monospace; padding: 0 0.75rem; }
-  #question-banner {
-    display: none; margin: 0 1rem 0.75rem; padding: 0.6rem 0.8rem;
-    background: #fff8e1; border: 1px solid #f0c674; border-radius: 0.5rem;
-  }
-  #question-banner .q-tool { font: 12px monospace; color: #8a6d00; margin-bottom: 0.3rem; }
-  #question-banner .q-text { font-weight: 600; margin-bottom: 0.3rem; }
-  #question-banner .q-options { margin: 0; padding-left: 1.2rem; }
-  #question-banner pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
-</style>
 </head>
 <body>
-<div id="status-badge"></div>
-<div id="transcript"></div>
-<div id="question-banner"></div>
-<div id="send-error"></div>
-<form id="composer">
-  <input id="prompt-input" type="text" placeholder="Message Claude…" autocomplete="off">
-  <button id="send-btn" type="submit">Send</button>
-</form>
+<div class="chat-page">
+
+  <header class="chat-header">
+    <a class="chat-header__back plain" href="/">Dashboard</a>
+    <div class="chat-header__row">
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="chat-header__title" id="chat-title">—</div>
+        <div class="chat-header__meta" id="chat-meta"></div>
+      </div>
+      <span class="status-badge" id="status-badge"></span>
+    </div>
+  </header>
+
+  <div class="chat-transcript" id="transcript-scroll">
+    <div class="chat-transcript__inner" id="transcript"></div>
+  </div>
+
+  <footer class="chat-footer">
+    <div class="permission-banner" id="permission-banner" style="display:none;">A permission prompt is waiting in the terminal.</div>
+    <div class="question-banner" id="question-banner" style="display:none;"></div>
+    <form class="composer" id="composer">
+      <input class="composer__input" id="prompt-input" type="text" placeholder="Message this session" autocomplete="off">
+      <button class="composer__send" id="send-btn" type="submit">Send</button>
+    </form>
+    <div class="composer__error" id="send-error"></div>
+  </footer>
+
+</div>
 <script src="/chat.js"></script>
 </body>
 </html>

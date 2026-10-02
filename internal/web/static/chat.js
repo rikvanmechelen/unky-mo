@@ -3,6 +3,15 @@
 // original JSONL line (see internal/web/transcript.go) — this file owns all
 // interpretation of that schema; the backend stays schema-agnostic.
 
+const STATUS = {
+  active:     { label: "Working",          sq: "#00B140", ring: 0, bg: "#fff",    border: "#DDDDDD" },
+  idle:       { label: "Idle",             sq: "#fff",    ring: 2, bg: "#fff",    border: "#DDDDDD" },
+  permission: { label: "Needs permission", sq: "#000",    ring: 0, bg: "#FFCD00", border: "#FFCD00" },
+  question:   { label: "Needs input",      sq: "#000",    ring: 0, bg: "#FFCD00", border: "#FFCD00" },
+  external:   { label: "External session", sq: "#767676", ring: 0, bg: "#fff",    border: "#DDDDDD" },
+  none:       { label: "No session",       sq: "#ddd",    ring: 0, bg: "#fff",    border: "#DDDDDD" },
+};
+
 function windowIDFromURL() {
   return new URLSearchParams(location.search).get("window"); // e.g. "@5"
 }
@@ -16,6 +25,13 @@ function el(tag, attrs, children) {
   }
   for (const child of children || []) e.appendChild(child);
   return e;
+}
+
+function statusSquare(sq, ring) {
+  const span = el("span", { class: "status-sq" });
+  span.style.background = sq;
+  span.style.boxShadow = ring ? `inset 0 0 0 ${ring}px #000` : "none";
+  return span;
 }
 
 function isMetaContent(text) {
@@ -38,8 +54,8 @@ function relativize(absPath, base) {
 // instead, shown relative to the turn's project cwd.
 function toolSummaryDetail(block, cwd) {
   const input = block.input || {};
-  if (typeof input.description === "string") return input.description;
-  if (typeof input.file_path === "string") return relativize(input.file_path, cwd);
+  if (typeof input.description === "string") return { text: input.description, mono: false };
+  if (typeof input.file_path === "string") return { text: relativize(input.file_path, cwd), mono: true };
   return null;
 }
 
@@ -53,14 +69,14 @@ function toolSummaryDetail(block, cwd) {
 // still visible instead of nothing.
 function renderQuestionBanner(tool, input) {
   const frag = document.createDocumentFragment();
-  frag.appendChild(el("div", { class: "q-tool", text: tool }));
+  frag.appendChild(el("div", { class: "question-banner__tool", text: tool }));
 
   if (input && Array.isArray(input.questions)) {
     for (const q of input.questions) {
-      if (q.header) frag.appendChild(el("div", { class: "q-tool", text: q.header }));
-      frag.appendChild(el("div", { class: "q-text", text: q.question || "" }));
+      if (q.header) frag.appendChild(el("div", { class: "question-banner__tool", text: q.header }));
+      frag.appendChild(el("div", { class: "question-banner__question", text: q.question || "" }));
       if (Array.isArray(q.options)) {
-        const list = el("ol", { class: "q-options" }, q.options.map((o, i) =>
+        const list = el("ol", { class: "question-banner__options" }, q.options.map((o, i) =>
           el("li", { text: o.label + (o.description ? " — " + o.description : "") })
         ));
         frag.appendChild(list);
@@ -75,30 +91,41 @@ function renderQuestionBanner(tool, input) {
 
 // renderDiff turns an Edit tool's structuredPatch (array of unified-diff
 // hunks, each with a "lines" array of already-prefixed +/-/space strings)
-// into colored <pre> content — no diffing algorithm needed, the hunks are
+// into colored diff rows — no diffing algorithm needed, the hunks are
 // already computed.
 function renderDiff(structuredPatch) {
-  const pre = document.createElement("pre");
+  const wrap = el("div", { class: "tool-card__diff" });
+  let ln = null;
   for (const hunk of structuredPatch || []) {
+    ln = hunk.newStart;
     for (const line of hunk.lines || []) {
-      const span = document.createElement("span");
-      if (line.startsWith("+")) span.className = "diff-add";
-      else if (line.startsWith("-")) span.className = "diff-del";
-      span.textContent = line + "\n";
-      pre.appendChild(span);
+      const sign = line[0];
+      const text = line.slice(1);
+      const cls = sign === "+" ? "is-add" : sign === "-" ? "is-del" : "";
+      const row = el("div", { class: "diff-line" + (cls ? " " + cls : "") }, [
+        el("span", { class: "diff-line__ln", text: sign === "-" ? "" : String(ln) }),
+        el("span", { class: "diff-line__sign", text: sign === " " ? "" : sign }),
+        el("span", { class: "diff-line__text", text }),
+      ]);
+      wrap.appendChild(row);
+      if (sign !== "-") ln++;
     }
   }
-  return pre;
+  return wrap;
 }
 
 function main() {
   const windowID = windowIDFromURL();
   const transcript = document.getElementById("transcript");
+  const transcriptScroll = document.getElementById("transcript-scroll");
+  const chatTitle = document.getElementById("chat-title");
+  const chatMeta = document.getElementById("chat-meta");
   const statusBadge = document.getElementById("status-badge");
   const composer = document.getElementById("composer");
   const promptInput = document.getElementById("prompt-input");
   const sendBtn = document.getElementById("send-btn");
   const sendError = document.getElementById("send-error");
+  const permissionBanner = document.getElementById("permission-banner");
   const questionBanner = document.getElementById("question-banner");
 
   if (!windowID) {
@@ -107,35 +134,77 @@ function main() {
   }
 
   const seen = new Set(); // dedup by uuid — EventSource reconnects replay the full backlog
-  const toolCards = new Map(); // tool_use_id -> card element, persists across messages
+  const toolCards = new Map(); // tool_use_id -> {card, body} — persists across messages
+  let busyRow = null;
 
-  function appendBubble(cls, text) {
-    const bubble = el("div", { class: "bubble" }, []);
-    bubble.textContent = text;
-    transcript.appendChild(el("div", { class: "msg " + cls }, [bubble]));
-    transcript.scrollTop = transcript.scrollHeight;
+  // Auto-scroll only follows new content if the viewport was already pinned
+  // to the bottom — if you've scrolled up to read something, new messages
+  // (or a tool card expanding) must never yank you back down.
+  function isPinned() {
+    return transcriptScroll.scrollHeight - transcriptScroll.scrollTop - transcriptScroll.clientHeight < 40;
+  }
+  function scrollToBottom() {
+    requestAnimationFrame(() => { transcriptScroll.scrollTop = transcriptScroll.scrollHeight; });
+  }
+  function withPin(fn) {
+    const pinned = isPinned();
+    fn();
+    if (pinned) scrollToBottom();
+  }
+
+  function appendBubble(kind, text) {
+    if (kind === "meta") {
+      transcript.appendChild(el("div", { class: "msg-system" }, [
+        el("span", { class: "msg-system__text", text }),
+        el("span", { class: "msg-system__rule" }),
+      ]));
+      return;
+    }
+    const cls = kind === "user" ? "msg-user" : "msg-assistant";
+    const bubbleCls = kind === "user" ? "msg-user__bubble" : "msg-assistant__bubble";
+    transcript.appendChild(el("div", { class: cls }, [el("div", { class: bubbleCls, text })]));
   }
 
   function appendToolUse(block, cwd) {
     const detail = toolSummaryDetail(block, cwd);
-    const summary = el("summary", { text: detail ? `${block.name} — ${detail}` : block.name });
-    const input = el("pre", { text: JSON.stringify(block.input, null, 2) });
-    const card = el("details", { class: "tool-card" }, [summary, input]);
-    toolCards.set(block.id, card);
+    const body = el("div", { class: "tool-card__body" });
+    body.style.display = "none";
+    const action = el("span", { class: "tool-card__action", text: "Show" });
+
+    const card = el("div", { class: "tool-card" }, [
+      el("button", { class: "tool-card__toggle" }, [
+        el("span", { class: "tool-card__name", text: block.name }),
+        el("span", { class: "tool-card__detail" + (detail && detail.mono ? " is-mono" : ""), text: detail ? detail.text : "" }),
+        action,
+      ]),
+      body,
+    ]);
+    card.querySelector(".tool-card__toggle").addEventListener("click", () => {
+      withPin(() => {
+        const open = body.style.display !== "none";
+        body.style.display = open ? "none" : "flex";
+        action.textContent = open ? "Show" : "Hide";
+      });
+    });
+
+    toolCards.set(block.id, {
+      card, body,
+      input: el("pre", { text: JSON.stringify(block.input, null, 2) }),
+    });
     transcript.appendChild(card);
-    transcript.scrollTop = transcript.scrollHeight;
   }
 
   function fillToolResult(block, toolUseResult) {
-    const card = toolCards.get(block.tool_use_id);
-    if (!card) return; // result for a tool_use we never saw (e.g. truncated backlog) — drop silently
+    const entry = toolCards.get(block.tool_use_id);
+    if (!entry) return; // result for a tool_use we never saw (e.g. truncated backlog) — drop silently
+    const { card, body } = entry;
 
     if (block.is_error || (toolUseResult && typeof toolUseResult === "object" && toolUseResult.toolDenialKind)) {
-      card.classList.add("error");
+      card.classList.add("is-error");
     }
 
     if (toolUseResult && typeof toolUseResult === "object" && toolUseResult.structuredPatch) {
-      card.appendChild(renderDiff(toolUseResult.structuredPatch));
+      body.appendChild(renderDiff(toolUseResult.structuredPatch));
       return;
     }
 
@@ -144,7 +213,15 @@ function main() {
       : typeof block.content === "string"
         ? block.content
         : JSON.stringify(block.content);
-    card.appendChild(el("pre", { text }));
+
+    body.appendChild(el("div", { class: "tool-card__field" }, [
+      el("span", { class: "tool-card__field-label", text: "Input" }),
+      entry.input,
+    ]));
+    body.appendChild(el("div", { class: "tool-card__field is-output" }, [
+      el("span", { class: "tool-card__field-label", text: "Output" }),
+      el("pre", { text }),
+    ]));
   }
 
   function renderMessage(msg) {
@@ -176,7 +253,7 @@ function main() {
     const msg = JSON.parse(e.data);
     if (seen.has(msg.uuid)) return;
     seen.add(msg.uuid);
-    renderMessage(msg);
+    withPin(() => renderMessage(msg));
   });
 
   composer.addEventListener("submit", async (e) => {
@@ -201,32 +278,61 @@ function main() {
     }
   });
 
+  function setBusyRow(show) {
+    if (show && !busyRow) {
+      busyRow = el("div", { class: "chat-busy" }, [
+        el("span", { class: "chat-busy__sq" }),
+        document.createTextNode("Claude is working in the terminal"),
+      ]);
+      withPin(() => transcript.appendChild(busyRow));
+    } else if (!show && busyRow) {
+      const row = busyRow;
+      busyRow = null;
+      row.remove();
+    }
+  }
+
+  let titled = false;
+
   async function pollStatus() {
     try {
       const res = await fetch("/api/state");
       const data = await res.json();
-      const p = (data.projects || []).find((p) => p.window_id === windowID);
+      const p = (data.projects || []).find((pr) => pr.window_id === windowID);
       const status = p ? p.status : "none";
-      statusBadge.textContent = status;
+      const meta = STATUS[status] || STATUS.none;
 
-      // A pending interactive question (e.g. AskUserQuestion) isn't in the
-      // transcript at all — Claude hasn't written it to the JSONL yet (it's
-      // blocked waiting on exactly this answer) — so it rides this same
-      // /api/state poll that already drives the status badge, not the SSE
-      // transcript stream.
-      if (status === "question" && p.pending_question_tool) {
+      statusBadge.replaceChildren(statusSquare(meta.sq, meta.ring), document.createTextNode(meta.label));
+      statusBadge.style.background = meta.bg;
+      statusBadge.style.boxShadow = `inset 0 0 0 1px ${meta.border}`;
+
+      if (p && !titled) {
+        titled = true;
+        chatTitle.textContent = p.name || windowID;
+        document.title = `Unky Mo — ${p.name || windowID}`;
+        chatMeta.replaceChildren(
+          el("span", { text: p.window_name || windowID }),
+          el("span", { text: p.branch || "" })
+        );
+      }
+
+      permissionBanner.style.display = status === "permission" ? "block" : "none";
+      if (status === "question" && p && p.pending_question_tool) {
         questionBanner.replaceChildren(renderQuestionBanner(p.pending_question_tool, p.pending_question_input));
-        questionBanner.style.display = "block";
+        questionBanner.style.display = "flex";
       } else {
         questionBanner.style.display = "none";
       }
 
+      setBusyRow(status === "active");
+
       const canSend = status === "idle" || status === "question";
       sendBtn.disabled = !canSend;
+      sendBtn.classList.toggle("is-locked", !canSend);
       sendBtn.textContent = canSend ? "Send" : "Claude is working…";
       promptInput.placeholder = status === "question"
         ? "Type a number or your answer…"
-        : "Message Claude…";
+        : "Message this session";
     } catch (err) {
       // transient — leave the last known status showing
     }
