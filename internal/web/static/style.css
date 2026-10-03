@@ -249,7 +249,9 @@ h1, h2 {
 /* ── Tickets table ──────────────────────────────────────────── */
 .tickets-head, .ticket-row {
   display: grid;
-  grid-template-columns: 96px 1fr 128px 80px;
+  /* minmax(0, …): a long word in a title or bucket must wrap, not push the
+     fixed Priority column off the page edge. */
+  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 128px) 80px;
   column-gap: 24px;
 }
 .tickets-head {
@@ -264,8 +266,8 @@ h1, h2 {
   border-bottom: 1px solid var(--gray-ddd);
 }
 .ticket-row__id { font-family: var(--font-mono); font-size: 13px; color: var(--gray-444); }
-.ticket-row__title { font-size: 16px; line-height: 1.25; text-wrap: pretty; }
-.ticket-row__bucket { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; line-height: 1.25; }
+.ticket-row__title { font-size: 16px; line-height: 1.25; text-wrap: pretty; overflow-wrap: anywhere; }
+.ticket-row__bucket { overflow-wrap: anywhere; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; line-height: 1.25; }
 .ticket-row__bucket .status-sq { width: 8px; height: 8px; }
 .ticket-row__priority { font-size: 14px; line-height: 1.25; }
 
