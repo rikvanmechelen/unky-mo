@@ -9,6 +9,9 @@ const (
 	NotifyIdlePrompt       NotificationType = "idle_prompt"
 	NotifyPermissionPrompt NotificationType = "permission_prompt"
 	NotifySessionStop      NotificationType = "session_stop"
+	// NotifyHookEvent is a V2 hook message (it carries hook_event_name),
+	// passed through raw for status.ParseHookPayload to interpret.
+	NotifyHookEvent NotificationType = "hook_event"
 )
 
 // Notification represents a message received from a Claude Code hook.
@@ -19,4 +22,6 @@ type Notification struct {
 	Message     string           `json:"message"`
 	TmuxPane    string           `json:"tmux_pane,omitempty"`
 	Timestamp   time.Time        `json:"timestamp"`
+	// Raw is the original socket line, set for NotifyHookEvent.
+	Raw []byte `json:"-"`
 }

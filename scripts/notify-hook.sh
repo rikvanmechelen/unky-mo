@@ -13,7 +13,7 @@ fi
 INPUT=$(cat)
 
 # Get session context
-SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-unknown}}"
 PROJECT_PATH="$(pwd)"
 TMUX_PANE="${TMUX_PANE:-}"
 

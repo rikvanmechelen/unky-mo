@@ -19,19 +19,29 @@ paths:
 
 Session status (active/idle/permission/question) is managed by `status.Manager` — the single source of truth. Three signal layers feed into it:
 
-1. **Hook events (primary)** — Claude Code hooks (`internal/claude/status-hook.sh`, embedded in the binary and written to `~/.config/unky-mo/hooks/` on every TUI start by `claude.EnsureStatusHookScript`; `claude.EnsureHooksV2` then reinstalls the settings.json entries unless they already match exactly) fire on `UserPromptSubmit`, `Stop`, `PreToolUse`, `PermissionRequest`, `SessionStart`, `SessionEnd`, and `Notification` (idle_prompt/permission_prompt). Each event is sent to the Unix socket, parsed by `ParseHookPayload`, and applied to the manager via `ProcessHookEvent`.
+1. **Hook events (primary)** — Claude Code hooks (`internal/claude/status-hook.sh`, embedded in the binary and written to `~/.config/unky-mo/hooks/` on every TUI start by `claude.EnsureStatusHookScript`; `claude.EnsureHooksV2` then reinstalls the settings.json entries unless they already match exactly) fire on `UserPromptSubmit`, `Stop`, `PreToolUse`, `PermissionRequest`, `SessionStart`, `SessionEnd`, and `Notification` (idle_prompt/permission_prompt). Each event is sent to the Unix socket, parsed by `ParseHookPayload`, and applied to the manager via `ProcessHookEvent`. Delivery path: the script pipes its message to `mo hooks send` (the installing binary's path is baked into the script as `MO_BIN`; `nc -U` is only a fallback). `notify.Send` compacts it to one line for the socket. `internal/notify` passes any message with `hook_event_name` through as a raw `NotifyHookEvent`, and the TUI's `hookEventFromNotification` turns it into a `HookEvent` via `ParseHookPayload`. The session ID comes from `hook_input.session_id` (Claude's own payload); the envelope's copy is only a fallback.
 2. **fsnotify JSONL watcher (reconciliation)** — `status.Watcher` monitors session JSONL files for write events. On change, `ReadJSONLStatus` reads the tail and `ProcessJSONLChange` corrects stale hook state (e.g. if a hook was dropped). JSONL reconciliation does NOT override Permission or Question status — hooks (and the agents signal below, for Question) are authoritative. For Question this matters in practice: Claude keeps appending metadata entries (`ai-title`, `mode`, `attachment`, …) to the JSONL while a menu is open, which would otherwise read as "active" and wipe the pending question.
 3. **PID liveness (cleanup)** — The 5s session tick checks PIDs. Dead sessions are removed via `MarkDead`.
 4. **`claude agents --json` status (question backstop)** — the 5s tick already shells out to it for discovery; its per-session `status`/`waitingFor` ride along on `claude.Session` into `Manager.ProcessAgentStatus`. Only `"waiting"` + `"input needed"` (what Claude reports while an `AskUserQuestion` menu is open) maps to Question — other `waitingFor` values (`"dialog open"`, `"goal proposal"`, …) are ignored and Permission is never overridden. A hook newer than the snapshot wins. Leaving Question: `"idle"` clears any question; `"busy"` clears only one this signal set itself (`QuestionFromAgent`), since a hook-set question can briefly read "busy" before Claude publishes its waiting state. An agents-sourced question has no `PendingTool`/`PendingInput` — `mo web` shows a generic "answer in the terminal" banner for it.
 
 State transitions:
-- `SessionStart` / `UserPromptSubmit` / ordinary `PreToolUse` → Active
+- `UserPromptSubmit` / ordinary `PreToolUse` → Active
+- `SessionStart` → Idle (startup, `--resume` and `/clear` all land at the prompt), except `source: "compact"` → Active (auto-compaction fires mid-turn). `source` is read from the forwarded `hook_input`.
 - `PreToolUse` where `ToolName` is a known interactive tool (`isInteractiveTool`, currently just `AskUserQuestion`) → **Question**, with `PendingTool`/`PendingInput` captured from the event (see below)
 - `Stop` / `Notification(idle_prompt)` / JSONL `end_turn` → Idle
 - `PermissionRequest` / `Notification(permission_prompt)` → Permission
 - `SessionEnd` / PID dead → removed
 
 There are **no time-based heuristics**. The old 120s JSONL staleness threshold is gone. `ReadJSONLStatus` returns a pure snapshot of the last meaningful JSONL entry.
+
+### Gotcha: the V2 hook pipeline was silently dead end to end until Oct 2026
+
+Three independent breaks meant no V2 hook event ever reached `status.Manager`, so every status came from JSONL reconciliation and the agents backstop. Each failure was silent:
+1. **Delivery.** The script used `nc -U … 2>/dev/null`, and `nc` wasn't installed.
+2. **Session ID.** The script read `$CLAUDE_SESSION_ID`, but Claude Code sets `CLAUDE_CODE_SESSION_ID`, so every event was tagged `unknown`.
+3. **Socket server.** `internal/notify` only understood the three legacy notification types and dropped every `hook_event_name` message. `ParseHookPayload` had no production caller.
+
+The bufio line limit (64KB default) would also have dropped large `PreToolUse` payloads; it's raised now. If hook-driven status ever looks wrong again, verify the whole path live by piping a synthetic event through the installed script: `echo '{"hook_event_name":"Stop","session_id":"<id>"}' | HOOK_EVENT_NAME=Stop ~/.config/unky-mo/hooks/status-hook.sh`, then watch the state file. Don't trust unit tests of one stage alone.
 
 ### Gotcha: `hook_input` wraps the *entire* original Claude payload — don't trust a top-level field
 

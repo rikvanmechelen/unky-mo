@@ -56,6 +56,7 @@ type HookEvent struct {
 	ProjectPath string
 	ToolName    string          // populated for PreToolUse
 	ToolInput   json.RawMessage // populated for PreToolUse
+	Source      string          // populated for SessionStart: "startup", "resume", "clear" or "compact"
 }
 
 // StatusChange is emitted when a session's status transitions.
@@ -167,8 +168,19 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 		} else {
 			newStatus = StatusActive
 		}
-	case EventUserPromptSubmit, EventSessionStart:
+	case EventUserPromptSubmit:
 		newStatus = StatusActive
+	case EventSessionStart:
+		// A session starts (or resumes, or /clears) at the prompt, waiting
+		// for input — not working. Treating it as active left a freshly
+		// launched session reading "Working" until its first turn ended,
+		// which also locked the web composer out of sending that turn.
+		// The exception is auto-compaction, which fires SessionStart
+		// mid-turn while Claude carries on with the work.
+		newStatus = StatusIdle
+		if evt.Source == "compact" {
+			newStatus = StatusActive
+		}
 	case EventStop, EventNotificationIdle:
 		newStatus = StatusIdle
 	case EventPermissionRequest, EventNotificationPerm:

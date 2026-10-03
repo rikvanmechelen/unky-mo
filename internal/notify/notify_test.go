@@ -1,10 +1,12 @@
 package notify
 
 import (
+	"bytes"
 	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -198,5 +200,50 @@ func TestServerCleansUpSocketOnStop(t *testing.T) {
 	srv.Stop()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("socket should be removed after Stop, got err=%v", err)
+	}
+}
+
+// A V2 message from status-hook.sh is passed through raw for
+// status.ParseHookPayload, sent via Send exactly as the hook script does —
+// including a pretty-printed payload and one far over bufio's 64KB default
+// line limit (a PreToolUse Write carries the whole file).
+func TestSendDeliversV2HookEventRaw(t *testing.T) {
+	srv, path := startServer(t)
+
+	big := strings.Repeat("x", 200*1024)
+	msg := `{
+  "hook_input": {"hook_event_name": "PreToolUse", "session_id": "sess-1",
+                 "tool_name": "Write", "tool_input": {"content": "` + big + `"}},
+  "hook_event_name": "PreToolUse",
+  "session_id": "unknown",
+  "project_path": "/workspace/x"
+}`
+	if err := Send(path, strings.NewReader(msg)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case got := <-srv.Messages():
+		if got.Type != NotifyHookEvent || got.ProjectPath != "/workspace/x" {
+			t.Fatalf("got %+v", got)
+		}
+		if bytes.ContainsRune(got.Raw, '\n') || !bytes.Contains(got.Raw, []byte(`"tool_name":"Write"`)) || !bytes.Contains(got.Raw, []byte(big)) {
+			t.Fatalf("raw message should be the whole payload, compacted to one line (len %d)", len(got.Raw))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for hook event")
+	}
+}
+
+func TestSendNoServerIsError(t *testing.T) {
+	if err := Send(filepath.Join(t.TempDir(), "missing.sock"), strings.NewReader(`{}`)); err == nil {
+		t.Fatal("expected an error when nothing is listening")
+	}
+}
+
+func TestSendRejectsNonJSON(t *testing.T) {
+	_, path := startServer(t)
+	if err := Send(path, strings.NewReader("not json")); err == nil {
+		t.Fatal("expected an error for a non-JSON message")
 	}
 }

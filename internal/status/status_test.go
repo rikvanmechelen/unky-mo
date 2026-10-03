@@ -122,11 +122,26 @@ func TestHookEvent_Stop_ClearsPendingQuestion(t *testing.T) {
 	}
 }
 
-func TestHookEvent_SessionStart_SetsActive(t *testing.T) {
+// A session starts at the prompt: startup, --resume and /clear all land on
+// "waiting for input", so they must read idle (otherwise a fresh session
+// shows "Working" and the web composer refuses its first message).
+func TestHookEvent_SessionStart_SetsIdle(t *testing.T) {
+	for _, source := range []string{"startup", "resume", "clear", ""} {
+		mgr := NewManager()
+		mgr.ProcessHookEvent(HookEvent{Type: EventSessionStart, SessionID: "s1", Source: source})
+		if got := mgr.Status("s1"); got != StatusIdle {
+			t.Errorf("after SessionStart(%q): got %v, want StatusIdle", source, got)
+		}
+	}
+}
+
+// Auto-compaction fires SessionStart mid-turn and Claude keeps working.
+func TestHookEvent_SessionStartCompact_StaysActive(t *testing.T) {
 	mgr := NewManager()
-	mgr.ProcessHookEvent(HookEvent{Type: EventSessionStart, SessionID: "s1"})
+	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
+	mgr.ProcessHookEvent(HookEvent{Type: EventSessionStart, SessionID: "s1", Source: "compact"})
 	if got := mgr.Status("s1"); got != StatusActive {
-		t.Errorf("after SessionStart: got %v, want StatusActive", got)
+		t.Errorf("after compaction SessionStart: got %v, want StatusActive", got)
 	}
 }
 

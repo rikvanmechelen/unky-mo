@@ -40,6 +40,20 @@ func ParseHookPayload(data []byte) (HookEvent, error) {
 		SessionID:   p.SessionID,
 		ProjectPath: p.ProjectPath,
 	}
+	// Claude's own stdin JSON (forwarded wholesale as hook_input) always
+	// carries the real session_id. The envelope's copy comes from an env var
+	// in status-hook.sh, which for a long time read the wrong name
+	// (CLAUDE_SESSION_ID — Claude Code sets CLAUDE_CODE_SESSION_ID) and sent
+	// "unknown" for every event, so no hook ever reached its session. Trust
+	// hook_input first; it also covers hook scripts installed before the fix.
+	if len(p.HookInput) > 0 {
+		var in struct {
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal(p.HookInput, &in) == nil && in.SessionID != "" {
+			evt.SessionID = in.SessionID
+		}
+	}
 	if evt.ProjectPath == "" {
 		evt.ProjectPath = p.CWD
 	}
@@ -80,6 +94,14 @@ func parseUnifiedEvent(p hookPayload, evt HookEvent) (HookEvent, error) {
 		evt.Type = EventPermissionRequest
 	case "SessionStart":
 		evt.Type = EventSessionStart
+		if len(p.HookInput) > 0 {
+			var sp struct {
+				Source string `json:"source"`
+			}
+			if json.Unmarshal(p.HookInput, &sp) == nil {
+				evt.Source = sp.Source
+			}
+		}
 	case "SessionEnd":
 		evt.Type = EventSessionEnd
 	case "Notification":

@@ -3731,26 +3731,48 @@ func (m *Model) routeNotificationToStatusMgr(n notify.Notification) {
 	if m.statusMgr == nil {
 		return
 	}
+	evt, ok := hookEventFromNotification(n)
+	if !ok {
+		return
+	}
+	switch evt.Type {
+	case status.EventNotificationIdle:
+		m.list.NewStatusMessage(fmt.Sprintf("● %s needs input", filepath.Base(evt.ProjectPath)))
+	case status.EventNotificationPerm:
+		m.list.NewStatusMessage(fmt.Sprintf("● %s needs permission", filepath.Base(evt.ProjectPath)))
+	}
+	m.statusMgr.ProcessHookEvent(evt)
+}
+
+// hookEventFromNotification maps a socket notification to a status hook
+// event. V2 messages (status-hook.sh's hook_event_name format — every event
+// type, carrying Claude's own payload) go through status.ParseHookPayload;
+// the three legacy notification types map directly. ok is false for anything
+// that isn't a status event.
+func hookEventFromNotification(n notify.Notification) (status.HookEvent, bool) {
+	if n.Type == notify.NotifyHookEvent {
+		evt, err := status.ParseHookPayload(n.Raw)
+		if err != nil || evt.SessionID == "" || evt.SessionID == "unknown" {
+			return status.HookEvent{}, false
+		}
+		return evt, true
+	}
 	key := n.SessionID
 	if key == "" {
 		key = n.ProjectPath
 	}
-	var evt status.HookEvent
-	evt.SessionID = key
-	evt.ProjectPath = n.ProjectPath
+	evt := status.HookEvent{SessionID: key, ProjectPath: n.ProjectPath}
 	switch n.Type {
 	case notify.NotifyIdlePrompt:
 		evt.Type = status.EventNotificationIdle
-		m.list.NewStatusMessage(fmt.Sprintf("● %s needs input", filepath.Base(n.ProjectPath)))
 	case notify.NotifyPermissionPrompt:
 		evt.Type = status.EventNotificationPerm
-		m.list.NewStatusMessage(fmt.Sprintf("● %s needs permission", filepath.Base(n.ProjectPath)))
 	case notify.NotifySessionStop:
 		evt.Type = status.EventStop
 	default:
-		return
+		return status.HookEvent{}, false
 	}
-	m.statusMgr.ProcessHookEvent(evt)
+	return evt, true
 }
 
 // mgrStatusToTUI converts a status.SessionStatus to the TUI's SessionStatus.

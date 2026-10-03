@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -23,7 +24,11 @@ func hookScriptDir() string {
 // settings carry exactly the V2 hook set pointing at it. changed reports
 // whether either the script or settings.json had to be updated.
 func installStatusHooks() (script string, changed bool, err error) {
-	script, scriptChanged, err := claude.EnsureStatusHookScript(hookScriptDir())
+	moBin, err := os.Executable()
+	if err != nil {
+		return "", false, fmt.Errorf("locating mo binary: %w", err)
+	}
+	script, scriptChanged, err := claude.EnsureStatusHookScript(hookScriptDir(), moBin)
 	if err != nil {
 		return "", false, fmt.Errorf("writing hook script: %w", err)
 	}

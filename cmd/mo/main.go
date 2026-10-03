@@ -12,6 +12,7 @@ import (
 
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
+	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
@@ -899,6 +900,18 @@ func hooksCmd() *cobra.Command {
 			return nil
 		},
 	})
+
+	var socket string
+	sendCmd := &cobra.Command{
+		Use:    "send",
+		Short:  "Forward one hook message from stdin to the TUI's socket (used by the hook script)",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return notify.Send(socket, os.Stdin)
+		},
+	}
+	sendCmd.Flags().StringVar(&socket, "socket", "/tmp/unky-mo.sock", "TUI notification socket")
+	cmd.AddCommand(sendCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "uninstall",

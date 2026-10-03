@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // statusHookScript is the V2 unified hook script, embedded so the installed
@@ -16,11 +17,14 @@ import (
 var statusHookScript []byte
 
 // EnsureStatusHookScript writes the embedded status hook script to
-// dir/status-hook.sh (0755) unless an identical copy is already there.
+// dir/status-hook.sh (0755) unless an identical copy is already there. moBin
+// is the mo binary the script delivers messages through (`mo hooks send`);
+// it's written into the script, so a moved binary rewrites it on next start.
 // Returns the script path and whether it was (re)written.
-func EnsureStatusHookScript(dir string) (path string, changed bool, err error) {
+func EnsureStatusHookScript(dir, moBin string) (path string, changed bool, err error) {
 	path = filepath.Join(dir, "status-hook.sh")
-	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, statusHookScript) {
+	script := StatusHookScript(moBin)
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, script) {
 		return path, false, nil
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -28,13 +32,20 @@ func EnsureStatusHookScript(dir string) (path string, changed bool, err error) {
 	}
 	// Write-then-rename so a hook firing mid-update never runs a torn script.
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, statusHookScript, 0755); err != nil {
+	if err := os.WriteFile(tmp, script, 0755); err != nil {
 		return "", false, err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return "", false, err
 	}
 	return path, true, nil
+}
+
+// StatusHookScript renders the embedded hook script for moBin, quoted for a
+// single-quoted shell string.
+func StatusHookScript(moBin string) []byte {
+	quoted := strings.ReplaceAll(moBin, "'", `'\''`)
+	return bytes.Replace(statusHookScript, []byte("__MO_BIN__"), []byte(quoted), 1)
 }
 
 const hookMarker = "unky-mo"

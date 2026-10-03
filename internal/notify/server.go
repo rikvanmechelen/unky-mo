@@ -88,6 +88,8 @@ type hookInput struct {
 	TmuxPane    string          `json:"tmux_pane"`
 	Timestamp   string          `json:"timestamp"`
 	Type        string          `json:"type"` // direct type field for stop hook
+	// HookEventName marks a V2 message from status-hook.sh.
+	HookEventName string `json:"hook_event_name"`
 }
 
 // claudeHookPayload is the JSON Claude provides to notification hooks on stdin.
@@ -103,6 +105,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	scanner := bufio.NewScanner(conn)
+	// A PreToolUse payload carries the tool's whole input (e.g. a Write's
+	// file content), so lines can be far beyond bufio's 64KB default.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxMessageSize)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -111,6 +116,20 @@ func (s *Server) handleConn(conn net.Conn) {
 
 		var input hookInput
 		if err := json.Unmarshal(line, &input); err != nil {
+			continue
+		}
+
+		// V2 hook messages are interpreted by status.ParseHookPayload, not
+		// here — pass them through whole.
+		if input.HookEventName != "" {
+			s.deliver(Notification{
+				Type:        NotifyHookEvent,
+				SessionID:   input.SessionID,
+				ProjectPath: input.ProjectPath,
+				TmuxPane:    input.TmuxPane,
+				Timestamp:   time.Now(),
+				Raw:         append([]byte(nil), line...),
+			})
 			continue
 		}
 
@@ -144,11 +163,14 @@ func (s *Server) handleConn(conn net.Conn) {
 		if notif.Type == "" {
 			continue
 		}
+		s.deliver(notif)
+	}
+}
 
-		select {
-		case s.msgChan <- notif:
-		default:
-			// Drop if channel is full
-		}
+func (s *Server) deliver(n Notification) {
+	select {
+	case s.msgChan <- n:
+	default:
+		// Drop if channel is full
 	}
 }

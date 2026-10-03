@@ -6,10 +6,12 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	"github.com/rvanmech/unky-mo/internal/config"
+	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/status"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"go.uber.org/mock/gomock"
 )
@@ -864,4 +866,29 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func TestHookEventFromNotificationV2(t *testing.T) {
+	raw := []byte(`{"hook_input":{"hook_event_name":"SessionStart","session_id":"real","source":"startup"},"hook_event_name":"SessionStart","session_id":"unknown","project_path":"/ws/a"}`)
+	evt, ok := hookEventFromNotification(notify.Notification{Type: notify.NotifyHookEvent, Raw: raw})
+	if !ok || evt.Type != status.EventSessionStart || evt.SessionID != "real" || evt.Source != "startup" || evt.ProjectPath != "/ws/a" {
+		t.Fatalf("got %+v ok=%v", evt, ok)
+	}
+}
+
+func TestHookEventFromNotificationV2WithoutSessionIsDropped(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"Stop","session_id":"unknown","project_path":"/ws/a"}`)
+	if _, ok := hookEventFromNotification(notify.Notification{Type: notify.NotifyHookEvent, Raw: raw}); ok {
+		t.Fatal("an event with no real session id must not create an unknown session")
+	}
+}
+
+func TestHookEventFromNotificationLegacy(t *testing.T) {
+	evt, ok := hookEventFromNotification(notify.Notification{Type: notify.NotifySessionStop, ProjectPath: "/ws/a"})
+	if !ok || evt.Type != status.EventStop || evt.SessionID != "/ws/a" {
+		t.Fatalf("got %+v ok=%v", evt, ok)
+	}
+	if _, ok := hookEventFromNotification(notify.Notification{Type: "other"}); ok {
+		t.Fatal("unknown legacy type should be dropped")
+	}
 }

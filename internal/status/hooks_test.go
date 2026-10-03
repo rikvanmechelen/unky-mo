@@ -82,6 +82,17 @@ func TestParseHookPayload_SessionStart(t *testing.T) {
 	}
 }
 
+func TestParseHookPayload_SessionStartSource(t *testing.T) {
+	data := []byte(`{"hook_event_name":"SessionStart","session_id":"s1","hook_input":{"hook_event_name":"SessionStart","source":"compact"}}`)
+	evt, err := ParseHookPayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evt.Type != EventSessionStart || evt.Source != "compact" {
+		t.Errorf("got type %v source %q", evt.Type, evt.Source)
+	}
+}
+
 func TestParseHookPayload_SessionEnd(t *testing.T) {
 	data := []byte(`{"hook_event_name":"SessionEnd","session_id":"s1","project_path":"/ws"}`)
 	evt, err := ParseHookPayload(data)
@@ -158,5 +169,30 @@ func TestParseHookPayload_EmptyPayload_ReturnsError(t *testing.T) {
 	_, err := ParseHookPayload([]byte(`{}`))
 	if err == nil {
 		t.Error("expected error for empty payload")
+	}
+}
+
+// The envelope's session_id comes from an env var in status-hook.sh that used
+// to be the wrong name, yielding "unknown" — the session_id inside Claude's own
+// stdin JSON (hook_input) is authoritative.
+func TestParseHookPayload_SessionIDFromHookInput(t *testing.T) {
+	data := []byte(`{"hook_event_name":"Stop","session_id":"unknown","hook_input":{"hook_event_name":"Stop","session_id":"real-id"}}`)
+	evt, err := ParseHookPayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evt.SessionID != "real-id" {
+		t.Errorf("session id: got %q, want %q", evt.SessionID, "real-id")
+	}
+}
+
+func TestParseHookPayload_SessionIDFallsBackToEnvelope(t *testing.T) {
+	data := []byte(`{"hook_event_name":"Stop","session_id":"env-id","hook_input":{"hook_event_name":"Stop"}}`)
+	evt, err := ParseHookPayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evt.SessionID != "env-id" {
+		t.Errorf("session id: got %q, want %q", evt.SessionID, "env-id")
 	}
 }
