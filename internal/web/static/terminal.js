@@ -27,7 +27,8 @@ function createTerminalDrawer(root) {
   let windowID = null;
   let available = false; // the window has a state row — only then poll
   let terminals = [];
-  let selected = null; // pane id (no "%")
+  let shells = []; // Claude's own Bash-tool shells: read-only tabs
+  let selected = null; // tab key: a pane id (no "%"), or "s<pid>" for a shell
   let open = true;
   let tabsKey = null; // last rendered tab data — unchanged polls don't rebuild (keeps clicks)
   let lastOutput = null;
@@ -39,21 +40,38 @@ function createTerminalDrawer(root) {
     errorEl.textContent = msg || "";
   }
 
+  const isShell = (key) => typeof key === "string" && key.startsWith("s");
+
+  // tabs merges the window's terminals and Claude's shells into one strip.
+  function tabs() {
+    return [
+      ...terminals.map((t) => ({
+        key: t.id, label: t.name, mark: t.visible ? " is-visible" : "",
+        title: `${t.cwd}${t.visible ? " — shown in the tmux drawer" : ""}`,
+      })),
+      ...shells.map((sh) => ({
+        key: "s" + sh.id, label: `claude: ${sh.command}`, mark: " is-shell", output: sh.output,
+        title: `Claude's Bash shell (read-only), started ${sh.started}`,
+      })),
+    ];
+  }
+
   function render() {
-    const key = JSON.stringify([terminals, selected, open]);
+    const all = tabs();
+    const key = JSON.stringify([all, selected, open]);
     if (key !== tabsKey) {
       tabsKey = key;
-      tabsEl.replaceChildren(...terminals.map((t) => {
+      tabsEl.replaceChildren(...all.map((t) => {
         const tab = el("button", {
-          class: "term-tab" + (t.id === selected ? " is-selected" : ""),
+          class: "term-tab" + (t.key === selected ? " is-selected" : ""),
           type: "button",
-          title: `${t.cwd}${t.visible ? " — shown in the tmux drawer" : ""}`,
+          title: t.title,
         }, [
-          el("span", { class: "term-tab__mark" + (t.visible ? " is-visible" : "") }),
-          document.createTextNode(t.name),
+          el("span", { class: "term-tab__mark" + t.mark }),
+          el("span", { class: "term-tab__label", text: t.label }),
         ]);
         tab.addEventListener("click", () => {
-          selected = t.id;
+          selected = t.key;
           open = true;
           lastOutput = null;
           render();
@@ -62,13 +80,13 @@ function createTerminalDrawer(root) {
         return tab;
       }));
     }
-    // With no terminals the drawer is just its bar: nothing to show or hide.
-    const any = terminals.length > 0;
+    // With no tabs the drawer is just its bar: nothing to show or hide.
+    const any = all.length > 0;
     emptyEl.hidden = any;
     toggleBtn.hidden = !any;
     toggleBtn.textContent = open ? "Hide" : "Show";
     body.hidden = !open || !any;
-    form.hidden = !selected;
+    form.hidden = !selected || isShell(selected); // shells are read-only
   }
 
   async function call(method, path, payload) {
@@ -86,11 +104,17 @@ function createTerminalDrawer(root) {
     if (!windowID || !available || document.visibilityState !== "visible") return;
     const g = gen;
     try {
-      const list = await call("GET", base());
+      const [list, shellList] = await Promise.all([
+        call("GET", base()),
+        // No live session (yet) means no shells, not an error.
+        call("GET", `/api/sessions/${encodeURIComponent(windowID)}/shells`).catch(() => []),
+      ]);
       if (g !== gen) return;
       terminals = list || [];
-      if (!terminals.some((t) => t.id === selected)) {
-        selected = (terminals.find((t) => t.visible) || terminals[0] || {}).id || null;
+      shells = shellList || [];
+      const all = tabs();
+      if (!all.some((t) => t.key === selected)) {
+        selected = (terminals.find((t) => t.visible) || terminals[0] || {}).id || (all[0] || {}).key || null;
         lastOutput = null;
       }
       setError("");
@@ -103,8 +127,16 @@ function createTerminalDrawer(root) {
   async function refreshOutput() {
     if (!windowID || !available || !selected || !open || document.visibilityState !== "visible") return;
     const g = gen, pane = selected;
+    if (isShell(pane) && !(shells.find((sh) => "s" + sh.id === pane) || {}).output) {
+      outputEl.textContent = "This shell has no output file to show.";
+      lastOutput = null;
+      return;
+    }
+    const path = isShell(pane)
+      ? `/api/sessions/${encodeURIComponent(windowID)}/shells/${pane.slice(1)}/output`
+      : `${base()}/${pane}/output`;
     try {
-      const data = await call("GET", `${base()}/${pane}/output`);
+      const data = await call("GET", path);
       if (g !== gen || pane !== selected || data.text === lastOutput) return;
       // Follow new output only if already scrolled to the bottom.
       const pinned = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 24;
@@ -118,7 +150,7 @@ function createTerminalDrawer(root) {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (!selected) return;
+    if (!selected || isShell(selected)) return;
     try {
       await call("POST", `${base()}/${selected}/input`, { text: input.value });
       input.value = "";
@@ -131,7 +163,7 @@ function createTerminalDrawer(root) {
   });
 
   ctrlC.addEventListener("click", async () => {
-    if (!selected) return;
+    if (!selected || isShell(selected)) return;
     try {
       await call("POST", `${base()}/${selected}/interrupt`);
       setTimeout(refreshOutput, 150);
@@ -182,6 +214,7 @@ function createTerminalDrawer(root) {
       available = false;
       windowID = id;
       terminals = [];
+      shells = [];
       selected = null;
       lastOutput = null;
       outputEl.textContent = "";

@@ -28,6 +28,7 @@ type Server struct {
 	filesCache  *ttlCache
 	treeCache   *ttlCache
 	branchCache *ttlCache
+	shellsCache *ttlCache
 
 	// launchMu serializes session-mutating requests (launch, replace, stop).
 	launchMu sync.Mutex
@@ -52,6 +53,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		filesCache:  newTTLCache(2 * time.Second),
 		treeCache:   newTTLCache(10 * time.Second),
 		branchCache: newTTLCache(15 * time.Second),
+		shellsCache: newTTLCache(2 * time.Second),
 	}
 	s.routes()
 	return s
@@ -69,6 +71,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/files", s.handleSessionFiles)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/diff", s.handleSessionDiff)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells", s.handleShells)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells/{pid}/output", s.handleShellOutput)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals", s.handleTerminals)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals", s.handleNewTerminal)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals/{pane}/output", s.handleTerminalOutput)

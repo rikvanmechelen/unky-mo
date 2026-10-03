@@ -459,8 +459,10 @@ h1, h2 {
 .term-tab { gap: 8px; font-family: var(--font-mono); color: #bbbbbb; }
 .term-tab:hover, .term-drawer__new:hover { color: var(--white); }
 .term-tab.is-selected { background: var(--gray-444); color: var(--white); }
-.term-tab__mark { width: 8px; height: 2px; background: var(--gray-767); }
+.term-tab__mark { flex: none; width: 8px; height: 2px; background: var(--gray-767); }
+.term-tab__label { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .term-tab__mark.is-visible { background: var(--green); }
+.term-tab__mark.is-shell { background: var(--yellow); }
 .term-drawer__new { font-family: var(--font-sans); color: #bbbbbb; }
 .term-drawer__empty { align-self: center; padding: 0 16px; font-size: 12px; color: var(--gray-767); white-space: nowrap; }
 .term-drawer__empty[hidden], .term-drawer__toggle[hidden] { display: none; }

@@ -8,7 +8,10 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -25,7 +28,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -106,6 +109,14 @@ type Terminals interface {
 	New(w state.ProjectState) (string, error)
 }
 
+// Shells lists Claude's running Bash-tool shells for a session and reads
+// their output files (the sidebar's "Shells" section). Handlers only Tail
+// an OutputFile that List returned for the requested session.
+type Shells interface {
+	List(sessionID string) ([]claude.ActiveShell, error)
+	Tail(path string, maxBytes int) (text string, truncated bool, err error)
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -118,6 +129,7 @@ type Deps struct {
 	Sessions  SessionOps
 	Git       GitFiles
 	Terminals Terminals
+	Shells    Shells
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.
@@ -359,4 +371,54 @@ func (r realTerminals) New(w state.ProjectState) (string, error) {
 		return ghost, nil
 	}
 	return r.client.NewWindowInSession(session, w.Path)
+}
+
+// realShells finds shells via ps/lsof (claude.ActiveShells) for the live
+// Claude process running sessionID.
+type realShells struct{}
+
+func NewShells() Shells { return realShells{} }
+
+func (realShells) List(sessionID string) ([]claude.ActiveShell, error) {
+	sessions, err := claude.LiveSessions()
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range sessions {
+		if s.SessionID == sessionID {
+			return claude.ActiveShells(s.PID), nil
+		}
+	}
+	return nil, nil
+}
+
+// Tail returns up to maxBytes from the end of path, starting at a line
+// boundary when it had to cut.
+func (realShells) Tail(path string, maxBytes int) (string, bool, error) {
+	return tailFile(path, maxBytes)
+}
+
+func tailFile(path string, maxBytes int) (string, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	size := info.Size()
+	if size <= int64(maxBytes) {
+		data, err := io.ReadAll(f)
+		return string(data), false, err
+	}
+	buf := make([]byte, maxBytes)
+	if _, err := f.ReadAt(buf, size-int64(maxBytes)); err != nil && !errors.Is(err, io.EOF) {
+		return "", false, err
+	}
+	if i := bytes.IndexByte(buf, '\n'); i >= 0 {
+		buf = buf[i+1:]
+	}
+	return string(buf), true, nil
 }
