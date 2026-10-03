@@ -253,7 +253,8 @@ function main() {
   const nodes = new Map(); // uuid -> parent uuid (or null); doubles as the reconnect dedupe
   let messages = [];
   let leaf = null;
-  const toolCards = new Map(); // tool_use_id -> {card, body} — persists across messages
+  const toolCards = new Map(); // tool_use_id -> {card, body, ...} — persists across messages
+  let previewed = null; // the toolCards entry currently auto-opened by previewToolCard
 
   // The SSE stream is bound server-side to whichever Claude session ID the
   // window had when it connected. /clear (or /new) starts a fresh session —
@@ -361,19 +362,36 @@ function main() {
       ]),
       body,
     ]);
+    const entry = {
+      card, body, action, name: block.name,
+      input: el("pre", { text: JSON.stringify(block.input, null, 2) }),
+    };
     card.querySelector(".tool-card__toggle").addEventListener("click", () => {
       withPin(() => {
-        const open = body.style.display !== "none";
-        body.style.display = open ? "none" : "flex";
-        action.textContent = open ? "Show" : "Hide";
+        // A click takes the card out of preview mode for good, so the next
+        // preview doesn't collapse a card you chose to look at.
+        if (previewed === entry) previewed = null;
+        setCardOpen(entry, body.style.display === "none");
       });
     });
 
-    toolCards.set(block.id, {
-      card, body,
-      input: el("pre", { text: JSON.stringify(block.input, null, 2) }),
-    });
+    toolCards.set(block.id, entry);
     transcript.appendChild(card);
+  }
+
+  function setCardOpen(entry, open, preview = false) {
+    entry.body.style.display = open ? "flex" : "none";
+    entry.action.textContent = open ? "Hide" : "Show";
+    entry.card.classList.toggle("is-preview", open && preview);
+  }
+
+  // Like Claude Code's terminal, the most recent edit's diff (or command's
+  // output) is shown open, in a height-capped preview, until a newer one
+  // replaces it. A card you've toggled yourself is left alone.
+  function previewToolCard(entry) {
+    if (previewed && previewed !== entry) setCardOpen(previewed, false);
+    previewed = entry;
+    setCardOpen(entry, true, true);
   }
 
   function fillToolResult(block, toolUseResult) {
@@ -389,6 +407,7 @@ function main() {
     // input/output instead of an empty diff box.
     if (toolUseResult && typeof toolUseResult === "object" && toolUseResult.structuredPatch?.length) {
       body.appendChild(renderDiff(toolUseResult.structuredPatch));
+      previewToolCard(entry);
       return;
     }
 
@@ -406,6 +425,7 @@ function main() {
       el("span", { class: "tool-card__field-label", text: "Output" }),
       el("pre", { text }),
     ]));
+    if (entry.name === "Bash" && text.trim()) previewToolCard(entry);
   }
 
   function renderMessage(msg) {
@@ -447,6 +467,7 @@ function main() {
     messages = [];
     leaf = null;
     toolCards.clear();
+    previewed = null;
     transcript.replaceChildren();
   }
 
@@ -503,6 +524,7 @@ function main() {
     for (let u = leaf; u && !chain.has(u); u = nodes.get(u)) chain.add(u);
     transcript.replaceChildren();
     toolCards.clear();
+    previewed = null;
     for (const m of messages) {
       if (chain.has(m.uuid) || (isToolResultOnly(m) && chain.has(parentOf(m)))) renderMessage(m);
     }

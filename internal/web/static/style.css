@@ -402,6 +402,13 @@ h1, h2 {
   max-height: 480px; overflow-y: auto;
 }
 
+/* The auto-opened latest result (previewToolCard in chat.js): height-capped,
+   and without the Input field, which the summary line already shows — like
+   Claude Code's inline preview of its most recent edit or command. */
+.tool-card.is-preview .tool-card__diff { max-height: 360px; overflow-y: auto; }
+.tool-card.is-preview .tool-card__field:not(.is-output) { display: none; }
+.tool-card.is-preview .tool-card__field pre { max-height: 240px; }
+
 .tool-card__diff { display: flex; flex-direction: column; border: 1px solid var(--gray-ddd); padding: 6px 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
 .diff-line { display: grid; grid-template-columns: 44px 20px 1fr; }
 .diff-line.is-add { background: rgba(0, 177, 64, 0.1); }
