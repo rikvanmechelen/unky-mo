@@ -241,6 +241,9 @@ h1, h2 {
 .dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 .dialog__title { font-size: 22px; line-height: 1.1; font-weight: 700; letter-spacing: var(--tracking-bold); }
 .dialog__text { font-size: 15px; line-height: 1.35; color: var(--gray-444); }
+.dialog__form { display: flex; flex-direction: column; gap: 16px; }
+.dialog__input { flex: none; height: 40px; font-size: 15px; }
+.branch-row { gap: 10px; }
 .dialog__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 
 /* ── Tickets table ──────────────────────────────────────────── */

@@ -361,6 +361,21 @@ func (m *MockSessionOps) EXPECT() *MockSessionOpsMockRecorder {
 	return m.recorder
 }
 
+// CleanupWorktree mocks base method.
+func (m *MockSessionOps) CleanupWorktree(p ops.CleanupParams) (*ops.CleanupResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CleanupWorktree", p)
+	ret0, _ := ret[0].(*ops.CleanupResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CleanupWorktree indicates an expected call of CleanupWorktree.
+func (mr *MockSessionOpsMockRecorder) CleanupWorktree(p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupWorktree", reflect.TypeOf((*MockSessionOps)(nil).CleanupWorktree), p)
+}
+
 // CreateWorktreeAndLaunch mocks base method.
 func (m *MockSessionOps) CreateWorktreeAndLaunch(p ops.WorktreeParams) (*ops.WorktreeResult, error) {
 	m.ctrl.T.Helper()
@@ -374,6 +389,21 @@ func (m *MockSessionOps) CreateWorktreeAndLaunch(p ops.WorktreeParams) (*ops.Wor
 func (mr *MockSessionOpsMockRecorder) CreateWorktreeAndLaunch(p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWorktreeAndLaunch", reflect.TypeOf((*MockSessionOps)(nil).CreateWorktreeAndLaunch), p)
+}
+
+// IsDirty mocks base method.
+func (m *MockSessionOps) IsDirty(path string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsDirty", path)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsDirty indicates an expected call of IsDirty.
+func (mr *MockSessionOpsMockRecorder) IsDirty(path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDirty", reflect.TypeOf((*MockSessionOps)(nil).IsDirty), path)
 }
 
 // Launch mocks base method.
@@ -404,6 +434,21 @@ func (m *MockSessionOps) LaunchSibling(p ops.SiblingParams) (*ops.LaunchResult, 
 func (mr *MockSessionOpsMockRecorder) LaunchSibling(p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LaunchSibling", reflect.TypeOf((*MockSessionOps)(nil).LaunchSibling), p)
+}
+
+// LiftSessionToWorktree mocks base method.
+func (m *MockSessionOps) LiftSessionToWorktree(p ops.LiftParams) (*ops.LiftResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LiftSessionToWorktree", p)
+	ret0, _ := ret[0].(*ops.LiftResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LiftSessionToWorktree indicates an expected call of LiftSessionToWorktree.
+func (mr *MockSessionOpsMockRecorder) LiftSessionToWorktree(p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LiftSessionToWorktree", reflect.TypeOf((*MockSessionOps)(nil).LiftSessionToWorktree), p)
 }
 
 // LiveSessions mocks base method.

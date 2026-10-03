@@ -75,6 +75,9 @@ type SessionOps interface {
 	ParkAndLaunch(p ops.ParkParams) (*ops.LaunchResult, error)
 	CreateWorktreeAndLaunch(p ops.WorktreeParams) (*ops.WorktreeResult, error)
 	StopSessions(sessions []claude.Session) int
+	CleanupWorktree(p ops.CleanupParams) (*ops.CleanupResult, error)
+	LiftSessionToWorktree(p ops.LiftParams) (*ops.LiftResult, error)
+	IsDirty(path string) (bool, error)
 }
 
 // Deps bundles the data sources a Server reads from.
@@ -206,6 +209,16 @@ func (r realSessionOps) CreateWorktreeAndLaunch(p ops.WorktreeParams) (*ops.Work
 func (r realSessionOps) StopSessions(sessions []claude.Session) int {
 	return ops.StopSessions(r.ctx, sessions)
 }
+
+func (r realSessionOps) CleanupWorktree(p ops.CleanupParams) (*ops.CleanupResult, error) {
+	return ops.CleanupWorktree(r.ctx, p)
+}
+
+func (r realSessionOps) LiftSessionToWorktree(p ops.LiftParams) (*ops.LiftResult, error) {
+	return ops.LiftSessionToWorktree(r.ctx, p)
+}
+
+func (realSessionOps) IsDirty(path string) (bool, error) { return project.IsDirty(path) }
 
 type errUnknownProvider string
 

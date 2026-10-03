@@ -65,6 +65,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
 	s.mux.HandleFunc("GET /api/projects/{name}/sessions", s.handleProjectSessions)
 	s.mux.HandleFunc("POST /api/projects/{name}/sessions", s.handleLaunch)
+	s.mux.HandleFunc("POST /api/projects/{name}/cleanup", s.handleCleanup)
+	s.mux.HandleFunc("POST /api/projects/{name}/lift", s.handleLift)
 
 	static, err := fs.Sub(staticFiles, "static")
 	if err == nil {

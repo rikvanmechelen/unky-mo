@@ -49,3 +49,34 @@ async function stopSession(windowID, windowName) {
   }
   return true;
 }
+
+// promptDialog asks for one line of text. Resolves with the trimmed text, or
+// undefined when cancelled or left empty.
+function promptDialog({ title, text, placeholder, confirmLabel }) {
+  return new Promise((resolve) => {
+    const dialog = dialogNode("dialog", "dialog");
+    const form = dialogNode("form", "dialog__form");
+    const input = dialogNode("input", "text-input dialog__input");
+    input.type = "text";
+    input.placeholder = placeholder || "";
+    input.autocomplete = "off";
+    const done = (value) => { dialog.close(); dialog.remove(); resolve(value); };
+    form.appendChild(dialogNode("div", "dialog__title", title));
+    if (text) form.appendChild(dialogNode("div", "dialog__text", text));
+    form.appendChild(input);
+    const row = dialogNode("div", "dialog__actions");
+    const cancel = dialogNode("button", "btn", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => done(undefined));
+    const ok = dialogNode("button", "btn btn--primary", confirmLabel || "OK");
+    ok.type = "submit";
+    row.append(cancel, ok);
+    form.appendChild(row);
+    form.addEventListener("submit", (e) => { e.preventDefault(); done(input.value.trim() || undefined); });
+    dialog.appendChild(form);
+    dialog.addEventListener("cancel", () => { dialog.remove(); resolve(undefined); });
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    input.focus();
+  });
+}

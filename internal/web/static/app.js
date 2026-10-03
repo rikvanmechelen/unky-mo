@@ -99,6 +99,95 @@ async function startSession(projectName, body, button) {
   }
 }
 
+async function postJSON(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { res, data: await res.json().catch(() => ({})) };
+}
+
+function showError(title, data, res) {
+  return showDialog({ title, text: data.error || `request failed (${res.status})`, actions: [{ label: "OK" }] });
+}
+
+// removeWorktree is the TUI's `x` on a worktree: stop its sessions, remove
+// the worktree (git worktree remove --force), optionally delete the branch.
+async function removeWorktree(projectName, c, reload) {
+  const live = c.live.length;
+  const choice = await showDialog({
+    title: `Remove worktree ${c.branch}?`,
+    text: `This deletes ${c.path}, including any uncommitted changes in it.` +
+      (live ? ` It first stops the ${live} session${live > 1 ? "s" : ""} running there.` : ""),
+    actions: [
+      { label: "Cancel" },
+      { label: "Remove worktree", value: "worktree", danger: true },
+      { label: "Remove worktree + branch", value: "both", danger: true },
+    ],
+  });
+  if (!choice) return;
+  const { res, data } = await postJSON(`/api/projects/${encodeURIComponent(projectName)}/cleanup`,
+    { branch: c.branch, delete_branch: choice === "both", stop_sessions: true });
+  if (!res.ok) await showError("Couldn't remove worktree", data, res);
+  reload();
+}
+
+async function deleteBranch(projectName, branch, reload) {
+  const ok = await showDialog({
+    title: `Delete branch ${branch}?`,
+    text: "Runs git branch -D: the branch is deleted even if it isn't merged.",
+    actions: [{ label: "Cancel" }, { label: "Delete branch", value: true, danger: true }],
+  });
+  if (!ok) return;
+  const { res, data } = await postJSON(`/api/projects/${encodeURIComponent(projectName)}/cleanup`,
+    { branch, delete_branch: true });
+  if (!res.ok) await showError("Couldn't delete branch", data, res);
+  reload();
+}
+
+// moveSession is the TUI's `w` on a session row: new branch + worktree off
+// the checkout's HEAD, the session's transcript moved there (a running
+// session is stopped first). Like the TUI it doesn't relaunch — but offers to
+// resume right away.
+async function moveSession(projectName, branch, sessionID, isLive, reload) {
+  const newBranch = await promptDialog({
+    title: "Move session to a new worktree",
+    text: `Creates a new branch and worktree from ${branch}'s HEAD and moves the session there.` +
+      (isLive ? " The running session is stopped first." : ""),
+    placeholder: "New branch name",
+    confirmLabel: "Move",
+  });
+  if (!newBranch) return;
+  const body = { branch, session_id: sessionID, new_branch: newBranch };
+  for (;;) {
+    const { res, data } = await postJSON(`/api/projects/${encodeURIComponent(projectName)}/lift`, body);
+    if (res.status === 409 && data.dirty) {
+      const dirty = await showDialog({
+        title: "Uncommitted changes",
+        text: `${branch} has uncommitted changes.`,
+        actions: [
+          { label: "Cancel" },
+          { label: "Leave them here", value: "leave" },
+          { label: "Bring them along", value: "stash" },
+        ],
+      });
+      if (!dirty) return;
+      body.dirty = dirty;
+      continue;
+    }
+    if (!res.ok) { await showError("Couldn't move session", data, res); return; }
+    reload();
+    const resume = await showDialog({
+      title: `Moved to ${newBranch}`,
+      text: data.stash_pop_error ? `Bringing the changes along hit a problem: ${data.stash_pop_error}` : "",
+      actions: [{ label: "Later" }, { label: "Resume now", value: true }],
+    });
+    if (resume) startSession(projectName, { branch: newBranch, resume_id: sessionID });
+    return;
+  }
+}
+
 function chooseMode(conflict) {
   const name = conflict.primary ? conflict.primary.window_name : "the primary window";
   const options = {
@@ -224,6 +313,10 @@ function renderCheckouts(projectName, checkouts, reload) {
         el("span", { class: "checkout-session__actions" }, [
           el("a", { href: chatURL(l.window_id), text: "Open chat" }),
           el("button", {
+            class: "link-btn", type: "button", text: "Move…",
+            onClick: () => moveSession(projectName, c.branch, l.session_id, true, reload),
+          }),
+          el("button", {
             class: "link-btn link-btn--danger", type: "button", text: "Stop",
             onClick: async () => { if (await stopSession(l.window_id, l.window_name)) reload(); },
           }),
@@ -239,7 +332,13 @@ function renderCheckouts(projectName, checkouts, reload) {
       rows.push(el("div", { class: "checkout-session is-recent" }, [
         el("span", { class: "checkout-session__title", text: r.title, title: r.summary || "" }),
         el("span", { class: "checkout-session__meta", text: relativeTime(r.last_active) }),
-        el("span", { class: "checkout-session__actions" }, [resumeBtn]),
+        el("span", { class: "checkout-session__actions" }, [
+          ...(r.live ? [] : [el("button", {
+            class: "link-btn", type: "button", text: "Move…",
+            onClick: () => moveSession(projectName, c.branch, r.session_id, false, reload),
+          })]),
+          resumeBtn,
+        ]),
       ]));
     }
     if (rows.length === 0) rows.push(el("div", { class: "empty-note", text: "No sessions yet." }));
@@ -249,6 +348,10 @@ function renderCheckouts(projectName, checkouts, reload) {
         el("span", { class: "branch-row__name", text: c.branch }),
         tag,
         el("span", { class: "checkout__spacer" }),
+        ...(c.is_main ? [] : [el("button", {
+          class: "link-btn link-btn--danger", type: "button", text: "Remove…",
+          onClick: () => removeWorktree(projectName, c, reload),
+        })]),
         ...(picker ? [picker] : []),
         newBtn,
       ]),
@@ -256,6 +359,31 @@ function renderCheckouts(projectName, checkouts, reload) {
     ]));
   }
   return list;
+}
+
+// renderOtherBranches lists local branches with no checkout — start a
+// session in a new worktree for one, or delete it (the TUI's plain branch
+// rows, with their [merged]/[gone] tags).
+function renderOtherBranches(projectName, branches, reload) {
+  const rest = (branches || []).filter((b) => !b.IsMain && !b.WorktreePath);
+  if (rest.length === 0) return el("div", { class: "empty-note", text: "No other branches." });
+  return el("div", { class: "branch-list" }, rest.map((b) => {
+    const startBtn = el("button", { class: "link-btn", type: "button", text: "Start in worktree" });
+    startBtn.addEventListener("click", () => startSession(projectName, { branch: b.Name }, startBtn));
+    return el("div", { class: "branch-row" }, [
+      el("span", { class: "branch-row__name", text: b.Name }),
+      ...(b.Merged ? [el("span", { class: "branch-tag", text: "merged" })] : []),
+      ...(b.RemoteGone ? [el("span", { class: "branch-tag", text: "gone" })] : []),
+      el("span", { class: "checkout__spacer" }),
+      el("span", { class: "checkout-session__actions" }, [
+        startBtn,
+        el("button", {
+          class: "link-btn link-btn--danger", type: "button", text: "Delete",
+          onClick: () => deleteBranch(projectName, b.Name, reload),
+        }),
+      ]),
+    ]);
+  }));
 }
 
 // renderWorktreeStarter: branches that aren't checked out anywhere, plus a
@@ -327,6 +455,10 @@ function renderProjects(projects) {
       detail.appendChild(el("div", { class: "project__block" }, [
         el("div", { class: "project__sub-heading", text: "New worktree" }),
         renderWorktreeStarter(name, branches),
+      ]));
+      detail.appendChild(el("div", { class: "project__block" }, [
+        el("div", { class: "project__sub-heading", text: "Other branches" }),
+        renderOtherBranches(name, branches, loadDetail),
       ]));
       detail.appendChild(el("div", { class: "project__block" }, [
         el("div", { class: "project__sub-heading", text: "Open pull requests" }),
