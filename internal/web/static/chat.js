@@ -28,6 +28,7 @@ function stripAnsi(text) {
 // ({kind: "skip"}). Slash commands, their output and background-task
 // notifications all arrive as "user" lines in the JSONL but aren't yours.
 function describeUserString(msg, text) {
+  if (msg.isCompactSummary) return { kind: "meta", text: "Conversation compacted" };
   if (msg.isMeta) return { kind: "skip" }; // command caveat, system nudges
   if (msg.origin?.kind === "task-notification" || text.startsWith("<task-notification>")) {
     return { kind: "meta", text: tagText(text, "summary") || "Background task finished" };
@@ -221,7 +222,15 @@ function main() {
   // Per-session state — reset by resetSession when the nav switches to
   // another window in place.
   let windowID = null;
-  const seen = new Set(); // dedup by uuid — EventSource reconnects replay the full backlog
+  // The conversation is a tree (parentUuid links): an edited or resubmitted
+  // prompt leaves the old branch in the file. Only the active branch — the
+  // chain from the newest line back to the root — is shown, like Claude
+  // Code itself. nodes holds every line's parent (forwarded messages and
+  // the backend's "link" stubs for lines it doesn't send); messages keeps
+  // the renderable ones in arrival order for re-rendering on a branch switch.
+  const nodes = new Map(); // uuid -> parent uuid (or null); doubles as the reconnect dedupe
+  let messages = [];
+  let leaf = null;
   const toolCards = new Map(); // tool_use_id -> {card, body} — persists across messages
   let busyRow = null;
 
@@ -375,7 +384,9 @@ function main() {
   function clearTranscript() {
     if (es) { es.close(); es = null; }
     streamSessionID = null;
-    seen.clear();
+    nodes.clear();
+    messages = [];
+    leaf = null;
     toolCards.clear();
     busyRow = null;
     transcript.replaceChildren();
@@ -388,11 +399,58 @@ function main() {
     es = stream;
     stream.addEventListener("transcript", (e) => {
       if (es !== stream) return; // a late event from a stream we've since replaced
-      const msg = JSON.parse(e.data);
-      if (seen.has(msg.uuid)) return;
-      seen.add(msg.uuid);
-      withPin(() => renderMessage(msg));
+      onLine(JSON.parse(e.data));
     });
+  }
+
+  // parentOf follows a compaction boundary (a new root) back to the
+  // conversation it summarises, so compacting doesn't hide earlier history.
+  function parentOf(msg) {
+    return msg.parentUuid ?? msg.logicalParentUuid ?? null;
+  }
+
+  function isToolResultOnly(msg) {
+    const c = msg.type === "user" && msg.message?.content;
+    return Array.isArray(c) && c.length > 0 && c.every((b) => b.type === "tool_result");
+  }
+
+  function onLine(msg) {
+    if (!msg.uuid) {
+      if (msg.type !== "link") withPin(() => renderMessage(msg));
+      return;
+    }
+    if (nodes.has(msg.uuid)) return; // replayed by an EventSource reconnect
+    const parent = parentOf(msg);
+    nodes.set(msg.uuid, parent);
+    const isLink = msg.type === "link";
+    if (!isLink) messages.push(msg);
+
+    if (leaf === null || parent === leaf) {
+      // Continues the active branch.
+      leaf = msg.uuid;
+      if (!isLink) withPin(() => renderMessage(msg));
+    } else if (isToolResultOnly(msg)) {
+      // A parallel tool call's result hangs off an earlier assistant line;
+      // it fills that call's card without moving the branch.
+      withPin(() => renderMessage(msg));
+    } else {
+      // A new branch (edited/resubmitted prompt, rewind): show it instead.
+      leaf = msg.uuid;
+      withPin(rerenderActiveBranch);
+    }
+  }
+
+  function rerenderActiveBranch() {
+    const chain = new Set();
+    for (let u = leaf; u && !chain.has(u); u = nodes.get(u)) chain.add(u);
+    const hadBusy = !!busyRow;
+    transcript.replaceChildren();
+    toolCards.clear();
+    busyRow = null;
+    for (const m of messages) {
+      if (chain.has(m.uuid) || (isToolResultOnly(m) && chain.has(parentOf(m)))) renderMessage(m);
+    }
+    if (hadBusy) setBusyRow(true);
   }
 
   async function sendPrompt(text) {

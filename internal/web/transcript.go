@@ -41,10 +41,22 @@ var forwardedSystemSubtypes = map[string]bool{
 	"scheduled_task_fire": true,
 }
 
+// linkStub stands in for a JSONL line the chat view doesn't render but whose
+// place in the conversation tree it needs.
+type linkStub struct {
+	Type       string  `json:"type"`
+	UUID       string  `json:"uuid"`
+	ParentUUID *string `json:"parentUuid"`
+	// LogicalParentUUID links a compaction boundary (which starts a new
+	// root, parentUuid null) back to the conversation it summarises.
+	LogicalParentUUID string `json:"logicalParentUuid,omitempty"`
+}
+
 // readNew reads any bytes appended to the file since the last call (or
 // since construction, for a fresh cursor), splits them into complete lines,
 // and returns the ones forwarded to the browser: user and assistant lines,
-// plus system lines whose subtype is in forwardedSystemSubtypes. An
+// plus system lines whose subtype is in forwardedSystemSubtypes, verbatim;
+// any other line with a uuid becomes a linkStub. An
 // incomplete trailing line (the
 // file was read mid-write) is held and prefixed onto the next call's data
 // rather than returned or dropped.
@@ -97,8 +109,11 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 			continue
 		}
 		var envelope struct {
-			Type    string `json:"type"`
-			Subtype string `json:"subtype"`
+			Type       string  `json:"type"`
+			Subtype    string  `json:"subtype"`
+			UUID       string  `json:"uuid"`
+			ParentUUID *string `json:"parentUuid"`
+			Logical    string  `json:"logicalParentUuid"`
 		}
 		if json.Unmarshal(line, &envelope) != nil {
 			continue
@@ -106,6 +121,13 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 		switch {
 		case envelope.Type == "user" || envelope.Type == "assistant":
 		case envelope.Type == "system" && forwardedSystemSubtypes[envelope.Subtype]:
+		case envelope.UUID != "":
+			// Not shown, but part of the conversation tree (attachments,
+			// hook summaries…): forward just its link so the browser can
+			// walk parentUuid chains through it to find the active branch.
+			stub, _ := json.Marshal(linkStub{Type: "link", UUID: envelope.UUID, ParentUUID: envelope.ParentUUID, LogicalParentUUID: envelope.Logical})
+			out = append(out, json.RawMessage(stub))
+			continue
 		default:
 			continue
 		}

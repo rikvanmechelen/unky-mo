@@ -21,13 +21,19 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 	assistantLine := `{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}`
 	turnLine := `{"type":"system","subtype":"turn_duration","durationMs":39729,"uuid":"s1"}`
 	commandLine := `{"type":"system","subtype":"local_command","content":"<local-command-stdout>ok</local-command-stdout>","uuid":"s2"}`
-	excluded := []string{
-		`{"type":"file-history-snapshot","uuid":"f1"}`,
-		`{"type":"system","subtype":"stop_hook_summary","uuid":"s3"}`,
-		`{"type":"system","uuid":"s4"}`,
+	// Lines that aren't shown but sit in the conversation tree come back as
+	// link stubs (uuid + parentUuid only); lines without a uuid are dropped.
+	dropped := []string{
+		`{"type":"mode","mode":"default"}`,
+		`{"type":"last-prompt","lastPrompt":"hi"}`,
 	}
-	content := userLine + "\n" + excluded[0] + "\n" + assistantLine + "\n" + excluded[1] + "\n" +
-		turnLine + "\n" + excluded[2] + "\n" + commandLine + "\n"
+	stubbed := []string{
+		`{"type":"attachment","uuid":"t1","parentUuid":"u1","attachment":{"type":"hook"}}`,
+		`{"type":"system","subtype":"stop_hook_summary","uuid":"s3","parentUuid":"a1","hookCount":1}`,
+		`{"type":"system","subtype":"compact_boundary","uuid":"s4","parentUuid":null,"logicalParentUuid":"a1"}`,
+	}
+	content := userLine + "\n" + dropped[0] + "\n" + stubbed[0] + "\n" + assistantLine + "\n" + stubbed[1] + "\n" +
+		turnLine + "\n" + dropped[1] + "\n" + stubbed[2] + "\n" + commandLine + "\n"
 	path := writeFile(t, dir, "session.jsonl", content)
 
 	c := newTranscriptCursor(path)
@@ -35,7 +41,15 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readNew: %v", err)
 	}
-	want := []string{userLine, assistantLine, turnLine, commandLine}
+	want := []string{
+		userLine,
+		`{"type":"link","uuid":"t1","parentUuid":"u1"}`,
+		assistantLine,
+		`{"type":"link","uuid":"s3","parentUuid":"a1"}`,
+		turnLine,
+		`{"type":"link","uuid":"s4","parentUuid":null,"logicalParentUuid":"a1"}`,
+		commandLine,
+	}
 	if len(msgs) != len(want) {
 		t.Fatalf("expected %d messages, got %d: %s", len(want), len(msgs), msgs)
 	}
