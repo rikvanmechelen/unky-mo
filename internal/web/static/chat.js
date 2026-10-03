@@ -273,10 +273,7 @@ function main() {
     });
   }
 
-  composer.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const text = promptInput.value.trim();
-    if (!text) return;
+  async function sendPrompt(text) {
     sendError.textContent = "";
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/prompt`, {
@@ -287,12 +284,31 @@ function main() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         sendError.textContent = data.error || `request failed (${res.status})`;
-        return;
+        return false;
       }
-      promptInput.value = "";
+      return true;
     } catch (err) {
       sendError.textContent = String(err);
+      return false;
     }
+  }
+
+  // A message typed while a just-launched session is still starting is
+  // queued, then sent the first time the session reads idle (pollStatus).
+  let queued = null;
+
+  composer.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = promptInput.value.trim();
+    if (!text) return;
+    if (starting && !everSeen) {
+      queued = text;
+      promptInput.value = "";
+      sendError.textContent = "";
+      pollStatus();
+      return;
+    }
+    if (await sendPrompt(text)) promptInput.value = "";
   });
 
   function setBusyRow(show) {
@@ -393,10 +409,19 @@ function main() {
 
       setBusyRow(status === "active");
 
-      const canSend = status === "idle" || status === "question";
+      if (queued && status === "idle") {
+        const text = queued;
+        queued = null;
+        if (!(await sendPrompt(text))) promptInput.value = text; // give it back to retry
+      }
+      if (queued) setNotice(`Starting session… your message will be sent when it's ready: “${queued}”`);
+
+      const waitingToStart = starting && !everSeen;
+      const canSend = status === "idle" || status === "question" || (waitingToStart && !queued);
       sendBtn.disabled = !canSend;
       sendBtn.classList.toggle("is-locked", !canSend);
-      sendBtn.textContent = canSend ? "Send" : !p ? (starting ? "Starting…" : "No session") : "Claude is working…";
+      sendBtn.textContent = waitingToStart ? (queued ? "Queued" : "Send when ready")
+        : canSend ? "Send" : !p ? "No session" : "Claude is working…";
       promptInput.placeholder = status === "question"
         ? "Type a number or your answer…"
         : "Message this session";
