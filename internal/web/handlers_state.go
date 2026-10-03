@@ -13,6 +13,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillBranches(st)
+	s.fillTokens(st)
 	writeJSON(w, st)
 }
 
@@ -32,6 +33,23 @@ func (s *Server) fillBranches(st *state.StateFile) {
 		path := p.Path
 		v, _ := s.branchCache.get(path, func() (any, error) { return s.deps.Git.Branch(path), nil })
 		p.Branch, _ = v.(string)
+	}
+}
+
+// fillTokens sets each live Claude row's context token count, which the
+// chat view shows next to the 5-hour meter like the sidebar does. Rows
+// running another agent are skipped — their transcripts aren't Claude JSONL.
+// usage.SessionTokens caches by file size, so per-poll calls are cheap.
+func (s *Server) fillTokens(st *state.StateFile) {
+	if s.deps.History == nil {
+		return
+	}
+	for i := range st.Projects {
+		p := &st.Projects[i]
+		if p.SessionID == "" || p.Path == "" || (p.AgentKey != "" && p.AgentKey != "c") {
+			continue
+		}
+		p.Tokens = s.deps.History.ContextTokens(p.Path, p.SessionID)
 	}
 }
 

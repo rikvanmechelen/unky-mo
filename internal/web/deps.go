@@ -26,6 +26,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 	"github.com/rvanmech/unky-mo/internal/tmux"
+	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
 //go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane
@@ -67,6 +68,9 @@ type PromptSender interface {
 type SessionHistory interface {
 	RecentSessions(path string, n int) []claude.RecentSession
 	TranscriptExists(path, sessionID string) bool
+	// ContextTokens is the session's current context footprint — the same
+	// number the TUI sidebar shows next to its 5h bar (usage.SessionTokens).
+	ContextTokens(path, sessionID string) int
 }
 
 // SessionOps is the subset of internal/ops the web dashboard drives to
@@ -229,6 +233,10 @@ func (realSessionHistory) RecentSessions(path string, n int) []claude.RecentSess
 func (realSessionHistory) TranscriptExists(path, sessionID string) bool {
 	_, err := os.Stat(filepath.Join(claude.ProjectsDirForPath(path), sessionID+".jsonl"))
 	return err == nil
+}
+
+func (realSessionHistory) ContextTokens(path, sessionID string) int {
+	return usage.SessionTokens(filepath.Join(claude.ProjectsDirForPath(path), sessionID+".jsonl"))
 }
 
 // realSessionOps adapts an *ops.Context to SessionOps.

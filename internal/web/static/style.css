@@ -309,7 +309,7 @@ h1, h2 {
 .nav-session__status { font-size: 11px; line-height: 1; }
 
 .meter--compact { gap: 6px; }
-.meter--compact .meter__row { font-size: 12px; line-height: 1; }
+.meter--compact .meter__row { font-size: 12px; line-height: 1.25; flex-wrap: wrap; column-gap: 8px; }
 .meter--compact .meter__label { font-size: 12px; }
 .meter--compact .meter__pct { font-size: 12px; line-height: 1; letter-spacing: 0; }
 .meter--compact .meter__track { height: 4px; background: var(--gray-ddd); }

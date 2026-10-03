@@ -310,6 +310,20 @@ func (m *MockSessionHistory) EXPECT() *MockSessionHistoryMockRecorder {
 	return m.recorder
 }
 
+// ContextTokens mocks base method.
+func (m *MockSessionHistory) ContextTokens(path, sessionID string) int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ContextTokens", path, sessionID)
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// ContextTokens indicates an expected call of ContextTokens.
+func (mr *MockSessionHistoryMockRecorder) ContextTokens(path, sessionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ContextTokens", reflect.TypeOf((*MockSessionHistory)(nil).ContextTokens), path, sessionID)
+}
+
 // RecentSessions mocks base method.
 func (m *MockSessionHistory) RecentSessions(path string, n int) []claude.RecentSession {
 	m.ctrl.T.Helper()

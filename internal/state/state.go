@@ -24,6 +24,7 @@ type ProjectState struct {
 	InstanceID string `json:"instance_id,omitempty"` // mo-generated instance ID (from @mo_instance_id window option)
 	AgentKey   string `json:"agent_key,omitempty"`   // coding agent mnemonic (from @mo_agent window option); empty = default
 	Index      int    `json:"index,omitempty"`       // 0 = primary, 2+ = sibling ordinal; for stable sort
+	Tokens     int    `json:"tokens,omitempty"`      // session context footprint; filled in by mo web's /api/state, never written by the TUI
 
 	// Set iff Status == "question" — Claude is blocked on an interactive
 	// tool (e.g. AskUserQuestion) and needs a human answer to proceed.
