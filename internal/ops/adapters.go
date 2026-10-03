@@ -80,6 +80,15 @@ func (a *tmuxClientAdapter) WindowPanePIDs(target string) (map[int]bool, error) 
 func (a *tmuxClientAdapter) ListWindowPanes(target string) ([]ttmux.PaneInfo, error) {
 	return a.c.ListWindowPanes(target)
 }
+func (a *tmuxClientAdapter) SessionExistsNamed(name string) bool {
+	return a.c.SessionExistsNamed(name)
+}
+func (a *tmuxClientAdapter) StartPersistentSession(name, cwd, command string) error {
+	return a.c.StartPersistentSession(name, cwd, command)
+}
+func (a *tmuxClientAdapter) RespawnPane(target, command string) error {
+	return a.c.RespawnPane(target, command)
+}
 
 // NewDefaultClaudeReader returns the production ClaudeReader implementation.
 func NewDefaultClaudeReader() ClaudeReader { return defaultClaudeReader{} }

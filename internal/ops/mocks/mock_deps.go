@@ -201,6 +201,20 @@ func (mr *MockTmuxClientMockRecorder) RenameWindow(target, newName any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameWindow", reflect.TypeOf((*MockTmuxClient)(nil).RenameWindow), target, newName)
 }
 
+// RespawnPane mocks base method.
+func (m *MockTmuxClient) RespawnPane(target, command string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RespawnPane", target, command)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RespawnPane indicates an expected call of RespawnPane.
+func (mr *MockTmuxClientMockRecorder) RespawnPane(target, command any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RespawnPane", reflect.TypeOf((*MockTmuxClient)(nil).RespawnPane), target, command)
+}
+
 // SelectPane mocks base method.
 func (m *MockTmuxClient) SelectPane(target string) error {
 	m.ctrl.T.Helper()
@@ -241,6 +255,20 @@ func (m *MockTmuxClient) SendRawKeys(target, keys string) error {
 func (mr *MockTmuxClientMockRecorder) SendRawKeys(target, keys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendRawKeys", reflect.TypeOf((*MockTmuxClient)(nil).SendRawKeys), target, keys)
+}
+
+// SessionExistsNamed mocks base method.
+func (m *MockTmuxClient) SessionExistsNamed(name string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SessionExistsNamed", name)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// SessionExistsNamed indicates an expected call of SessionExistsNamed.
+func (mr *MockTmuxClientMockRecorder) SessionExistsNamed(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SessionExistsNamed", reflect.TypeOf((*MockTmuxClient)(nil).SessionExistsNamed), name)
 }
 
 // SessionName mocks base method.
@@ -296,6 +324,20 @@ func (m *MockTmuxClient) SplitWindow(target string, cols int, cwd, command strin
 func (mr *MockTmuxClientMockRecorder) SplitWindow(target, cols, cwd, command any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SplitWindow", reflect.TypeOf((*MockTmuxClient)(nil).SplitWindow), target, cols, cwd, command)
+}
+
+// StartPersistentSession mocks base method.
+func (m *MockTmuxClient) StartPersistentSession(name, cwd, command string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "StartPersistentSession", name, cwd, command)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// StartPersistentSession indicates an expected call of StartPersistentSession.
+func (mr *MockTmuxClientMockRecorder) StartPersistentSession(name, cwd, command any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartPersistentSession", reflect.TypeOf((*MockTmuxClient)(nil).StartPersistentSession), name, cwd, command)
 }
 
 // SwitchToWindow mocks base method.

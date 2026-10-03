@@ -260,3 +260,33 @@ func TestIntegrationDefaultClientBuildsBareArgs(t *testing.T) {
 		}
 	}
 }
+
+// TestIntegrationPersistentSessionSurvivesInstantExitAndRespawns covers the
+// mo-web lifecycle: a command that dies immediately (e.g. `mo web` on a busy
+// port) must leave a dead pane behind rather than a vanished session, and
+// RespawnPane must bring it back with a new command.
+func TestIntegrationPersistentSessionSurvivesInstantExitAndRespawns(t *testing.T) {
+	c := newTestClient(t)
+
+	if err := c.StartPersistentSession("web", "", "exit 3"); err != nil {
+		t.Fatalf("StartPersistentSession: %v", err)
+	}
+	paneField := func(format string) string {
+		out, _ := c.tmuxCmd("display-message", "-p", "-t", "web:", format).Output()
+		return strings.TrimSpace(string(out))
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for paneField("#{pane_dead}") != "1" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !c.SessionExistsNamed("web") || paneField("#{pane_dead}") != "1" {
+		t.Fatal("session should survive its command exiting, with a dead pane")
+	}
+
+	if err := c.RespawnPane("web:", "sleep 30"); err != nil {
+		t.Fatalf("RespawnPane: %v", err)
+	}
+	if got := paneField("#{pane_dead}"); got != "0" {
+		t.Errorf("pane_dead after respawn = %q, want 0", got)
+	}
+}

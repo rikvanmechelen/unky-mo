@@ -54,6 +54,9 @@ type TmuxClient interface {
 	WindowExists(name string) bool
 	WindowPanePIDs(target string) (map[int]bool, error)
 	ListWindowPanes(target string) ([]ttmux.PaneInfo, error)
+	SessionExistsNamed(name string) bool
+	StartPersistentSession(name, cwd, command string) error
+	RespawnPane(target, command string) error
 }
 
 // ClaudeReader is the subset of the internal/claude package that ops reads

@@ -25,6 +25,26 @@ type Config struct {
 	Projects      []project.Project `toml:"project"`
 	Tickets       TicketsConfig     `toml:"tickets"`
 	Agents        []AgentConfig     `toml:"agent"`
+	Web           WebConfig         `toml:"web"`
+}
+
+const defaultWebAddr = ":7890"
+
+// WebConfig controls the `mo web` dashboard the main TUI starts in the
+// background (detached mo-web tmux session). Set Disabled = true to stop the
+// TUI from starting it; `mo web` can still be run by hand.
+type WebConfig struct {
+	Disabled bool   `toml:"disabled"`
+	Addr     string `toml:"addr"` // default ":7890" — all interfaces (localhost + LAN)
+}
+
+// ListenAddr returns Addr, or the default when unset. A method rather than a
+// Load() default so it also applies when no config file exists.
+func (w WebConfig) ListenAddr() string {
+	if w.Addr == "" {
+		return defaultWebAddr
+	}
+	return w.Addr
 }
 
 // AgentConfig describes a coding agent that can be launched in a tmux pane.

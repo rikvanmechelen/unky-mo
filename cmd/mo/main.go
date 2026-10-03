@@ -92,7 +92,8 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading projects: %w", err)
 	}
-	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents, cfg.WorkspaceDirs, cfg.Projects)
+	notice := strings.Join(startupChecks(cfg), " · ")
+	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents, cfg.WorkspaceDirs, cfg.Projects, notice)
 }
 
 func listCmd() *cobra.Command {
@@ -887,14 +888,9 @@ func hooksCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Install Unky Mo status hooks into Claude settings",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			statusScript, _ := filepath.Abs("scripts/status-hook.sh")
-
-			if _, err := os.Stat(statusScript); err != nil {
-				return fmt.Errorf("script not found: %s\nRun this from the unky-mo project directory", statusScript)
-			}
-
-			if err := claude.InstallHooksV2(statusScript); err != nil {
-				return fmt.Errorf("installing hooks: %w", err)
+			statusScript, _, err := installStatusHooks()
+			if err != nil {
+				return err
 			}
 			fmt.Println("Hooks installed into", claude.ClaudeSettingsPath())
 			fmt.Println("  Status hook:", statusScript)

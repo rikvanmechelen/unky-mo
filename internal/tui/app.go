@@ -192,6 +192,7 @@ type Model struct {
 	statusWatcher  *status.Watcher  // fsnotify watcher for JSONL reconciliation
 	statusSub      <-chan status.StatusChange // subscription to status changes
 	statusMsg      string
+	startupNotice  string // emitted once as a statusMsgEvent from Init
 	activeSessions     int
 	attentionCount     int
 	gitStatuses    map[string]project.GitStatus // project path → git status
@@ -487,6 +488,10 @@ func (m Model) Init() tea.Cmd {
 	// first paint. Subsequent fetches come from ticketsTick.
 	if len(m.ticketsProviders) > 0 {
 		cmds = append(cmds, m.fetchTickets(), ticketsTick(m.ticketsRefreshPeriod))
+	}
+	if m.startupNotice != "" {
+		notice := m.startupNotice
+		cmds = append(cmds, func() tea.Msg { return statusMsgEvent(notice) })
 	}
 	return tea.Batch(cmds...)
 }
@@ -5009,7 +5014,9 @@ func (m Model) attachSession() tea.Cmd {
 	}
 }
 
-func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project) error {
+// startupNotice, if non-empty, is shown in the status bar on first paint
+// (e.g. results of the CLI's pre-TUI installation checks).
+func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project, startupNotice string) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
 		// Use the actual current session — the user may be in a session
@@ -5039,6 +5046,7 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 	}
 
 	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg, agents, workspaceDirs, manualProjects)
+	m.startupNotice = startupNotice
 	p := tea.NewProgram(m)
 	_, err := p.Run()
 

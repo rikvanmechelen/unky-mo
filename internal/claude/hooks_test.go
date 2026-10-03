@@ -313,3 +313,98 @@ func TestUninstallHooks_RemovesBothV1AndV2(t *testing.T) {
 		t.Error("V2 check should be false after uninstall")
 	}
 }
+
+func TestEnsureHooksV2_InstallsThenNoops(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	changed, err := EnsureHooksV2("/opt/status-hook.sh")
+	if err != nil || !changed {
+		t.Fatalf("first EnsureHooksV2: changed=%v err=%v, want install", changed, err)
+	}
+	before, _ := os.ReadFile(ClaudeSettingsPath())
+	changed, err = EnsureHooksV2("/opt/status-hook.sh")
+	if err != nil || changed {
+		t.Fatalf("second EnsureHooksV2: changed=%v err=%v, want no-op", changed, err)
+	}
+	after, _ := os.ReadFile(ClaudeSettingsPath())
+	if string(before) != string(after) {
+		t.Error("no-op EnsureHooksV2 rewrote settings.json")
+	}
+}
+
+func TestEnsureHooksV2_UpgradesV1(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := EnsureHooksV2("/opt/status-hook.sh")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v, want upgrade", changed, err)
+	}
+	if !HooksV2Installed() {
+		t.Fatal("V2 hooks should be installed")
+	}
+	dump, _ := os.ReadFile(ClaudeSettingsPath())
+	if strings.Contains(string(dump), "/opt/stop.sh") || strings.Contains(string(dump), "/opt/notify.sh") {
+		t.Error("V1 hook commands should be removed")
+	}
+}
+
+func TestEnsureHooksV2_RewritesStaleScriptPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := InstallHooksV2("/old/checkout/scripts/status-hook.sh"); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := EnsureHooksV2("/new/status-hook.sh")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v, want rewrite", changed, err)
+	}
+	dump, _ := os.ReadFile(ClaudeSettingsPath())
+	if strings.Contains(string(dump), "/old/checkout") {
+		t.Error("stale script path should be gone")
+	}
+}
+
+func TestEnsureHooksV2_PreservesForeignHooks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := writeSettings(map[string]interface{}{"hooks": map[string]interface{}{
+		"Stop": []interface{}{map[string]interface{}{"hooks": []interface{}{
+			map[string]interface{}{"type": "command", "command": "/usr/bin/mine"},
+		}}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureHooksV2("/opt/status-hook.sh"); err != nil {
+		t.Fatal(err)
+	}
+	dump, _ := os.ReadFile(ClaudeSettingsPath())
+	if !strings.Contains(string(dump), "/usr/bin/mine") {
+		t.Error("user's own Stop hook should survive")
+	}
+	if changed, _ := EnsureHooksV2("/opt/status-hook.sh"); changed {
+		t.Error("foreign hooks alongside ours should still count as up to date")
+	}
+}
+
+func TestEnsureStatusHookScript_WritesOnceExecutable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "hooks")
+	path, changed, err := EnsureStatusHookScript(dir)
+	if err != nil || !changed {
+		t.Fatalf("first write: changed=%v err=%v", changed, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0111 == 0 {
+		t.Fatalf("script should exist and be executable: %v %v", info, err)
+	}
+	if _, changed, _ := EnsureStatusHookScript(dir); changed {
+		t.Error("identical script should not be rewritten")
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n# stale\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, _ := EnsureStatusHookScript(dir); !changed {
+		t.Error("stale script should be replaced")
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(statusHookScript) {
+		t.Error("script content should match the embedded copy")
+	}
+}

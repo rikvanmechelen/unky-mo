@@ -1,11 +1,41 @@
 package claude
 
 import (
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// statusHookScript is the V2 unified hook script, embedded so the installed
+// hooks don't depend on where the unky-mo checkout lives.
+//
+//go:embed status-hook.sh
+var statusHookScript []byte
+
+// EnsureStatusHookScript writes the embedded status hook script to
+// dir/status-hook.sh (0755) unless an identical copy is already there.
+// Returns the script path and whether it was (re)written.
+func EnsureStatusHookScript(dir string) (path string, changed bool, err error) {
+	path = filepath.Join(dir, "status-hook.sh")
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, statusHookScript) {
+		return path, false, nil
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", false, err
+	}
+	// Write-then-rename so a hook firing mid-update never runs a torn script.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, statusHookScript, 0755); err != nil {
+		return "", false, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return "", false, err
+	}
+	return path, true, nil
+}
 
 const hookMarker = "unky-mo"
 
@@ -105,7 +135,7 @@ func InstallHooksV2(statusScript string) error {
 			"hooks": []interface{}{
 				map[string]interface{}{
 					"type":    "command",
-					"command": fmt.Sprintf("HOOK_EVENT_NAME=%s %s # %s", ht.name, statusScript, hookMarker),
+					"command": v2HookCommand(ht.name, statusScript),
 					"timeout": 5,
 				},
 			},
@@ -119,6 +149,59 @@ func InstallHooksV2(statusScript string) error {
 
 	settings["hooks"] = hooks
 	return writeSettings(settings)
+}
+
+func v2HookCommand(hookType, statusScript string) string {
+	return fmt.Sprintf("HOOK_EVENT_NAME=%s %s # %s", hookType, statusScript, hookMarker)
+}
+
+// EnsureHooksV2 installs the V2 hook set unless Claude's settings already
+// hold exactly it for statusScript: one unky-mo entry per V2 hook type, with
+// the expected command and matcher. Anything else — V1 leftovers, a missing
+// type, a stale script path, duplicates — triggers a reinstall. Returns
+// whether settings.json was rewritten.
+func EnsureHooksV2(statusScript string) (bool, error) {
+	settings, err := readSettings()
+	if err != nil {
+		return false, fmt.Errorf("reading settings: %w", err)
+	}
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	if hooksV2UpToDate(hooks, statusScript) {
+		return false, nil
+	}
+	if err := InstallHooksV2(statusScript); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func hooksV2UpToDate(hooks map[string]interface{}, statusScript string) bool {
+	for _, ht := range v2HookTypes {
+		entries, _ := hooks[ht.name].([]interface{})
+		var ours []map[string]interface{}
+		for _, e := range entries {
+			if entryHasMarker(e) {
+				obj, _ := e.(map[string]interface{})
+				ours = append(ours, obj)
+			}
+		}
+		if len(ours) != 1 {
+			return false
+		}
+		matcher, _ := ours[0]["matcher"].(string)
+		if matcher != ht.matcher {
+			return false
+		}
+		list, _ := ours[0]["hooks"].([]interface{})
+		if len(list) != 1 {
+			return false
+		}
+		h, _ := list[0].(map[string]interface{})
+		if cmd, _ := h["command"].(string); cmd != v2HookCommand(ht.name, statusScript) {
+			return false
+		}
+	}
+	return true
 }
 
 // HooksV2Installed checks if the expanded V2 hook set is present.

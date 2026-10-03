@@ -39,6 +39,8 @@ This adds hooks to `~/.claude/settings.json` so Claude Code can notify Unky Mo o
 mo hooks install
 ```
 
+The TUI also does this automatically on every start: it writes the hook script (embedded in the binary) to `~/.config/unky-mo/hooks/status-hook.sh` and reinstalls the hooks if they're missing, outdated (e.g. V1), or point elsewhere — so this step is optional.
+
 ### 3. Launch
 
 ```bash
@@ -413,6 +415,14 @@ mo web                  # serve on http://127.0.0.1:7890
 mo web --addr :8080     # custom address
 ```
 
+You usually don't need to run it yourself: the TUI starts it on launch in a detached `mo-web` tmux session (`tmux attach -t mo-web` for its output), listening on all interfaces so it's reachable at both `localhost` and your LAN IP — the URLs show in the status bar. LAN access requires a login (`mo web auth set`); without one it falls back to localhost only. Every TUI start — including `ctrl+alt+r` — restarts it with the current binary, so web changes are picked up after `make install`. Configure in `config.toml`:
+
+```toml
+[web]
+addr = ":7890"      # default
+disabled = false    # true = don't start it with the TUI
+```
+
 A dashboard — sessions, usage, projects, worktrees/branches, pull requests, and Jira tickets — viewable in a browser. It's a separate process from the TUI: it doesn't need to run inside tmux, and it reads the same shared state file the sidebars use rather than talking to tmux directly, so it's safe to leave running alongside (or instead of) the TUI.
 
 Click **chat** next to any live session to open a chat-style view of that session: the full conversation history (user prompts, assistant replies, collapsible tool-use/tool-result cards — e.g. `Bash` shows its description, `Edit`/`Write`/`Read` show the file path relative to the project root) renders immediately, and new turns stream in live as Claude works. There's a message box too — type a prompt and it's typed into the real session via tmux, same as if you'd typed it yourself; the send button is disabled whenever the session isn't idle or awaiting your answer to an interactive question (mid-turn, or a permission decision), so you can't collide with Claude mid-response. If Claude asks an interactive multi-choice question (e.g. via `AskUserQuestion`), it shows up as a banner above the message box with the question and options — type the option number (or your own answer) and send, same as you would in the terminal.
@@ -567,7 +577,7 @@ Manually defined `[[project]]` entries override auto-discovered settings for the
 
 ## How Status Detection Works
 
-When you run `mo hooks install`, Unky Mo installs hooks into `~/.claude/settings.json` for seven Claude Code lifecycle events:
+When you run `mo hooks install` (or start the TUI), Unky Mo installs hooks into `~/.claude/settings.json` for seven Claude Code lifecycle events:
 
 - **UserPromptSubmit** — User sends a prompt → session becomes active
 - **PreToolUse** — Claude calls a tool → reaffirms active status
@@ -739,7 +749,6 @@ unky-mo/
 │       ├── styles.go       # Lipgloss theme (dark background ~#14191E)
 │       └── sidebar/        # Compact sidebar TUI for tmux panes
 ├── scripts/
-│   ├── status-hook.sh      # Claude Code unified status hook (V2)
 │   ├── notify-hook.sh      # Claude Code notification hook (V1 legacy)
 │   └── stop-hook.sh        # Claude Code stop hook (V1 legacy)
 ├── Makefile

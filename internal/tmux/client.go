@@ -15,6 +15,11 @@ import (
 // preserves the shells.
 const MoTermsSession = "mo-terms"
 
+// MoWebSession is the detached tmux session the main TUI runs `mo web` in,
+// so the dashboard survives TUI restarts and its output stays inspectable
+// (`tmux attach -t mo-web`).
+const MoWebSession = "mo-web"
+
 // Client wraps tmux commands for session/window management.
 type Client struct {
 	SessionName string
@@ -89,6 +94,27 @@ func (c *Client) NewDetachedSession(name, cwd string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// StartPersistentSession creates a detached session whose initial pane runs
+// command (handed to tmux's shell, so the caller quotes it) with
+// remain-on-exit on, so the pane — and its output — outlive the command and
+// RespawnPane can restart it. Both happen in one tmux invocation so a command
+// that exits immediately can't take the session down before the option lands.
+// cwd may be empty.
+func (c *Client) StartPersistentSession(name, cwd, command string) error {
+	args := []string{"new-session", "-d", "-s", name}
+	if cwd != "" {
+		args = append(args, "-c", cwd)
+	}
+	args = append(args, command, ";", "set-window-option", "-t", name+":", "remain-on-exit", "on")
+	return c.runTmux(args...)
+}
+
+// RespawnPane kills whatever target is running (if anything — a dead
+// remain-on-exit pane works too) and restarts it with command.
+func (c *Client) RespawnPane(target, command string) error {
+	return c.runTmux("respawn-pane", "-k", "-t", target, command)
 }
 
 // SetSessionOption sets a tmux session option (set-option -t <session>).
