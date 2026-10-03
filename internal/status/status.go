@@ -71,6 +71,11 @@ type sessionState struct {
 	LastHookAt   time.Time
 	PendingTool  string          // tool name Claude is blocked on, set iff Status == StatusQuestion
 	PendingInput json.RawMessage // that tool's raw input, set iff Status == StatusQuestion
+	// QuestionFromAgent marks a StatusQuestion that came from the
+	// `claude agents --json` signal rather than a PreToolUse hook (so there's
+	// no PendingTool/PendingInput to show). Only that same signal may clear
+	// it on "busy" — see ProcessAgentStatus.
+	QuestionFromAgent bool
 }
 
 // isInteractiveTool reports whether a tool is known to block waiting on a
@@ -195,6 +200,7 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 	// the first's, even though there's no status change to emit for it).
 	s.PendingTool = pendingTool
 	s.PendingInput = pendingInput
+	s.QuestionFromAgent = false
 	if old == newStatus {
 		// No status transition — don't emit, but the pending-question
 		// refresh above still applies.
@@ -227,8 +233,12 @@ func (m *Manager) ProcessJSONLChange(sessionID, path string) {
 		return
 	}
 
-	// Permission is authoritative from hooks — JSONL can't downgrade it.
-	if s.Status == StatusPermission {
+	// Permission and Question are authoritative from hooks/the agents
+	// signal — JSONL can't downgrade them. A tool blocked on a human is never
+	// in the transcript, yet Claude Code keeps appending metadata entries
+	// (titles, mode, attachments) while it waits, which would otherwise read
+	// as "active" and wipe the pending question.
+	if s.Status == StatusPermission || s.Status == StatusQuestion {
 		return
 	}
 
@@ -238,6 +248,66 @@ func (m *Manager) ProcessJSONLChange(sessionID, path string) {
 	}
 	s.Status = jsonlStatus
 	m.emit(StatusChange{SessionID: sessionID, Old: old, New: jsonlStatus})
+}
+
+// Values reported by `claude agents --json` (claude.Agent.Status/WaitingFor).
+const (
+	agentStatusBusy         = "busy"
+	agentStatusIdle         = "idle"
+	agentStatusWaiting      = "waiting"
+	agentWaitingInputNeeded = "input needed"
+)
+
+// ProcessAgentStatus reconciles a session against Claude Code's own live
+// status, as reported by `claude agents --json` at observedAt. This is the
+// backstop for StatusQuestion when the PreToolUse hook didn't reach us (hooks
+// not installed / dropped): Claude reports "waiting" + "input needed" while an
+// AskUserQuestion menu is open. Only that exact pair maps to Question — other
+// "waiting" reasons ("dialog open", …) are left alone, and so is Permission.
+//
+// A hook that arrived after observedAt is fresher than this snapshot, so the
+// snapshot is ignored. Leaving Question: "idle" clears any question (the
+// session is neither working nor blocked); "busy" clears only a question this
+// signal set itself — a hook-sourced question can briefly read "busy" before
+// Claude publishes its waiting state, and clearing it would lose its content.
+func (m *Manager) ProcessAgentStatus(sessionID, agentStatus, waitingFor string, observedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[sessionID]
+	if ok && s.LastHookAt.After(observedAt) {
+		return
+	}
+	old := StatusNone
+	if ok {
+		old = s.Status
+	}
+
+	var newStatus SessionStatus
+	switch {
+	case agentStatus == agentStatusWaiting && waitingFor == agentWaitingInputNeeded:
+		if old == StatusQuestion || old == StatusPermission {
+			return
+		}
+		newStatus = StatusQuestion
+	case old != StatusQuestion:
+		return
+	case agentStatus == agentStatusIdle:
+		newStatus = StatusIdle
+	case agentStatus == agentStatusBusy && s.QuestionFromAgent:
+		newStatus = StatusActive
+	default:
+		return
+	}
+
+	if !ok {
+		s = &sessionState{}
+		m.sessions[sessionID] = s
+	}
+	s.Status = newStatus
+	s.PendingTool, s.PendingInput = "", nil
+	s.QuestionFromAgent = newStatus == StatusQuestion
+	m.emit(StatusChange{SessionID: sessionID, Old: old, New: newStatus})
 }
 
 // MarkDead removes a session whose PID is no longer alive.

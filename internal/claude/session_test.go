@@ -68,3 +68,22 @@ func TestLiveSessionsOmitsAllFlagAndFiltersDeadPIDs(t *testing.T) {
 		t.Fatalf("want only the live session to survive, got %+v", sessions)
 	}
 }
+
+func TestLiveSessionsCarriesAgentStatus(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cmd := mock_exec.NewMockCommander(ctrl)
+	cmd.EXPECT().
+		Output(gomock.Any(), "", "claude", "agents", "--json").
+		Return([]byte(`[
+			{"pid":`+strconv.Itoa(os.Getpid())+`,"cwd":"/tmp/q","kind":"interactive","startedAt":1,"sessionId":"q","name":"","status":"waiting","waitingFor":"input needed"}
+		]`), nil, nil)
+	withSessionsCommander(t, cmd)
+
+	sessions, err := LiveSessions()
+	if err != nil {
+		t.Fatalf("LiveSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Status != "waiting" || sessions[0].WaitingFor != "input needed" {
+		t.Fatalf("want status/waitingFor carried through, got %+v", sessions)
+	}
+}

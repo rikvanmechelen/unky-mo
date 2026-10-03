@@ -2453,6 +2453,9 @@ func (m Model) refreshSessions() tea.Cmd {
 	mgr := m.statusMgr
 	watcher := m.statusWatcher
 	return func() tea.Msg {
+		// Taken before the CLI call so any hook landing during it counts as
+		// fresher than this snapshot (see status.Manager.ProcessAgentStatus).
+		observedAt := time.Now()
 		sessions, _ := claudeClient.LiveSessions()
 		var hostPIDs map[int]bool
 		if tmuxClient != nil {
@@ -2477,6 +2480,7 @@ func (m Model) refreshSessions() tea.Cmd {
 			if isExternal {
 				st = StatusExternal
 			} else if mgr != nil {
+				mgr.ProcessAgentStatus(s.SessionID, s.Status, s.WaitingFor, observedAt)
 				st = mgrStatusToTUI(mgr.Status(s.SessionID))
 				// If the status manager has no state yet for this session,
 				// bootstrap it via a JSONL read and start watching.

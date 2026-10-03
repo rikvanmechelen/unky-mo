@@ -20,7 +20,10 @@ type Agent struct {
 	StartedAt int64  `json:"startedAt"`
 	SessionID string `json:"sessionId"`
 	Name      string `json:"name"`
-	Status    string `json:"status"`
+	Status    string `json:"status"` // "busy", "idle", or "waiting"
+	// WaitingFor qualifies Status "waiting" — e.g. "input needed" while an
+	// AskUserQuestion menu is open, "dialog open" for other modal dialogs.
+	WaitingFor string `json:"waitingFor,omitempty"`
 }
 
 // LiveAgents lists sessions via `claude agents --json` instead of reading

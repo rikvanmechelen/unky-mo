@@ -16,12 +16,14 @@ build:
 
 install: build
 	mkdir -p $(GOBIN)
-	cp $(BINARY) $(GOBIN)/$(BINARY)
+	@# Copy then rename: Linux refuses to overwrite a running binary in place
+	@# ("Text file busy"), but a rename swaps the inode out from under it.
+	cp $(BINARY) $(GOBIN)/$(BINARY).new && mv -f $(GOBIN)/$(BINARY).new $(GOBIN)/$(BINARY)
 	@echo "Installed $(BINARY) to $(GOBIN)/$(BINARY)"
 	@# Also install to the PATH location if it differs from GOBIN (e.g. stale ~/go/bin/mo).
 	@PATH_MO=$$(command -v $(BINARY) 2>/dev/null); \
 	if [ -n "$$PATH_MO" ] && [ "$$(cd "$$(dirname "$$PATH_MO")" && pwd)" != "$$(cd "$(GOBIN)" && pwd)" ]; then \
-		cp $(BINARY) "$$PATH_MO"; \
+		cp $(BINARY) "$$PATH_MO.new" && mv -f "$$PATH_MO.new" "$$PATH_MO"; \
 		echo "Also updated $$PATH_MO"; \
 	fi
 	@case ":$$PATH:" in \

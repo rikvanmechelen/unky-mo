@@ -29,6 +29,10 @@ type Session struct {
 	Kind       string `json:"kind"`
 	Entrypoint string `json:"entrypoint"`
 	Name       string `json:"name"`
+	// Status/WaitingFor are Claude Code's own live view of the session
+	// (see Agent). Fed into status.Manager as a reconciliation signal.
+	Status     string `json:"status,omitempty"`
+	WaitingFor string `json:"waitingFor,omitempty"`
 }
 
 // SessionStatus represents the detected state of a Claude session.
@@ -74,12 +78,14 @@ func sessionsViaCLI(all bool) ([]Session, error) {
 	sessions := make([]Session, 0, len(agents))
 	for _, a := range agents {
 		sessions = append(sessions, Session{
-			PID:       a.PID,
-			SessionID: a.SessionID,
-			CWD:       a.CWD,
-			StartedAt: a.StartedAt,
-			Kind:      a.Kind,
-			Name:      a.Name,
+			PID:        a.PID,
+			SessionID:  a.SessionID,
+			CWD:        a.CWD,
+			StartedAt:  a.StartedAt,
+			Kind:       a.Kind,
+			Name:       a.Name,
+			Status:     a.Status,
+			WaitingFor: a.WaitingFor,
 		})
 	}
 	return sessions, nil
@@ -399,10 +405,10 @@ func isUserSlashCommand(content json.RawMessage) bool {
 
 // RecentSession represents a historical Claude Code session from the JSONL files.
 type RecentSession struct {
-	SessionID string
-	Title     string // descriptive name from Claude (e.g. "unky-mo-session-orchestrator")
-	Summary   string // first user message, truncated
-	GitBranch string
+	SessionID  string
+	Title      string // descriptive name from Claude (e.g. "unky-mo-session-orchestrator")
+	Summary    string // first user message, truncated
+	GitBranch  string
 	LastActive time.Time
 	IsLive     bool // PID is still running
 }

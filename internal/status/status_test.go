@@ -342,3 +342,113 @@ func TestConcurrency_SafeUnderParallelWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcile_DoesNotDowngradeQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.readJSONL = func(string) SessionStatus { return StatusActive }
+
+	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[]}`)})
+
+	// Claude appends metadata (titles, attachments) while the menu is open.
+	mgr.ProcessJSONLChange("s1", "/fake/path.jsonl")
+	if got := mgr.Status("s1"); got != StatusQuestion {
+		t.Errorf("after reconcile: got %v, want StatusQuestion", got)
+	}
+	if tool, _, ok := mgr.PendingQuestion("s1"); !ok || tool != "AskUserQuestion" {
+		t.Errorf("pending question lost: tool=%q ok=%v", tool, ok)
+	}
+}
+
+func TestAgentStatus_WaitingInputNeeded_SetsQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
+
+	mgr.ProcessAgentStatus("s1", "waiting", "input needed", time.Now())
+	if got := mgr.Status("s1"); got != StatusQuestion {
+		t.Fatalf("got %v, want StatusQuestion", got)
+	}
+	if tool, input, ok := mgr.PendingQuestion("s1"); !ok || tool != "" || input != nil {
+		t.Errorf("PendingQuestion = (%q, %s, %v), want empty content with ok", tool, input, ok)
+	}
+}
+
+func TestAgentStatus_UnknownSession_WaitingInputNeeded_SetsQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessAgentStatus("s1", "waiting", "input needed", time.Now())
+	if got := mgr.Status("s1"); got != StatusQuestion {
+		t.Errorf("got %v, want StatusQuestion", got)
+	}
+}
+
+func TestAgentStatus_OtherWaitingReasons_Ignored(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
+	mgr.ProcessAgentStatus("s1", "waiting", "dialog open", time.Now())
+	if got := mgr.Status("s1"); got != StatusActive {
+		t.Errorf("got %v, want StatusActive", got)
+	}
+}
+
+func TestAgentStatus_DoesNotOverridePermission(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventPermissionRequest, SessionID: "s1"})
+	mgr.ProcessAgentStatus("s1", "waiting", "input needed", time.Now())
+	if got := mgr.Status("s1"); got != StatusPermission {
+		t.Errorf("got %v, want StatusPermission", got)
+	}
+}
+
+func TestAgentStatus_KeepsHookQuestionContent(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "AskUserQuestion", ToolInput: []byte(`{"q":1}`)})
+	mgr.ProcessAgentStatus("s1", "waiting", "input needed", time.Now())
+	if tool, input, _ := mgr.PendingQuestion("s1"); tool != "AskUserQuestion" || string(input) != `{"q":1}` {
+		t.Errorf("content replaced: tool=%q input=%s", tool, input)
+	}
+}
+
+func TestAgentStatus_StaleSnapshotIgnored(t *testing.T) {
+	mgr := NewManager()
+	observedAt := time.Now()
+	mgr.ProcessHookEvent(HookEvent{Type: EventStop, SessionID: "s1"}) // hook lands after the snapshot
+	mgr.ProcessAgentStatus("s1", "waiting", "input needed", observedAt)
+	if got := mgr.Status("s1"); got != StatusIdle {
+		t.Errorf("got %v, want StatusIdle (hook is fresher)", got)
+	}
+}
+
+func TestAgentStatus_Busy_ClearsOnlyAgentSourcedQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessAgentStatus("agent", "waiting", "input needed", time.Now())
+	mgr.ProcessAgentStatus("agent", "busy", "", time.Now())
+	if got := mgr.Status("agent"); got != StatusActive {
+		t.Errorf("agent-sourced: got %v, want StatusActive", got)
+	}
+
+	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "hook", ToolName: "AskUserQuestion"})
+	mgr.ProcessAgentStatus("hook", "busy", "", time.Now())
+	if got := mgr.Status("hook"); got != StatusQuestion {
+		t.Errorf("hook-sourced: got %v, want StatusQuestion (busy may predate the menu)", got)
+	}
+}
+
+func TestAgentStatus_Idle_ClearsAnyQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "AskUserQuestion"})
+	mgr.ProcessAgentStatus("s1", "idle", "", time.Now())
+	if got := mgr.Status("s1"); got != StatusIdle {
+		t.Errorf("got %v, want StatusIdle", got)
+	}
+	if _, _, ok := mgr.PendingQuestion("s1"); ok {
+		t.Error("pending question should be cleared")
+	}
+}
+
+func TestAgentStatus_NonQuestion_NotTouched(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
+	mgr.ProcessAgentStatus("s1", "idle", "", time.Now())
+	if got := mgr.Status("s1"); got != StatusActive {
+		t.Errorf("got %v, want StatusActive (JSONL/hooks own non-question states)", got)
+	}
+}

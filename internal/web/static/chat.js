@@ -320,6 +320,14 @@ function main() {
       if (status === "question" && p && p.pending_question_tool) {
         questionBanner.replaceChildren(renderQuestionBanner(p.pending_question_tool, p.pending_question_input));
         questionBanner.style.display = "flex";
+      } else if (status === "question") {
+        // Detected via `claude agents --json` rather than the PreToolUse
+        // hook, so the question's text/options were never captured.
+        questionBanner.replaceChildren(
+          el("div", { class: "question-banner__tool", text: "Waiting for your answer" }),
+          el("div", { class: "question-banner__question", text: "Claude is showing a question in the terminal that couldn't be captured here. Reply with an option number or your answer." })
+        );
+        questionBanner.style.display = "flex";
       } else {
         questionBanner.style.display = "none";
       }
