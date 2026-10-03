@@ -1,6 +1,7 @@
 package sidebar
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"path/filepath"
 	"testing"
 
@@ -190,5 +191,28 @@ func TestActiveShellsForConcurrentSiblingsUsesOwnSessionPID(t *testing.T) {
 	}
 	if m.activeShells[0].Command != "rspec" {
 		t.Errorf("got shell from wrong session: %+v", m.activeShells[0])
+	}
+}
+
+// Regression: ctrl+alt+r used to run `mo sidebar` as a child process
+// (tea.ExecProcess), which nested a sidebar per restart and dropped
+// --instance-id — the new sidebar then looked for its terminals in the
+// wrong mo-terms session. It now quits and RunWithOpts execs in place.
+func TestCtrlAltRRequestsInPlaceRestart(t *testing.T) {
+	m := Model{instanceID: "abc123", activeTermIdx: -1, focusSection: "sessions"}
+	msg := tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl | tea.ModAlt}
+	if msg.String() != "ctrl+alt+r" {
+		t.Fatalf("test key renders as %q, want ctrl+alt+r", msg.String())
+	}
+
+	next, cmd := m.Update(msg)
+	if !next.(Model).restartRequested {
+		t.Error("ctrl+alt+r should request a restart")
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+alt+r should return a command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+alt+r should quit (so RunWithOpts can exec in place), got %T", cmd())
 	}
 }

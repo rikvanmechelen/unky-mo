@@ -85,6 +85,10 @@ type Model struct {
 	// adoption of a still-open drawer pane has run.
 	publishedDrawerPane string
 	drawerAdopted       bool
+
+	// restartRequested is set by ctrl+alt+r; RunWithOpts re-execs the
+	// binary in place once bubbletea has restored the terminal.
+	restartRequested bool
 	termCounter         int // incrementing counter for naming
 	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
 	syncStatus string
@@ -384,12 +388,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshState()
 			return m, func() tea.Msg { return sidebarStatusMsg("Refreshed") }
 		case "ctrl+alt+r", "ctrl+super+r":
-			// Restart the sidebar process so it picks up a freshly-installed binary.
-			// "super" is the Command key on macOS.
-			self, err := os.Executable()
-			if err == nil {
-				return m, tea.ExecProcess(exec.Command(self, "sidebar"), nil)
-			}
+			// Restart the sidebar so it picks up a freshly-installed binary:
+			// quit, then RunWithOpts execs it in place with the original
+			// arguments. ("super" is the Command key on macOS.) Running it as
+			// a child via tea.ExecProcess nested a sidebar per restart and
+			// dropped --instance-id, so the new one looked for its terminals
+			// in the wrong mo-terms session.
+			m.restartRequested = true
+			return m, tea.Quit
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		}

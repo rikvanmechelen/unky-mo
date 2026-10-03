@@ -1,6 +1,12 @@
 package sidebar
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"fmt"
+	"os"
+	"syscall"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 // RunOpts configures the sidebar TUI.
 type RunOpts struct {
@@ -21,6 +27,20 @@ func RunWithOpts(opts RunOpts) error {
 		m.instanceID = opts.InstanceID
 	}
 	p := tea.NewProgram(m)
-	_, err := p.Run()
+	final, err := p.Run()
+	if fm, ok := final.(Model); ok && err == nil && fm.restartRequested {
+		return restartInPlace()
+	}
 	return err
+}
+
+// restartInPlace replaces this process with the (freshly installed) mo
+// binary, keeping the original arguments (--instance-id included): same
+// PID, same pane, no nesting.
+func restartInPlace() error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("restart: %w", err)
+	}
+	return syscall.Exec(self, os.Args, os.Environ())
 }
