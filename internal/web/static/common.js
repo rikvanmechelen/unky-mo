@@ -14,6 +14,10 @@ const STATUS = {
   question:   { label: "Needs input",      short: "input",      sq: "#000", navSq: "#FFCD00", ring: 0, bg: "#FFCD00", border: "#FFCD00", rowBg: "rgba(255,205,0,0.20)" },
   external:   { label: "External session", short: "external",   sq: "#767676", ring: 0, bg: "#fff",    border: "#DDDDDD" },
   none:       { label: "No session",       short: "",           sq: "#ddd",    ring: 0, bg: "#fff",    border: "#DDDDDD" },
+  // Chat-view only: a just-launched window with no state row yet, and a
+  // session whose row disappeared.
+  starting:   { label: "Starting…",        short: "starting",   sq: "#fff",    ring: 1, bg: "#fff",    border: "#DDDDDD" },
+  ended:      { label: "Ended",            short: "ended",      sq: "#ddd",    ring: 0, bg: "#fff",    border: "#DDDDDD" },
 };
 
 function el(tag, attrs, children) {

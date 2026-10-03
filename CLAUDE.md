@@ -43,7 +43,14 @@ make install   # Build and install to ~/go/bin/mo
   - "New terminal" opens a shell parked in `mo-terms`, never in the visible window, and the sidebar adopts it.
   - Every pane-addressed request is checked against that window's terminal list, so the browser can't reach Claude's pane or another window.
 
-A pending interactive question (status `question`) rides the separate `/api/state` poll instead, since it's never in the JSONL — rendered as a banner above the composer, not a transcript message. Frontend is hand-written vanilla JS/CSS embedded via `go:embed` under `internal/web/static/` — intentionally bare, a design pass is a separate follow-up.
+A pending interactive question (status `question`) rides the separate `/api/state` poll instead, since it's never in the JSONL — rendered as a banner above the composer, not a transcript message. Frontend is hand-written vanilla JS/CSS embedded via `go:embed` under `internal/web/static/`, styled after the MoMA design system (tokens in `style.css`), with no build step. Scripts share globals in load order: `common.js` (STATUS map, `el`, usage meters) first, then the page's own files.
+
+The chat view is three columns:
+- Left: a session nav that switches in place via `history.pushState`, plus usage meters.
+- Middle: the transcript, composer and terminal drawer.
+- Right: the Files panel.
+
+Assistant text is rendered by `static/markdown.js`, which builds DOM nodes and never uses innerHTML on transcript text. Lists that re-poll (nav, question banner, files tree, drawer tabs) skip rebuilding when nothing changed, so a click straddling a poll isn't lost.
 
 ## Testing
 

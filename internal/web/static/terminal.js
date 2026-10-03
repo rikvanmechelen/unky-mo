@@ -13,17 +13,19 @@ function createTerminalDrawer(root) {
   const newBtn = el("button", { class: "term-drawer__new", type: "button", text: "New terminal" });
   const toggleBtn = el("button", { class: "term-drawer__toggle", type: "button", text: "Hide" });
   const errorEl = el("span", { class: "term-drawer__error" });
+  const emptyEl = el("span", { class: "term-drawer__empty", text: "No terminals" });
   const outputEl = el("pre", { class: "term-drawer__output" });
   const input = el("input", { class: "term-drawer__input", type: "text", autocomplete: "off", spellcheck: "false", "aria-label": "Terminal command" });
   const ctrlC = el("button", { class: "term-drawer__ctrlc", type: "button", text: "Ctrl-C", title: "Interrupt the running command" });
   const form = el("form", { class: "term-drawer__line" }, [el("span", { class: "term-drawer__prompt", text: "$" }), input, ctrlC]);
   const body = el("div", { class: "term-drawer__body" }, [outputEl, form]);
   root.replaceChildren(
-    el("div", { class: "term-drawer__bar" }, [tabsEl, newBtn, el("span", { class: "term-drawer__spacer" }), errorEl, toggleBtn]),
+    el("div", { class: "term-drawer__bar" }, [tabsEl, emptyEl, newBtn, el("span", { class: "term-drawer__spacer" }), errorEl, toggleBtn]),
     body
   );
 
   let windowID = null;
+  let available = false; // the window has a state row — only then poll
   let terminals = [];
   let selected = null; // pane id (no "%")
   let open = true;
@@ -60,13 +62,13 @@ function createTerminalDrawer(root) {
         return tab;
       }));
     }
+    // With no terminals the drawer is just its bar: nothing to show or hide.
+    const any = terminals.length > 0;
+    emptyEl.hidden = any;
+    toggleBtn.hidden = !any;
     toggleBtn.textContent = open ? "Hide" : "Show";
-    body.hidden = !open;
+    body.hidden = !open || !any;
     form.hidden = !selected;
-    if (!terminals.length) {
-      outputEl.textContent = "No terminals in this window. Open one with New terminal.";
-      lastOutput = null;
-    }
   }
 
   async function call(method, path, payload) {
@@ -81,7 +83,7 @@ function createTerminalDrawer(root) {
   }
 
   async function refreshList() {
-    if (!windowID || document.visibilityState !== "visible") return;
+    if (!windowID || !available || document.visibilityState !== "visible") return;
     const g = gen;
     try {
       const list = await call("GET", base());
@@ -99,7 +101,7 @@ function createTerminalDrawer(root) {
   }
 
   async function refreshOutput() {
-    if (!windowID || !selected || !open || document.visibilityState !== "visible") return;
+    if (!windowID || !available || !selected || !open || document.visibilityState !== "visible") return;
     const g = gen, pane = selected;
     try {
       const data = await call("GET", `${base()}/${pane}/output`);
@@ -166,9 +168,18 @@ function createTerminalDrawer(root) {
   setInterval(refreshOutput, TERM_OUTPUT_MS);
 
   return {
+    // setAvailable is driven by the chat view's state poll: the drawer is
+    // shown, and polls tmux, only while the window has a state row.
+    setAvailable(ok) {
+      if (ok === available) return;
+      available = ok;
+      root.hidden = !ok || !windowID;
+      if (ok) refreshList().then(refreshOutput);
+    },
     setWindow(id) {
       if (id === windowID) return;
       gen++;
+      available = false;
       windowID = id;
       terminals = [];
       selected = null;
@@ -176,9 +187,8 @@ function createTerminalDrawer(root) {
       outputEl.textContent = "";
       input.value = "";
       setError("");
-      root.hidden = !id;
+      root.hidden = true; // until setAvailable(true)
       render();
-      refreshList().then(refreshOutput);
     },
   };
 }

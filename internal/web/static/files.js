@@ -59,6 +59,7 @@ function createFilesPane(pane) {
   const foot = pane.querySelector("#files-foot");
 
   let windowID = null;
+  let available = false; // the window has a live session row — only then poll
   let mode = "changed";
   let changes = null; // last /files body
   let treePaths = null; // last /tree paths
@@ -114,10 +115,10 @@ function createFilesPane(pane) {
 
     const files = changes.files || [];
     foot.replaceChildren(
-      el("span", {}, [
+      ...(files.length ? [el("span", {}, [
         el("span", { class: "files-pane__total", text: `+${changes.added} −${changes.removed}` }),
         document.createTextNode(` across ${plural(files.length, "file")}${changes.truncated ? " (list truncated)" : ""}`),
-      ]),
+      ])] : []),
       el("span", { text: syncText(changes.sync) })
     );
   }
@@ -187,7 +188,7 @@ function createFilesPane(pane) {
   }
 
   async function refresh(force) {
-    if (!windowID || document.visibilityState !== "visible") return;
+    if (!windowID || !available || document.visibilityState !== "visible") return;
     const g = gen;
     const base = `/api/sessions/${encodeURIComponent(windowID)}`;
     try {
@@ -226,16 +227,32 @@ function createFilesPane(pane) {
   setInterval(() => refresh(false), FILES_POLL_MS);
 
   return {
+    // setAvailable is driven by the chat view's state poll: the panel only
+    // polls git while the window has a live session, and otherwise shows
+    // note (e.g. "Starting…", "Session ended.").
+    setAvailable(ok, unavailableNote) {
+      if (ok === available && (ok || note === unavailableNote)) return;
+      available = ok;
+      if (!ok) {
+        changes = null;
+        note = unavailableNote || "No live session.";
+        renderIfChanged();
+        return;
+      }
+      note = "Loading…";
+      render();
+      refresh(true);
+    },
     setWindow(id) {
       if (id === windowID) return;
       gen++;
+      available = false;
       windowID = id;
       changes = null;
       treePaths = null;
       treeFetchedAt = 0;
       note = id ? "Loading…" : "";
       render();
-      refresh(true);
     },
   };
 }

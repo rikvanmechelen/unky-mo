@@ -106,6 +106,11 @@ function toolSummaryDetail(block, cwd) {
   const input = block.input || {};
   if (typeof input.description === "string") return { text: input.description, mono: false };
   if (typeof input.file_path === "string") return { text: relativize(input.file_path, cwd), mono: true };
+  // A Bash call without a description: show the command itself.
+  if (typeof input.command === "string" && input.command.trim()) {
+    const first = input.command.trim().split("\n")[0];
+    return { text: first.length > 100 ? first.slice(0, 99) + "…" : first, mono: true };
+  }
   return null;
 }
 
@@ -117,7 +122,10 @@ function toolSummaryDetail(block, cwd) {
 // rendered readably; anything else (a future interactive tool, or a shape
 // that doesn't match) falls back to pretty-printed JSON so something is
 // still visible instead of nothing.
-function renderQuestionBanner(tool, input) {
+//
+// onPick(n), when given, makes each option a button that answers with its
+// 1-based number — the same as typing the number into the composer.
+function renderQuestionBanner(tool, input, onPick) {
   const frag = document.createDocumentFragment();
   frag.appendChild(el("div", { class: "question-banner__tool", text: tool }));
 
@@ -126,9 +134,13 @@ function renderQuestionBanner(tool, input) {
       if (q.header) frag.appendChild(el("div", { class: "question-banner__tool", text: q.header }));
       frag.appendChild(el("div", { class: "question-banner__question", text: q.question || "" }));
       if (Array.isArray(q.options)) {
-        const list = el("ol", { class: "question-banner__options" }, q.options.map((o, i) =>
-          el("li", { text: o.label + (o.description ? " — " + o.description : "") })
-        ));
+        const list = el("ol", { class: "question-banner__options" }, q.options.map((o, i) => {
+          const text = o.label + (o.description ? " — " + o.description : "");
+          if (!onPick) return el("li", { text });
+          const btn = el("button", { class: "question-banner__option", type: "button", text });
+          btn.addEventListener("click", () => onPick(i + 1));
+          return el("li", {}, [btn]);
+        }));
         frag.appendChild(list);
       }
     }
@@ -264,7 +276,7 @@ function main() {
       ]));
       return;
     }
-    transcript.appendChild(el("div", { class: "msg-assistant", text }));
+    transcript.appendChild(el("div", { class: "msg-assistant" }, [renderMarkdown(text)]));
   }
 
   function appendToolUse(block, cwd) {
@@ -443,13 +455,49 @@ function main() {
     sendBtn.textContent = label;
   }
 
+  function setBadge(key) {
+    const meta = STATUS[key] || STATUS.none;
+    statusBadge.replaceChildren(statusSquare(meta.sq, meta.ring), document.createTextNode(meta.label));
+    statusBadge.style.background = meta.bg;
+    statusBadge.style.boxShadow = `inset 0 0 0 1px ${meta.border}`;
+  }
+
+  // The question banner is rebuilt only when the question changes, so a
+  // click on an option that straddles the 2s poll isn't lost.
+  let questionKey = null;
+
+  function showQuestion(key, build) {
+    if (key !== questionKey) {
+      questionKey = key;
+      questionBanner.replaceChildren(...build());
+    }
+    questionBanner.style.display = "flex";
+  }
+
+  function hideBanners() {
+    permissionBanner.style.display = "none";
+    questionBanner.style.display = "none";
+    questionKey = null;
+  }
+
+  async function pickOption(n) {
+    questionBanner.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    if (!(await sendPrompt(String(n)))) {
+      questionBanner.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    }
+  }
+
   function markEnded() {
     ended = true;
     if (es) { es.close(); es = null; }
     setBusyRow(false);
+    hideBanners();
+    setBadge("ended");
     setNotice("Session ended. The tmux window is closed.");
     stopBtn.style.display = "none";
     lockSend("Session ended");
+    filesPane.setAvailable(false, "Session ended.");
+    drawer.setAvailable(false);
   }
 
   // resetSession points the view at another window (initial load, a nav
@@ -465,8 +513,7 @@ function main() {
     promptInput.value = "";
     sendError.textContent = "";
     setNotice(id ? "" : "Pick a session on the left.");
-    permissionBanner.style.display = "none";
-    questionBanner.style.display = "none";
+    hideBanners();
     stopBtn.style.display = "none";
     statusBadge.replaceChildren();
     chatTitle.textContent = "—";
@@ -562,7 +609,11 @@ function main() {
       renderUsage(usageBox, data.usage, { compact: true });
       if (!windowID || ended) return;
 
-      const p = (data.projects || []).find((pr) => pr.window_id === windowID && pr.session_id);
+      // row: the window's state entry (it may have no session); p: the same
+      // entry when a session is live in it.
+      const row = (data.projects || []).find((pr) => pr.window_id === windowID);
+      const p = row && row.session_id ? row : null;
+      const waitingToStart = starting && !everSeen;
       if (!p) {
         if (everSeen) { markEnded(); return; }
         if (!starting) setNotice("No session is running in this window.");
@@ -572,38 +623,38 @@ function main() {
         everSeen = true;
         setNotice("");
       }
-      stopBtn.style.display = p ? "" : "none";
       const status = p ? p.status : "none";
+      const external = status === "external";
+      // External sessions aren't mo's to stop (the TUI imports them instead).
+      stopBtn.style.display = p && !external ? "" : "none";
       if (p && p.session_id !== streamSessionID) connectTranscript(p.session_id);
-      const meta = STATUS[status] || STATUS.none;
+      setBadge(p ? status : waitingToStart ? "starting" : "none");
+      filesPane.setAvailable(!!p, waitingToStart ? "Starting…" : "No live session.");
+      drawer.setAvailable(!!row);
 
-      statusBadge.replaceChildren(statusSquare(meta.sq, meta.ring), document.createTextNode(meta.label));
-      statusBadge.style.background = meta.bg;
-      statusBadge.style.boxShadow = `inset 0 0 0 1px ${meta.border}`;
-
-      if (p) {
-        chatTitle.textContent = p.name || windowID;
-        document.title = `Unky Mo — ${p.name || windowID}`;
+      if (row) {
+        chatTitle.textContent = row.name || windowID;
+        document.title = `Unky Mo — ${row.name || windowID}`;
         chatMeta.replaceChildren(
-          el("span", { text: p.window_name || windowID }),
-          el("span", { text: p.branch || "" })
+          el("span", { text: row.window_name || windowID }),
+          el("span", { text: row.branch || "" })
         );
       }
 
       permissionBanner.style.display = status === "permission" ? "block" : "none";
-      if (status === "question" && p && p.pending_question_tool) {
-        questionBanner.replaceChildren(renderQuestionBanner(p.pending_question_tool, p.pending_question_input));
-        questionBanner.style.display = "flex";
+      if (status === "question" && p.pending_question_tool) {
+        showQuestion(JSON.stringify([p.session_id, p.pending_question_tool, p.pending_question_input]),
+          () => [renderQuestionBanner(p.pending_question_tool, p.pending_question_input, pickOption)]);
       } else if (status === "question") {
         // Detected via `claude agents --json` rather than the PreToolUse
         // hook, so the question's text/options were never captured.
-        questionBanner.replaceChildren(
+        showQuestion("uncaptured", () => [
           el("div", { class: "question-banner__tool", text: "Waiting for your answer" }),
-          el("div", { class: "question-banner__question", text: "Claude is showing a question in the terminal that couldn't be captured here. Reply with an option number or your answer." })
-        );
-        questionBanner.style.display = "flex";
+          el("div", { class: "question-banner__question", text: "Claude is showing a question in the terminal that couldn't be captured here. Reply with an option number or your answer." }),
+        ]);
       } else {
         questionBanner.style.display = "none";
+        questionKey = null;
       }
 
       setBusyRow(status === "active");
@@ -615,12 +666,15 @@ function main() {
       }
       if (queued) setNotice(`Starting session… your message will be sent when it's ready: “${queued}”`);
 
-      const waitingToStart = starting && !everSeen;
       const canSend = status === "idle" || status === "question" || (waitingToStart && !queued);
       sendBtn.disabled = !canSend;
       sendBtn.classList.toggle("is-locked", !canSend);
       sendBtn.textContent = waitingToStart ? (queued ? "Queued" : "Send when ready")
-        : canSend ? "Send" : !p ? "No session" : "Claude is working…";
+        : canSend ? "Send"
+        : !p ? "No session"
+        : status === "permission" ? "Waiting for permission"
+        : external ? "External session"
+        : "Claude is working…";
       promptInput.placeholder = status === "question"
         ? "Type a number or your answer…"
         : p ? `Message ${p.name}` : "Message this session";
