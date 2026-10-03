@@ -248,13 +248,28 @@ function main() {
     }
   }
 
-  const es = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
-  es.addEventListener("transcript", (e) => {
-    const msg = JSON.parse(e.data);
-    if (seen.has(msg.uuid)) return;
-    seen.add(msg.uuid);
-    withPin(() => renderMessage(msg));
-  });
+  // The SSE stream is bound server-side to whichever Claude session ID the
+  // window had when it connected. /clear (or /new) starts a fresh session —
+  // new ID, new JSONL file — in the same window, so the status poll below
+  // watches session_id and, on a change, wipes the log and reconnects.
+  let es = null;
+  let streamSessionID = null;
+
+  function connectTranscript(sessionID) {
+    if (es) es.close();
+    streamSessionID = sessionID;
+    seen.clear();
+    toolCards.clear();
+    busyRow = null;
+    transcript.replaceChildren();
+    es = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
+    es.addEventListener("transcript", (e) => {
+      const msg = JSON.parse(e.data);
+      if (seen.has(msg.uuid)) return;
+      seen.add(msg.uuid);
+      withPin(() => renderMessage(msg));
+    });
+  }
 
   composer.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -300,6 +315,7 @@ function main() {
       const data = await res.json();
       const p = (data.projects || []).find((pr) => pr.window_id === windowID);
       const status = p ? p.status : "none";
+      if (p && p.session_id && p.session_id !== streamSessionID) connectTranscript(p.session_id);
       const meta = STATUS[status] || STATUS.none;
 
       statusBadge.replaceChildren(statusSquare(meta.sq, meta.ring), document.createTextNode(meta.label));
