@@ -2970,6 +2970,11 @@ func (m *Model) syncWindowTitles() {
 			bareName := ttmux.ComposeWindowName(project, branch, "")
 			if !existingNames[bareName] {
 				desiredSuffix = ""
+			} else if n, err := strconv.Atoi(suffix); err == nil && n >= 2 {
+				// Already an ordinal sibling — keep its slot. Recomputing
+				// would count this window's own name as taken and flip it
+				// between [2] and [3] on every tick.
+				continue
 			} else {
 				desiredSuffix = ttmux.NextAvailableOrdinal(namesSlice(), project, branch)
 			}
