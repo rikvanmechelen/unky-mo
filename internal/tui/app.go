@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -349,6 +350,10 @@ type Model struct {
 	width          int
 	height         int
 	ready          bool
+
+	// restartRequested is set by ctrl+alt+r; Run re-execs the binary after
+	// the program quits.
+	restartRequested bool
 }
 
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project) Model {
@@ -1248,12 +1253,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 
 		case key.Matches(msg, keys.Restart):
-			self, err := os.Executable()
-			if err == nil {
-				// Restart all sidebar panes first
-				m.restartSidebars()
-				return m, tea.ExecProcess(exec.Command(self), nil)
-			}
+			// Restart the sidebars, then quit; Run execs the freshly
+			// installed binary in place once bubbletea has restored the
+			// terminal. (Running it as a child via tea.ExecProcess left every
+			// old TUI waiting underneath — a chain that grew with each
+			// restart, and quitting resurrected the previous, older TUI.)
+			m.restartSidebars()
+			m.restartRequested = true
+			return m, tea.Quit
 
 		case key.Matches(msg, keys.Suspend):
 			// On the ticket detail screen, `s` means "start working" instead
@@ -5040,10 +5047,30 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg, agents, workspaceDirs, manualProjects)
 	m.startupNotice = startupNotice
 	p := tea.NewProgram(m)
-	_, err := p.Run()
+	final, err := p.Run()
+
+	if fm, ok := final.(Model); ok && err == nil && fm.restartRequested {
+		return restartInPlace(ns)
+	}
 
 	// Clean up state file on exit
 	state.Remove(stateFilePath)
 
 	return err
+}
+
+// restartInPlace replaces this process with the (freshly installed) mo
+// binary — same PID, same tmux pane, no nesting. The state file is left in
+// place for the new process to rewrite, so sidebars don't blank in between.
+func restartInPlace(ns *notify.Server) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("restart: %w", err)
+	}
+	// Release the socket now — exec skips deferred calls, and the new
+	// process binds the same path.
+	if ns != nil {
+		ns.Stop()
+	}
+	return syscall.Exec(self, os.Args, os.Environ())
 }

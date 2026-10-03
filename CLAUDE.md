@@ -52,7 +52,7 @@ make install   # Build and install to ~/go/bin/mo
 - All keyboard shortcuts visible in persistent footer bars
 - Circular list navigation (wraps top↔bottom)
 - `ctrl+r` forces an in-process refresh (re-poll sessions, rebuild detail branches, rewrite state file — no network, no binary reload)
-- `ctrl+alt+r` restarts TUI + all sidebars (dev workflow — picks up freshly-installed binary)
+- `ctrl+alt+r` restarts TUI + all sidebars (dev workflow — picks up freshly-installed binary). The TUI quits and `syscall.Exec`s itself in place (same PID and pane). Don't go back to running the new binary as a child via `tea.ExecProcess`: that left every old TUI waiting underneath, and quitting brought back the previous one.
 - Mouse support enabled automatically on tmux session creation
 - `exec claude` used in panes so windows auto-close when Claude exits (pane-exited hook)
 - Error messages in TUI persist until keypress; success messages auto-clear after 4s

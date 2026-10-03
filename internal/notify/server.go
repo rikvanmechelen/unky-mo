@@ -16,6 +16,7 @@ type Server struct {
 	msgChan    chan Notification
 	done       chan struct{}
 	wg         sync.WaitGroup
+	stopOnce   sync.Once
 }
 
 // NewServer creates a notification server.
@@ -47,14 +48,18 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop shuts down the server and cleans up.
+// Stop shuts down the server and cleans up. Safe to call more than once
+// (the TUI stops it explicitly before re-exec'ing on restart, and again via
+// defer if that exec fails).
 func (s *Server) Stop() {
-	close(s.done)
-	if s.listener != nil {
-		s.listener.Close()
-	}
-	s.wg.Wait()
-	os.Remove(s.socketPath)
+	s.stopOnce.Do(func() {
+		close(s.done)
+		if s.listener != nil {
+			s.listener.Close()
+		}
+		s.wg.Wait()
+		os.Remove(s.socketPath)
+	})
 }
 
 // Messages returns the channel to receive notifications from.

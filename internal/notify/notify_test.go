@@ -247,3 +247,11 @@ func TestSendRejectsNonJSON(t *testing.T) {
 		t.Fatal("expected an error for a non-JSON message")
 	}
 }
+
+// The TUI stops the server explicitly before re-exec'ing on restart, and the
+// deferred Stop runs again if that exec fails — a second Stop must not panic.
+func TestServerStopIsIdempotent(t *testing.T) {
+	srv, _ := startServer(t)
+	srv.Stop()
+	srv.Stop()
+}
