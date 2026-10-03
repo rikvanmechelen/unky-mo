@@ -31,10 +31,21 @@ func newTranscriptCursor(path string) *transcriptCursor {
 	return &transcriptCursor{path: path}
 }
 
+// forwardedSystemSubtypes are the "system" lines the chat view renders as
+// meta rows (turn timing, slash-command output, scheduled wakeups). Every
+// other system line — hook summaries and whatever Claude Code adds next —
+// stays server-side.
+var forwardedSystemSubtypes = map[string]bool{
+	"turn_duration":       true,
+	"local_command":       true,
+	"scheduled_task_fire": true,
+}
+
 // readNew reads any bytes appended to the file since the last call (or
 // since construction, for a fresh cursor), splits them into complete lines,
-// and returns the ones whose top-level "type" is forwarded to the browser
-// (user/assistant only — see filter below). An incomplete trailing line (the
+// and returns the ones forwarded to the browser: user and assistant lines,
+// plus system lines whose subtype is in forwardedSystemSubtypes. An
+// incomplete trailing line (the
 // file was read mid-write) is held and prefixed onto the next call's data
 // rather than returned or dropped.
 func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
@@ -86,12 +97,16 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 			continue
 		}
 		var envelope struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
 		}
 		if json.Unmarshal(line, &envelope) != nil {
 			continue
 		}
-		if envelope.Type != "user" && envelope.Type != "assistant" {
+		switch {
+		case envelope.Type == "user" || envelope.Type == "assistant":
+		case envelope.Type == "system" && forwardedSystemSubtypes[envelope.Subtype]:
+		default:
 			continue
 		}
 		out = append(out, json.RawMessage(append([]byte(nil), line...)))

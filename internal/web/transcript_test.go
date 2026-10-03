@@ -15,26 +15,34 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-func TestTranscriptCursorFiltersToUserAndAssistant(t *testing.T) {
+func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 	dir := t.TempDir()
 	userLine := `{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}`
 	assistantLine := `{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}`
-	excludedLine := `{"type":"file-history-snapshot","uuid":"f1"}`
-	path := writeFile(t, dir, "session.jsonl", userLine+"\n"+assistantLine+"\n"+excludedLine+"\n")
+	turnLine := `{"type":"system","subtype":"turn_duration","durationMs":39729,"uuid":"s1"}`
+	commandLine := `{"type":"system","subtype":"local_command","content":"<local-command-stdout>ok</local-command-stdout>","uuid":"s2"}`
+	excluded := []string{
+		`{"type":"file-history-snapshot","uuid":"f1"}`,
+		`{"type":"system","subtype":"stop_hook_summary","uuid":"s3"}`,
+		`{"type":"system","uuid":"s4"}`,
+	}
+	content := userLine + "\n" + excluded[0] + "\n" + assistantLine + "\n" + excluded[1] + "\n" +
+		turnLine + "\n" + excluded[2] + "\n" + commandLine + "\n"
+	path := writeFile(t, dir, "session.jsonl", content)
 
 	c := newTranscriptCursor(path)
 	msgs, err := c.readNew()
 	if err != nil {
 		t.Fatalf("readNew: %v", err)
 	}
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 messages (user+assistant), got %d: %v", len(msgs), msgs)
+	want := []string{userLine, assistantLine, turnLine, commandLine}
+	if len(msgs) != len(want) {
+		t.Fatalf("expected %d messages, got %d: %s", len(want), len(msgs), msgs)
 	}
-	if string(msgs[0]) != userLine {
-		t.Errorf("message 0: want %q, got %q", userLine, string(msgs[0]))
-	}
-	if string(msgs[1]) != assistantLine {
-		t.Errorf("message 1: want %q, got %q", assistantLine, string(msgs[1]))
+	for i, w := range want {
+		if string(msgs[i]) != w {
+			t.Errorf("message %d: want %q, got %q", i, w, string(msgs[i]))
+		}
 	}
 }
 

@@ -12,6 +12,82 @@ function isMetaContent(text) {
   return text.startsWith("<local-command") || text.startsWith("<command");
 }
 
+// tagText returns the trimmed inner text of the first <tag>…</tag> in text,
+// or null when the tag is absent.
+function tagText(text, tag) {
+  const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return m ? m[1].trim() : null;
+}
+
+function stripAnsi(text) {
+  return text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+}
+
+// describeUserString classifies a user line's string content: what a human
+// typed ({kind: "user"}), a meta row ({kind: "meta"}), or noise to hide
+// ({kind: "skip"}). Slash commands, their output and background-task
+// notifications all arrive as "user" lines in the JSONL but aren't yours.
+function describeUserString(msg, text) {
+  if (msg.isMeta) return { kind: "skip" }; // command caveat, system nudges
+  if (msg.origin?.kind === "task-notification" || text.startsWith("<task-notification>")) {
+    return { kind: "meta", text: tagText(text, "summary") || "Background task finished" };
+  }
+  const name = tagText(text, "command-name");
+  if (name !== null) {
+    const args = tagText(text, "command-args");
+    return { kind: "meta", text: args ? `${name} ${args}` : name };
+  }
+  const out = tagText(text, "local-command-stdout") ?? tagText(text, "local-command-stderr");
+  if (out !== null) {
+    const clean = stripAnsi(out).trim();
+    return clean ? { kind: "meta", text: clean } : { kind: "skip" };
+  }
+  if (isMetaContent(text)) return { kind: "meta", text };
+  return { kind: "user", text };
+}
+
+// Claude Code shows a random past-tense verb when a turn ends but never
+// records it, so pick one per turn from the entry's uuid — stable across
+// reloads.
+const TURN_VERBS = ["Baked", "Brewed", "Churned", "Cogitated", "Cooked", "Crunched", "Simmered", "Worked"];
+
+function turnVerb(uuid) {
+  let h = 0;
+  for (const ch of uuid || "") h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return TURN_VERBS[Math.abs(h) % TURN_VERBS.length];
+}
+
+// formatDuration renders milliseconds as "17s", "11m 3s" or "1h 4m".
+function formatDuration(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+// describeSystem turns a forwarded system line (see forwardedSystemSubtypes
+// in transcript.go) into meta-row text, or null to show nothing.
+function describeSystem(msg) {
+  switch (msg.subtype) {
+    case "turn_duration": {
+      const done = msg.timestamp
+        ? " · done " + new Date(msg.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+        : "";
+      return `${turnVerb(msg.uuid)} for ${formatDuration(msg.durationMs || 0)}${done}`;
+    }
+    case "scheduled_task_fire":
+      return msg.content || null;
+    case "local_command": {
+      const out = tagText(msg.content || "", "local-command-stdout") ?? tagText(msg.content || "", "local-command-stderr");
+      const clean = out === null ? "" : stripAnsi(out).trim();
+      return clean || null;
+    }
+    default:
+      return null;
+  }
+}
+
 // relativize strips a leading project cwd off an absolute path, e.g.
 // "/Users/rik/workspace/unky-mo/internal/web/chat.js" with base
 // "/Users/rik/workspace/unky-mo" becomes "internal/web/chat.js". Falls back
@@ -259,10 +335,17 @@ function main() {
       return;
     }
 
+    if (msg.type === "system") {
+      const text = describeSystem(msg);
+      if (text) appendBubble("meta", text);
+      return;
+    }
+
     if (msg.type === "user") {
       const content = msg.message?.content;
       if (typeof content === "string") {
-        appendBubble(isMetaContent(content) ? "meta" : "user", content);
+        const d = describeUserString(msg, content);
+        if (d.kind !== "skip") appendBubble(d.kind, d.text);
         return;
       }
       for (const block of content || []) {
