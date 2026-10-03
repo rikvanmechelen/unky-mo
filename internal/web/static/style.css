@@ -404,6 +404,7 @@ h1, h2 {
 .diff-line { display: grid; grid-template-columns: 44px 20px 1fr; }
 .diff-line.is-add { background: rgba(0, 177, 64, 0.1); }
 .diff-line.is-del { background: rgba(228, 0, 43, 0.1); }
+.diff-line.diff-gap { color: var(--gray-767); border-top: 1px dashed var(--gray-ddd); border-bottom: 1px dashed var(--gray-ddd); margin: 4px 0; }
 .diff-line__ln { text-align: right; padding-right: 10px; color: var(--gray-767); }
 .diff-line__sign { font-weight: 700; }
 .diff-line.is-add .diff-line__sign { color: var(--green); }
@@ -533,6 +534,24 @@ button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 
 }
 .files-pane__foot:empty { display: none; }
 .files-pane__total { font-weight: 700; color: var(--black); }
+
+.diff-dialog {
+  width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
+  padding: 0; border: 0; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25);
+  flex-direction: column;
+}
+.diff-dialog[open] { display: flex; }
+.diff-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.diff-dialog__head { flex: none; display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--gray-ddd); }
+.diff-dialog__path { font-family: var(--font-mono); font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.diff-dialog__counts { display: flex; gap: 6px; font-family: var(--font-mono); font-size: 12px; }
+.diff-dialog__counts .file-row__plus { color: var(--green); }
+.diff-dialog__counts .file-row__minus { color: var(--red); }
+.diff-dialog__spacer { flex: 1; }
+.diff-dialog__close { all: unset; cursor: pointer; font-size: 13px; border-bottom: 1px solid currentColor; }
+.diff-dialog__close:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.diff-dialog__body { overflow: auto; padding: 12px 20px 20px; }
+.diff-dialog__body .tool-card__diff { border: 0; padding: 0; }
 
 /* ── Narrow widths: drop the files aside, then the nav ───────── */
 @media (max-width: 1100px) {

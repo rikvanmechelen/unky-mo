@@ -90,6 +90,9 @@ type GitFiles interface {
 	Changes(dir string) (*gitfiles.Changes, error)
 	Tree(dir string) (root string, paths []string, err error)
 	Branch(dir string) string
+	// Diff diffs one changed file; root and path come from a Changes
+	// result, never straight from the browser.
+	Diff(root, path string, untracked bool) (diff string, truncated bool, err error)
 }
 
 // Terminals reads and drives a window's drawer terminals for the chat
@@ -268,6 +271,12 @@ func (g realGitFiles) Tree(dir string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.Tree(ctx, g.cmd, dir)
+}
+
+func (g realGitFiles) Diff(root, path string, untracked bool) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.Diff(ctx, g.cmd, root, path, untracked)
 }
 
 func (g realGitFiles) Branch(dir string) string {

@@ -178,7 +178,9 @@ function renderQuestionBanner(tool, input, onPick) {
 function renderDiff(structuredPatch) {
   const wrap = el("div", { class: "tool-card__diff" });
   let ln = null;
-  for (const hunk of structuredPatch || []) {
+  (structuredPatch || []).forEach((hunk, i) => {
+    // Mark skipped, unchanged lines between hunks.
+    if (i > 0) wrap.appendChild(el("div", { class: "diff-line diff-gap" }, [el("span", { class: "diff-line__ln", text: "⋯" })]));
     ln = hunk.newStart;
     for (const line of hunk.lines || []) {
       const sign = line[0];
@@ -192,7 +194,7 @@ function renderDiff(structuredPatch) {
       wrap.appendChild(row);
       if (sign !== "-") ln++;
     }
-  }
+  });
   return wrap;
 }
 

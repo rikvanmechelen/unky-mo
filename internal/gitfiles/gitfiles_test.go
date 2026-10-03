@@ -183,3 +183,34 @@ func TestNotARepo(t *testing.T) {
 		t.Errorf("want ErrNotRepo, got %v", err)
 	}
 }
+
+func TestDiffRealGit(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.go", "one\nTWO\n")
+	run(t, dir, "rm", "-q", "sub/b.go")
+	write(t, dir, "new.txt", "x\ny\n")
+	write(t, dir, "bin.dat", "a\x00b")
+	ctx := context.Background()
+
+	cases := []struct {
+		path      string
+		untracked bool
+		want      []string
+	}{
+		{"a.go", false, []string{"--- a/a.go", "+++ b/a.go", "@@ -1,2 +1,2 @@", "-two", "+TWO"}},
+		{"sub/b.go", false, []string{"deleted file mode", "+++ /dev/null", "-b"}},
+		{"new.txt", true, []string{"+++ b/new.txt", "@@ -0,0 +1,2 @@", "+x", "+y"}},
+		{"bin.dat", true, []string{"Binary files"}},
+	}
+	for _, c := range cases {
+		diff, truncated, err := Diff(ctx, moexec.DefaultCommander, dir, c.path, c.untracked)
+		if err != nil || truncated {
+			t.Fatalf("%s: err=%v truncated=%v", c.path, err, truncated)
+		}
+		for _, w := range c.want {
+			if !strings.Contains(diff, w) {
+				t.Errorf("%s: diff lacks %q:\n%s", c.path, w, diff)
+			}
+		}
+	}
+}

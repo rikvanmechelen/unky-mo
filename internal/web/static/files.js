@@ -36,6 +36,26 @@ function fileCounts(f) {
   ];
 }
 
+// parseUnifiedDiff turns `git diff` output into renderDiff's hunk shape
+// ({newStart, lines} — the Edit tool's structuredPatch) or reports a
+// binary file.
+function parseUnifiedDiff(text) {
+  if (/^Binary files .* differ$/m.test(text)) return { binary: true, hunks: [] };
+  const hunks = [];
+  let hunk = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (m) {
+      hunk = { newStart: parseInt(m[1], 10), lines: [] };
+      hunks.push(hunk);
+    } else if (hunk && /^[ +-]/.test(line)) {
+      hunk.lines.push(line);
+    }
+    // header lines and "\ No newline at end of file" are skipped
+  }
+  return { binary: false, hunks };
+}
+
 // buildTree nests sorted root-relative paths into {dirs: Map, files: []}.
 function buildTree(paths) {
   const root = { dirs: new Map(), files: [] };
@@ -128,7 +148,7 @@ function createFilesPane(pane) {
     if (!files.length) return [el("div", { class: "files-pane__note", text: "No changes." })];
     return files.map((f) => {
       const { dir, name } = splitPath(f.path);
-      return el("div", { class: "file-row", title: f.path }, [
+      const row = el("button", { class: "file-row", type: "button", title: `${f.path} — show diff` }, [
         el("span", { class: "file-row__mark " + (FILE_MARK_CLASS[f.status] || ""), text: f.status }),
         el("span", { class: "file-row__name" }, [
           el("span", { class: "file-row__dir", text: dir }),
@@ -136,6 +156,8 @@ function createFilesPane(pane) {
         ]),
         el("span", { class: "file-row__counts" }, fileCounts(f)),
       ]);
+      row.addEventListener("click", () => openDiff(f.path));
+      return row;
     });
   }
 
@@ -164,17 +186,59 @@ function createFilesPane(pane) {
       }
       for (const f of node.files) {
         const c = byPath.get(f.path);
-        const row = el("div", { class: "file-row", title: f.path }, [
+        // Changed files open their diff; unchanged ones are plain rows.
+        const row = el(c ? "button" : "div", { class: "file-row", title: c ? `${f.path} — show diff` : f.path, ...(c ? { type: "button" } : {}) }, [
           el("span", { class: "file-row__mark " + (c ? FILE_MARK_CLASS[c.status] || "" : ""), text: c ? c.status : "" }),
           el("span", { class: "file-row__name", text: f.name }),
           el("span", { class: "file-row__counts" }, c ? fileCounts(c) : []),
         ]);
+        if (c) row.addEventListener("click", () => openDiff(f.path));
         row.style.paddingLeft = indent(depth);
         rows.push(row);
       }
     }
     walk(buildTree(treePaths), 0);
     return rows.length ? rows : [el("div", { class: "files-pane__note", text: "No files." })];
+  }
+
+  // The diff opens in a modal dialog over the page — the 300px panel is
+  // too narrow to read one.
+  const diffTitle = el("span", { class: "diff-dialog__path" });
+  const diffCounts = el("span", { class: "diff-dialog__counts" });
+  const diffBody = el("div", { class: "diff-dialog__body" });
+  const diffClose = el("button", { class: "diff-dialog__close", type: "button", text: "Close" });
+  const diffDialog = el("dialog", { class: "diff-dialog", "aria-label": "File diff" }, [
+    el("div", { class: "diff-dialog__head" }, [diffTitle, diffCounts, el("span", { class: "diff-dialog__spacer" }), diffClose]),
+    diffBody,
+  ]);
+  document.body.appendChild(diffDialog);
+  diffClose.addEventListener("click", () => diffDialog.close());
+  diffDialog.addEventListener("click", (e) => { if (e.target === diffDialog) diffDialog.close(); }); // backdrop
+
+  async function openDiff(path) {
+    const g = gen;
+    diffTitle.textContent = path;
+    diffCounts.replaceChildren();
+    diffBody.replaceChildren(el("div", { class: "files-pane__note", text: "Loading…" }));
+    if (!diffDialog.open) diffDialog.showModal();
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/diff?path=${encodeURIComponent(path)}`);
+      const data = await res.json().catch(() => ({}));
+      if (g !== gen || diffTitle.textContent !== path) return;
+      if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+      diffCounts.replaceChildren(...fileCounts(data));
+      const parsed = parseUnifiedDiff(data.diff || "");
+      const notes = [];
+      if (parsed.binary) notes.push("Binary file — no text diff.");
+      else if (!parsed.hunks.length) notes.push("No line changes (mode or rename only).");
+      if (data.truncated) notes.push("Diff truncated at 512 KB.");
+      diffBody.replaceChildren(
+        ...(parsed.hunks.length ? [renderDiff(parsed.hunks)] : []),
+        ...notes.map((n) => el("div", { class: "files-pane__note", text: n }))
+      );
+    } catch (err) {
+      diffBody.replaceChildren(el("div", { class: "files-pane__note", text: `Couldn't load the diff: ${err.message}` }));
+    }
   }
 
   async function fetchJSON(path) {
