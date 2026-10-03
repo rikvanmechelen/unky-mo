@@ -648,6 +648,20 @@ func (mr *MockTerminalsMockRecorder) Capture(paneID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Capture", reflect.TypeOf((*MockTerminals)(nil).Capture), paneID)
 }
 
+// Close mocks base method.
+func (m *MockTerminals) Close(paneID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close", paneID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockTerminalsMockRecorder) Close(paneID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTerminals)(nil).Close), paneID)
+}
+
 // Interrupt mocks base method.
 func (m *MockTerminals) Interrupt(paneID string) error {
 	m.ctrl.T.Helper()

@@ -107,6 +107,7 @@ type Terminals interface {
 	SendLine(paneID, text string) error
 	Interrupt(paneID string) error
 	New(w state.ProjectState) (string, error)
+	Close(paneID string) error
 }
 
 // Shells lists Claude's running Bash-tool shells for a session and reads
@@ -351,6 +352,12 @@ func (r realTerminals) SendLine(paneID, text string) error {
 		return r.client.SendRawKeys(paneID, "Enter")
 	}
 	return r.client.SendLiteralText(paneID, text)
+}
+
+// Close kills the terminal's pane (the sidebar's `x`). The sidebar drops
+// it on its next refresh.
+func (r realTerminals) Close(paneID string) error {
+	return r.client.KillPane(paneID)
 }
 
 func (r realTerminals) Interrupt(paneID string) error {

@@ -150,3 +150,18 @@ func (s *Server) handleTerminalInterrupt(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, map[string]string{})
 }
+
+// handleCloseTerminal kills one of the window's terminals.
+func (s *Server) handleCloseTerminal(w http.ResponseWriter, r *http.Request) {
+	pane, ok := s.ownedTerminal(w, r)
+	if !ok {
+		return
+	}
+	s.launchMu.Lock()
+	defer s.launchMu.Unlock()
+	if err := s.deps.Terminals.Close(pane); err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, map[string]string{})
+}

@@ -147,3 +147,16 @@ func TestNewTerminalError(t *testing.T) {
 		t.Errorf("want 502, got %d", rec.Code)
 	}
 }
+
+func TestCloseTerminal(t *testing.T) {
+	srv, terms := termFixture(t)
+	terms.EXPECT().Close("%21").Return(nil)
+
+	if rec := do(t, srv, http.MethodDelete, "/api/sessions/@5/terminals/21", ""); rec.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", rec.Code, rec.Body)
+	}
+	// Claude's pane %2 isn't a terminal: no Close call (gomock would fail).
+	if rec := do(t, srv, http.MethodDelete, "/api/sessions/@5/terminals/2", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("foreign pane: want 404, got %d", rec.Code)
+	}
+}

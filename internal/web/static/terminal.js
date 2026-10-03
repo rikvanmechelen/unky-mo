@@ -12,6 +12,7 @@ function createTerminalDrawer(root) {
   const tabsEl = el("div", { class: "term-drawer__tabs" });
   const newBtn = el("button", { class: "term-drawer__new", type: "button", text: "New terminal" });
   const toggleBtn = el("button", { class: "term-drawer__toggle", type: "button", text: "Hide" });
+  const closeBtn = el("button", { class: "term-drawer__toggle", type: "button", text: "Close", title: "Close this terminal" });
   const errorEl = el("span", { class: "term-drawer__error" });
   const emptyEl = el("span", { class: "term-drawer__empty", text: "No terminals" });
   const outputEl = el("pre", { class: "term-drawer__output" });
@@ -20,7 +21,7 @@ function createTerminalDrawer(root) {
   const form = el("form", { class: "term-drawer__line" }, [el("span", { class: "term-drawer__prompt", text: "$" }), input, ctrlC]);
   const body = el("div", { class: "term-drawer__body" }, [outputEl, form]);
   root.replaceChildren(
-    el("div", { class: "term-drawer__bar" }, [tabsEl, emptyEl, newBtn, el("span", { class: "term-drawer__spacer" }), errorEl, toggleBtn]),
+    el("div", { class: "term-drawer__bar" }, [tabsEl, emptyEl, newBtn, el("span", { class: "term-drawer__spacer" }), errorEl, closeBtn, toggleBtn]),
     body
   );
 
@@ -87,6 +88,7 @@ function createTerminalDrawer(root) {
     toggleBtn.textContent = open ? "Hide" : "Show";
     body.hidden = !open || !any;
     form.hidden = !selected || isShell(selected); // shells are read-only
+    closeBtn.hidden = !selected || isShell(selected);
   }
 
   async function call(method, path, payload) {
@@ -186,6 +188,29 @@ function createTerminalDrawer(root) {
       setError(err.message);
     } finally {
       newBtn.disabled = false;
+    }
+  });
+
+  // Close kills the selected terminal (the sidebar's `x`), after the same
+  // kind of confirmation the TUI asks for destructive actions.
+  closeBtn.addEventListener("click", async () => {
+    const pane = selected;
+    const t = terminals.find((x) => x.id === pane);
+    if (!t) return;
+    const ok = await showDialog({
+      title: `Close ${t.name}?`,
+      text: "The shell and anything running in it are killed.",
+      actions: [{ label: "Cancel" }, { label: "Close terminal", value: true, danger: true }],
+    });
+    if (!ok) return;
+    try {
+      await call("DELETE", `${base()}/${pane}`);
+      setError("");
+      if (selected === pane) { selected = null; lastOutput = null; }
+      await refreshList();
+      refreshOutput();
+    } catch (err) {
+      setError(err.message);
     }
   });
 
