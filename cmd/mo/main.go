@@ -907,7 +907,11 @@ func hooksCmd() *cobra.Command {
 		Short:  "Forward one hook message from stdin to the TUI's socket (used by the hook script)",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return notify.Send(socket, os.Stdin)
+			// MO_HOOK_DEBUG_LOG=<file> also appends every message to that
+			// file — set it in a Claude session's environment (e.g. via
+			// `tmux set-environment -g` before launching one) to see the raw
+			// hook events Claude Code fires.
+			return notify.SendLogged(socket, os.Stdin, os.Getenv("MO_HOOK_DEBUG_LOG"))
 		},
 	}
 	sendCmd.Flags().StringVar(&socket, "socket", "/tmp/unky-mo.sock", "TUI notification socket")

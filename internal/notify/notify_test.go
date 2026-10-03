@@ -255,3 +255,29 @@ func TestServerStopIsIdempotent(t *testing.T) {
 	srv.Stop()
 	srv.Stop()
 }
+
+// SendLogged appends each compacted message to the debug log, even when no
+// server is listening, and keeps delivering normally when it is.
+func TestSendLoggedAppendsMessages(t *testing.T) {
+	srv, path := startServer(t)
+	logPath := filepath.Join(t.TempDir(), "hooks.log")
+
+	if err := SendLogged(path, strings.NewReader(`{"hook_event_name": "Stop",  "session_id": "s1"}`), logPath); err != nil {
+		t.Fatalf("SendLogged: %v", err)
+	}
+	select {
+	case <-srv.Messages():
+	case <-time.After(2 * time.Second):
+		t.Fatal("message not delivered")
+	}
+	_ = SendLogged(filepath.Join(t.TempDir(), "missing.sock"), strings.NewReader(`{"hook_event_name":"Stop","session_id":"s2"}`), logPath)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	want := `{"hook_event_name":"Stop","session_id":"s1"}` + "\n" + `{"hook_event_name":"Stop","session_id":"s2"}` + "\n"
+	if string(data) != want {
+		t.Errorf("log:\n%s\nwant:\n%s", data, want)
+	}
+}

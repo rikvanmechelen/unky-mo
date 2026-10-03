@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"time"
 )
 
@@ -18,6 +19,14 @@ const maxMessageSize = 16 * 1024 * 1024
 // server reads one JSON message per line and Claude's hook payload may be
 // pretty-printed.
 func Send(socketPath string, r io.Reader) error {
+	return SendLogged(socketPath, r, "")
+}
+
+// SendLogged is Send, but first appends the compacted message to logPath
+// when it's non-empty — a debugging aid for checking exactly which hook
+// events Claude Code fires and what they carry (see `mo hooks send` and
+// MO_HOOK_DEBUG_LOG). A logging failure never blocks delivery.
+func SendLogged(socketPath string, r io.Reader, logPath string) error {
 	data, err := io.ReadAll(io.LimitReader(r, maxMessageSize))
 	if err != nil {
 		return fmt.Errorf("read message: %w", err)
@@ -27,6 +36,13 @@ func Send(socketPath string, r io.Reader) error {
 		return fmt.Errorf("message is not valid JSON: %w", err)
 	}
 	line.WriteByte('\n')
+
+	if logPath != "" {
+		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			_, _ = f.Write(line.Bytes())
+			_ = f.Close()
+		}
+	}
 
 	conn, err := net.DialTimeout("unix", socketPath, time.Second)
 	if err != nil {
