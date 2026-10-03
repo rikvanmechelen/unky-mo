@@ -28,6 +28,8 @@ func newTestModel(t *testing.T, name, id string) (*Model, *mock_sidebar.MockTmux
 	//     finds a session, so no default expectation is needed.
 	claude.EXPECT().SessionsForPath(gomock.Any()).Return(nil).AnyTimes()
 	claude.EXPECT().ActiveShells(gomock.Any()).Return(nil).AnyTimes()
+	// refreshState's terminal refresh looks for terminals to adopt.
+	allowTermDiscovery(tmux)
 
 	m := &Model{
 		tmux:          tmux,

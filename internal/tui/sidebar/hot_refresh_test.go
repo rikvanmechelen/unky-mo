@@ -1,6 +1,7 @@
 package sidebar
 
 import (
+	"errors"
 	"testing"
 
 	mock_sidebar "github.com/rvanmech/unky-mo/internal/tui/sidebar/mocks"
@@ -14,6 +15,7 @@ import (
 func TestRefreshTerminals_PrunesDeadPanes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 
 	m := &Model{
 		tmux:     tmux,
@@ -45,6 +47,7 @@ func TestRefreshTerminals_PrunesDeadPanes(t *testing.T) {
 func TestRefreshTerminals_ActiveTermPrunedClosesDrawer(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 
 	m := &Model{
 		tmux:     tmux,
@@ -73,6 +76,7 @@ func TestRefreshTerminals_ActiveTermPrunedClosesDrawer(t *testing.T) {
 func TestRefreshTerminals_AllDeadClosesDrawer(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 
 	m := &Model{
 		tmux:     tmux,
@@ -99,24 +103,30 @@ func TestRefreshTerminals_AllDeadClosesDrawer(t *testing.T) {
 	}
 }
 
-func TestRefreshTerminals_NoTerminalsIsNoop(t *testing.T) {
+func TestRefreshTerminals_NoTerminalsNothingToAdopt(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
 	m := &Model{
+		tmux:          tmux,
 		windowID:      "@1",
 		activeTermIdx: -1,
 	}
 
-	// No tmux calls expected — terminals slice is empty so the pruning
-	// loop doesn't execute.
+	// With nothing tracked, the refresh still looks for terminals to adopt;
+	// finding none, it publishes nothing (the option is already empty).
+	tmux.EXPECT().WindowOption("@1", "@mo_drawer_pane").Return("")
+	tmux.EXPECT().ListSessionPanes("mo-terms-1").Return(nil, errors.New("no session"))
 	m.refreshTerminals()
 
-	if m.drawerOpen {
-		t.Error("drawer should stay closed")
+	if m.drawerOpen || len(m.terminals) != 0 {
+		t.Errorf("drawer should stay closed and empty: open=%v terminals=%+v", m.drawerOpen, m.terminals)
 	}
 }
 
 func TestRefreshTerminals_AppendsTerminalItemsToSidebar(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 
 	m := &Model{
 		tmux:     tmux,
@@ -156,6 +166,7 @@ func TestRefreshTerminals_AppendsTerminalItemsToSidebar(t *testing.T) {
 func TestRefreshTerminals_CalledTwiceDoesNotDuplicate(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 
 	m := &Model{
 		tmux:     tmux,

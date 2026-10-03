@@ -170,6 +170,21 @@ func (mr *MockTmuxClientMockRecorder) KillPane(paneID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KillPane", reflect.TypeOf((*MockTmuxClient)(nil).KillPane), paneID)
 }
 
+// ListSessionPanes mocks base method.
+func (m *MockTmuxClient) ListSessionPanes(session string) ([]tmux.TermPane, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListSessionPanes", session)
+	ret0, _ := ret[0].([]tmux.TermPane)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListSessionPanes indicates an expected call of ListSessionPanes.
+func (mr *MockTmuxClientMockRecorder) ListSessionPanes(session any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSessionPanes", reflect.TypeOf((*MockTmuxClient)(nil).ListSessionPanes), session)
+}
+
 // ListWindowPanes mocks base method.
 func (m *MockTmuxClient) ListWindowPanes(target string) ([]tmux.PaneInfo, error) {
 	m.ctrl.T.Helper()
@@ -325,6 +340,20 @@ func (m *MockTmuxClient) UnbindKey(table, key string) error {
 func (mr *MockTmuxClientMockRecorder) UnbindKey(table, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnbindKey", reflect.TypeOf((*MockTmuxClient)(nil).UnbindKey), table, key)
+}
+
+// WindowOption mocks base method.
+func (m *MockTmuxClient) WindowOption(target, option string) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WindowOption", target, option)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// WindowOption indicates an expected call of WindowOption.
+func (mr *MockTmuxClientMockRecorder) WindowOption(target, option any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WindowOption", reflect.TypeOf((*MockTmuxClient)(nil).WindowOption), target, option)
 }
 
 // WindowPanePIDs mocks base method.

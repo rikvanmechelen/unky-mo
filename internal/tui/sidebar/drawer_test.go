@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	mock_sidebar "github.com/rvanmech/unky-mo/internal/tui/sidebar/mocks"
 	"go.uber.org/mock/gomock"
 )
@@ -44,6 +45,17 @@ func expectEnsureMoTermsExists(tmux *mock_sidebar.MockTmuxClient) {
 func expectLegacyTabUnbind(tmux *mock_sidebar.MockTmuxClient) {
 	tmux.EXPECT().UnbindKey("popup-keys", "Tab").Return(nil)
 	tmux.EXPECT().UnbindKey("popup-keys", "BTab").Return(nil)
+}
+
+// allowTermDiscovery lets refreshTerminals look for terminals to adopt and
+// publish the drawer pane without asserting on it: nothing is left in the
+// drawer option, the mo-terms session doesn't exist, and @mo_drawer_pane
+// writes succeed. Tests that check adoption or publishing set precise
+// expectations instead.
+func allowTermDiscovery(tmux *mock_sidebar.MockTmuxClient) {
+	tmux.EXPECT().WindowOption(gomock.Any(), "@mo_drawer_pane").Return("").AnyTimes()
+	tmux.EXPECT().ListSessionPanes(gomock.Any()).Return(nil, errors.New("no session")).AnyTimes()
+	tmux.EXPECT().SetWindowOption(gomock.Any(), "@mo_drawer_pane", gomock.Any()).Return(nil).AnyTimes()
 }
 
 // newDrawerModel builds a minimal Model for drawer-state tests — a mocked
@@ -253,6 +265,7 @@ func TestCycleTerminalIsNoopWhenLessThanTwo(t *testing.T) {
 
 func TestRefreshTerminalsPrunesDeadPanes(t *testing.T) {
 	m, tmux := newDrawerModel(t)
+	allowTermDiscovery(tmux)
 	m.terminals = []TerminalTab{
 		{PaneID: "%10", Name: "term-1"},
 		{PaneID: "%11", Name: "term-2"}, // this one is dead
@@ -279,6 +292,7 @@ func TestRefreshTerminalsPrunesDeadPanes(t *testing.T) {
 
 func TestRefreshTerminalsActivePaneDiedClosesDrawer(t *testing.T) {
 	m, tmux := newDrawerModel(t)
+	allowTermDiscovery(tmux)
 	m.terminals = []TerminalTab{
 		{PaneID: "%10", Name: "term-1"}, // this one is dead AND active
 		{PaneID: "%11", Name: "term-2"},
@@ -301,6 +315,7 @@ func TestRefreshTerminalsActivePaneDiedClosesDrawer(t *testing.T) {
 
 func TestRefreshTerminalsAllGoneDrawerCloses(t *testing.T) {
 	m, tmux := newDrawerModel(t)
+	allowTermDiscovery(tmux)
 	m.terminals = []TerminalTab{
 		{PaneID: "%10", Name: "term-1"},
 	}
@@ -444,6 +459,7 @@ func TestOpenPopupWithoutDrawerExistingTerminals(t *testing.T) {
 func TestRefreshTerminalsAppendsItems(t *testing.T) {
 	// refreshTerminals appends "Terminals" header + per-terminal rows to items.
 	m, tmux := newDrawerModel(t)
+	allowTermDiscovery(tmux)
 	m.terminals = []TerminalTab{
 		{PaneID: "%10", Name: "term-1"},
 		{PaneID: "%11", Name: "term-2"},
@@ -469,4 +485,86 @@ func TestRefreshTerminalsAppendsItems(t *testing.T) {
 	if m.items[3].IsActive {
 		t.Error("second terminal should NOT be active")
 	}
+}
+
+// Terminals opened by mo web (or left behind by a sidebar process before a
+// restart) are parked in mo-terms without this sidebar knowing them — the
+// refresh adopts them as closed-drawer tabs.
+func TestRefreshTerminalsAdoptsParkedUnknownPanes(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	m.drawerAdopted = true // startup adoption already ran
+	m.terminals = []TerminalTab{{PaneID: "%10", Name: "term-1"}}
+	m.termCounter = 1
+
+	tmux.EXPECT().IsPaneAlive("%10").Return(true)
+	tmux.EXPECT().ListSessionPanes(drawerModelTermSession).Return([]ttmux.TermPane{
+		{ID: "%10", Command: "fish"}, {ID: "%20", Command: "fish"},
+	}, nil)
+
+	m.refreshTerminals()
+	if len(m.terminals) != 2 || m.terminals[1].PaneID != "%20" || m.terminals[1].Name != "term-2" {
+		t.Fatalf("want %%20 adopted as term-2, got %+v", m.terminals)
+	}
+	if m.drawerOpen {
+		t.Error("adopting a parked pane must not open the drawer")
+	}
+}
+
+// After ctrl+alt+r the new sidebar process starts with no terminals while
+// the old one's drawer pane is still split into the window. The window's
+// @mo_drawer_pane option names it, so it's adopted as the open drawer tab.
+func TestRefreshTerminalsAdoptsOpenDrawerPaneAfterRestart(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+
+	tmux.EXPECT().WindowOption("@1", "@mo_drawer_pane").Return("%30")
+	tmux.EXPECT().ListWindowPanes("@1").Return([]ttmux.PaneInfo{{ID: "%1"}, {ID: "%30"}, {ID: "%2"}}, nil)
+	tmux.EXPECT().ListSessionPanes(drawerModelTermSession).Return([]ttmux.TermPane{{ID: "%31"}}, nil)
+	tmux.EXPECT().SetWindowOption("@1", "@mo_drawer_pane", "%30").Return(nil)
+
+	m.refreshTerminals()
+	if len(m.terminals) != 2 || m.terminals[0].PaneID != "%30" || m.terminals[1].PaneID != "%31" {
+		t.Fatalf("terminals: %+v", m.terminals)
+	}
+	if !m.drawerOpen || m.activeTermIdx != 0 {
+		t.Errorf("drawer pane should be the open tab: open=%v idx=%d", m.drawerOpen, m.activeTermIdx)
+	}
+}
+
+// A @mo_drawer_pane left pointing at a pane that's no longer in the window
+// (e.g. parked since) doesn't open the drawer.
+func TestRefreshTerminalsIgnoresStaleDrawerOption(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+
+	tmux.EXPECT().WindowOption("@1", "@mo_drawer_pane").Return("%30")
+	tmux.EXPECT().ListWindowPanes("@1").Return([]ttmux.PaneInfo{{ID: "%1"}, {ID: "%2"}}, nil)
+	tmux.EXPECT().ListSessionPanes(drawerModelTermSession).Return([]ttmux.TermPane{{ID: "%30"}}, nil)
+	// Published value stays "" — no write.
+
+	m.refreshTerminals()
+	if len(m.terminals) != 1 || m.terminals[0].PaneID != "%30" {
+		t.Fatalf("parked %%30 should still be adopted: %+v", m.terminals)
+	}
+	if m.drawerOpen {
+		t.Error("stale drawer option must not open the drawer")
+	}
+}
+
+func TestRefreshTerminalsPublishesDrawerPaneOnChange(t *testing.T) {
+	m, tmux := newDrawerModel(t)
+	m.drawerAdopted = true
+	m.terminals = []TerminalTab{{PaneID: "%10", Name: "term-1"}}
+	m.activeTermIdx = 0
+	m.drawerOpen = true
+
+	tmux.EXPECT().IsPaneAlive("%10").Return(true).Times(3)
+	tmux.EXPECT().ListSessionPanes(drawerModelTermSession).Return(nil, errors.New("no session")).Times(3)
+	gomock.InOrder(
+		tmux.EXPECT().SetWindowOption("@1", "@mo_drawer_pane", "%10").Return(nil),
+		tmux.EXPECT().SetWindowOption("@1", "@mo_drawer_pane", "").Return(nil),
+	)
+
+	m.refreshTerminals() // publishes %10
+	m.refreshTerminals() // unchanged: no write
+	m.drawerOpen = false
+	m.refreshTerminals() // closed: publishes ""
 }

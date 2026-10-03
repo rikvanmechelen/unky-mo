@@ -46,6 +46,10 @@ Exception: the ticket picker's remember prompt uses `y` remember / `o` just-this
 
 The sidebar manages a collapsible terminal drawer below the Claude pane (pane `.0`). Only one terminal tab is visible at a time — inactive tabs are parked in a dedicated mo-terms tmux session scoped per-window via `Model.termSession()` → `mo-terms-<windowID>`. Panes move in and out via cross-session `break-pane`/`join-pane`. The sidebar tracks terminal pane IDs (`%N` format, stable across moves) and prunes dead panes on each 1s refresh tick.
 
+**Finding terminals from outside the sidebar.** The sidebar records the pane currently shown in its drawer in the window option `@mo_drawer_pane` (`tmux.DrawerPaneOption`, written on change from `refreshTerminals`; `""` when closed). That option, plus the panes parked in `ops.TermSessionName(...)`, is the full terminal set of a window. `mo web` reads it, and so does a restarted sidebar. A window option rather than a pane option, because pane options need tmux 3.1.
+
+**Adoption.** On each refresh `adoptTerminals` adds panes from the window's mo-terms session that the sidebar doesn't track yet, named `term-N`. These are terminals opened by mo web's "New terminal" (always created parked), or ones left behind by a previous sidebar process. On the first refresh it also adopts the pane named by `@mo_drawer_pane` as the open drawer tab, if it's really in the window. That's what keeps terminals after `ctrl+alt+r`.
+
 The main TUI runs a parallel sweep on each 5s `sessionTick` (`pruneOrphanedTermSessions` → `orphanedTermSessions`) that kills `mo-terms-<N>` sessions whose window `@N` no longer exists.
 
 Backtick (`` ` ``) opens a floating popup that attaches a nested tmux client to `mo-terms`. `mo-terms` sets its `key-table` to `popup-keys`, where `` ` `` → `detach-client` (closes popup without killing shell). Tab/Shift+Tab pass through to the shell for tab completion. The outer `mo` client stays on `root` table so backticks remain typeable in Claude panes.

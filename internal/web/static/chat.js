@@ -204,6 +204,7 @@ function main() {
   const shell = document.getElementById("chat-shell");
   const filesEl = document.getElementById("files-pane");
   const filesPane = createFilesPane(filesEl);
+  const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
 
   // Per-session state — reset by resetSession when the nav switches to
   // another window in place.
@@ -475,6 +476,7 @@ function main() {
     filesEl.hidden = !id;
     shell.classList.toggle("has-files", !!id);
     filesPane.setWindow(id);
+    drawer.setWindow(id);
     pollStatus();
   }
 

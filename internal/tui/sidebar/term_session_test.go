@@ -60,22 +60,3 @@ func TestTermSession_InstanceIDTakesPriorityOverAll(t *testing.T) {
 		t.Errorf("termSession() = %q, want mo-terms-deadbeef0123 (instanceID should take priority)", got)
 	}
 }
-
-func TestSanitizeTermSessionSuffix(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"simple", "simple"},
-		{"foo:bar", "foo-bar"},
-		{"my.proj", "my-proj"},
-		{"has space", "has-space"},
-		{"a:b.c d", "a-b-c-d"},
-		{"foo@feat", "foo@feat"}, // @ is NOT sanitized
-	}
-	for _, c := range cases {
-		got := sanitizeTermSessionSuffix(c.in)
-		if got != c.want {
-			t.Errorf("sanitizeTermSessionSuffix(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}

@@ -14,6 +14,7 @@ import (
 func TestNewModelWithDeps_UsesResolverWindowID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
 
 	// refreshState fallback path (no state file) calls LiveSessions.
@@ -33,6 +34,8 @@ func TestNewModelWithDeps_UsesResolverWindowID(t *testing.T) {
 func TestNewModelWithDeps_FallsBackToWindowNameOnEmptyID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
+	tmux.EXPECT().SessionName().Return("mo").AnyTimes() // window target without an ID
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
 	claude.EXPECT().LiveSessions().Return(nil, nil).AnyTimes()
 
@@ -50,6 +53,7 @@ func TestNewModelWithDeps_FallsBackToWindowNameOnEmptyID(t *testing.T) {
 func TestNewModelWithDeps_CapturesWorkingDir(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
 	claude.EXPECT().LiveSessions().Return(nil, nil).AnyTimes()
 
@@ -65,6 +69,7 @@ func TestNewModelWithDeps_CapturesWorkingDir(t *testing.T) {
 func TestNewModelWithDeps_StartsWithHomeItem(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
 	claude.EXPECT().LiveSessions().Return(nil, nil).AnyTimes()
 
@@ -82,6 +87,7 @@ func TestNewModelWithDeps_StartsWithHomeItem(t *testing.T) {
 func TestNewModelWithDeps_InitializesDefaultFields(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 	claude := mock_sidebar.NewMockClaudeReader(ctrl)
 	claude.EXPECT().LiveSessions().Return(nil, nil).AnyTimes()
 

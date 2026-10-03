@@ -133,6 +133,7 @@ func TestSwitchToSelectedNoTargetForBlankRow(t *testing.T) {
 func TestActiveShellsForConcurrentSiblingsUsesOwnSessionPID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tmux := mock_sidebar.NewMockTmuxClient(ctrl)
+	allowTermDiscovery(tmux)
 	cr := mock_sidebar.NewMockClaudeReader(ctrl)
 
 	// Two siblings at the same path. Session 100 lives in window @1; session

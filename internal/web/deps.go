@@ -25,7 +25,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -92,6 +92,17 @@ type GitFiles interface {
 	Branch(dir string) string
 }
 
+// Terminals reads and drives a window's drawer terminals for the chat
+// view's terminal drawer. Handlers only ever pass pane IDs that List
+// returned for the requested window.
+type Terminals interface {
+	List(w state.ProjectState) ([]ops.Terminal, error)
+	Capture(paneID string) (string, error)
+	SendLine(paneID, text string) error
+	Interrupt(paneID string) error
+	New(w state.ProjectState) (string, error)
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -103,6 +114,7 @@ type Deps struct {
 	History   SessionHistory
 	Sessions  SessionOps
 	Git       GitFiles
+	Terminals Terminals
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.
@@ -262,4 +274,80 @@ func (g realGitFiles) Branch(dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.CurrentBranch(ctx, g.cmd, dir)
+}
+
+// realTerminals finds and drives drawer terminals through tmux.
+type realTerminals struct{ client *tmux.Client }
+
+func NewTerminals(client *tmux.Client) Terminals { return realTerminals{client: client} }
+
+// terminalScrollback is how many lines of history the output view shows.
+const terminalScrollback = 200
+
+// List returns the window's terminals: the one shown in its drawer (named
+// by the sidebar's @mo_drawer_pane option, if it's really in the window)
+// first, then every pane parked in its mo-terms session.
+func (r realTerminals) List(w state.ProjectState) ([]ops.Terminal, error) {
+	var out []ops.Terminal
+	seen := map[string]bool{}
+	if id := r.client.WindowOption(w.WindowID, tmux.DrawerPaneOption); id != "" {
+		if panes, err := r.client.ListWindowPanes(w.WindowID); err == nil {
+			for _, p := range panes {
+				if p.ID != id {
+					continue
+				}
+				if d, err := r.client.PaneDetails(id); err == nil {
+					out = append(out, ops.Terminal{ID: d.ID, Command: d.Command, Cwd: d.Cwd, Visible: true})
+					seen[id] = true
+				}
+			}
+		}
+	}
+	session := ops.TermSessionName(w.InstanceID, w.WindowID, w.WindowName)
+	if r.client.SessionExistsNamed(session) {
+		panes, err := r.client.ListSessionPanes(session)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range panes {
+			if !seen[p.ID] {
+				out = append(out, ops.Terminal{ID: p.ID, Command: p.Command, Cwd: p.Cwd})
+				seen[p.ID] = true
+			}
+		}
+	}
+	return out, nil
+}
+
+func (r realTerminals) Capture(paneID string) (string, error) {
+	return r.client.CapturePane(paneID, terminalScrollback)
+}
+
+// SendLine types text literally (no tmux key-name interpretation) and
+// presses Enter; an empty line just presses Enter.
+func (r realTerminals) SendLine(paneID, text string) error {
+	if text == "" {
+		return r.client.SendRawKeys(paneID, "Enter")
+	}
+	return r.client.SendLiteralText(paneID, text)
+}
+
+func (r realTerminals) Interrupt(paneID string) error {
+	return r.client.SendRawKeys(paneID, "C-c")
+}
+
+// New opens a terminal parked in the window's mo-terms session — never in
+// the visible window, so the user's tmux layout doesn't change. The
+// sidebar adopts it on its next refresh. Creating the session yields its
+// first shell, which is the new terminal.
+func (r realTerminals) New(w state.ProjectState) (string, error) {
+	session := ops.TermSessionName(w.InstanceID, w.WindowID, w.WindowName)
+	ghost, err := ops.EnsureTermSession(r.client, session, w.Path)
+	if err != nil {
+		return "", err
+	}
+	if ghost != "" {
+		return ghost, nil
+	}
+	return r.client.NewWindowInSession(session, w.Path)
 }

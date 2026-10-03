@@ -32,6 +32,8 @@ type TmuxClient interface {
 	SwitchToWindow(target string) error
 	WindowPanePIDs(target string) (map[int]bool, error)
 	ListWindowPanes(target string) ([]ttmux.PaneInfo, error)
+	ListSessionPanes(session string) ([]ttmux.TermPane, error)
+	WindowOption(target, option string) string
 }
 
 // ClaudeReader is the subset of internal/claude the sidebar reads from.
@@ -129,6 +131,12 @@ func (a *tmuxClientAdapter) SessionExistsNamed(name string) bool {
 }
 func (a *tmuxClientAdapter) SetSessionOption(session, option, value string) error {
 	return a.c.SetSessionOption(session, option, value)
+}
+func (a *tmuxClientAdapter) ListSessionPanes(session string) ([]ttmux.TermPane, error) {
+	return a.c.ListSessionPanes(session)
+}
+func (a *tmuxClientAdapter) WindowOption(target, option string) string {
+	return a.c.WindowOption(target, option)
 }
 func (a *tmuxClientAdapter) SetWindowOption(target, option, value string) error {
 	return a.c.SetWindowOption(target, option, value)

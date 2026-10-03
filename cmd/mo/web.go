@@ -46,6 +46,7 @@ func webCmd() *cobra.Command {
 				History:   web.NewSessionHistory(),
 				Sessions:  web.NewSessionOps(ops.NewContext(tmuxClient)),
 				Git:       web.NewGitFiles(moexec.DefaultCommander),
+				Terminals: web.NewTerminals(tmuxClient),
 				Agents:    cfg.Agents,
 			}
 

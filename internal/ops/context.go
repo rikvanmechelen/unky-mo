@@ -31,7 +31,7 @@ type Context struct {
 // interface lives here (not in internal/tui) so the tui package can depend
 // on it without circling back on ops.
 //
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_ops github.com/rvanmech/unky-mo/internal/ops TmuxClient,ClaudeReader
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_ops github.com/rvanmech/unky-mo/internal/ops TmuxClient,ClaudeReader,TermSessionTmux
 type TmuxClient interface {
 	SessionName() string
 	CreateWindow(name, cwd string) (string, error)

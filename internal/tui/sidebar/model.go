@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/state"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
@@ -77,23 +78,28 @@ type Model struct {
 	height     int
 	// Terminal drawer state
 	terminals     []TerminalTab
-	activeTermIdx int  // index into terminals; -1 when drawer closed
+	activeTermIdx int // index into terminals; -1 when drawer closed
 	drawerOpen    bool
-	termCounter   int // incrementing counter for naming
+	// publishedDrawerPane is the last value written to the window's
+	// @mo_drawer_pane option; drawerAdopted is set once the startup
+	// adoption of a still-open drawer pane has run.
+	publishedDrawerPane string
+	drawerAdopted       bool
+	termCounter         int // incrementing counter for naming
 	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
 	syncStatus string
 	// Active Claude shells (Bash tool subprocesses)
 	activeShells []claude.ActiveShell
 	// Changed files (from git status)
-	changedFiles   []string           // raw file paths from git status --porcelain
-	changedAdded   int                // total lines added
-	changedRemoved int                // total lines removed
-	gitStatusMap   map[string]string  // path → status label (M/A/D/?/R) from git status
+	changedFiles   []string          // raw file paths from git status --porcelain
+	changedAdded   int               // total lines added
+	changedRemoved int               // total lines removed
+	gitStatusMap   map[string]string // path → status label (M/A/D/?/R) from git status
 	// Full project file tree
-	fileTreeMode        fileTreeMode  // changed-only vs full tree
-	dirTree             *dirNode      // cached full directory tree
-	dirTreeRaw          string        // cached git ls-files output for change detection
-	dirTreeRefreshTick  int           // counter for 5s cadence (refresh every 5 ticks)
+	fileTreeMode       fileTreeMode // changed-only vs full tree
+	dirTree            *dirNode     // cached full directory tree
+	dirTreeRaw         string       // cached git ls-files output for change detection
+	dirTreeRefreshTick int          // counter for 5s cadence (refresh every 5 ticks)
 	// Focus section: "sessions", "shells", or "files"
 	focusSection  string
 	shellCursor   int
@@ -960,7 +966,7 @@ func (m *Model) refreshState() {
 					TeammateName: tm.Name,
 					TeamPaneID:   tm.PaneID,
 					Status:       tm.Status,
-					Parent:       p.Name,  // triggers indent
+					Parent:       p.Name, // triggers indent
 					WindowID:     p.WindowID,
 					WindowName:   p.WindowName,
 					Section:      "projects",
@@ -1225,9 +1231,9 @@ const (
 // dirNode represents a directory or file in the full project tree.
 type dirNode struct {
 	name     string
-	path     string               // relative path from repo root
+	path     string // relative path from repo root
 	children map[string]*dirNode
-	order    []string             // insertion-order child names
+	order    []string // insertion-order child names
 	isDir    bool
 	expanded bool
 }
@@ -1947,31 +1953,10 @@ func (m *Model) closeTerminal() tea.Cmd {
 }
 
 // termSession returns the mo-terms session name scoped to this sidebar's
-// window. Each project window gets its own parking session so terminals
-// opened from one window (via `t` or backtick) don't leak into other
-// windows' drawers or backtick popups. Prefers instanceID (the mo-generated
-// hex key), falling back to windowID (stable tmux "@N") for pre-refactor
-// windows, then sanitized windowName, and finally the bare global name for
-// unit tests that don't set any.
+// window (see ops.TermSessionName — mo web derives the same name to find
+// and create a window's terminals).
 func (m Model) termSession() string {
-	switch {
-	case m.instanceID != "":
-		return ttmux.MoTermsSession + "-" + m.instanceID
-	case m.windowID != "":
-		return ttmux.MoTermsSession + "-" + strings.TrimPrefix(m.windowID, "@")
-	case m.windowName != "":
-		return ttmux.MoTermsSession + "-" + sanitizeTermSessionSuffix(m.windowName)
-	default:
-		return ttmux.MoTermsSession
-	}
-}
-
-// sanitizeTermSessionSuffix replaces characters that tmux treats specially
-// in session names (':', '.', whitespace) with '-' so arbitrary window
-// names produce a valid session target.
-func sanitizeTermSessionSuffix(s string) string {
-	r := strings.NewReplacer(":", "-", ".", "-", " ", "-", "\t", "-")
-	return r.Replace(s)
+	return ops.TermSessionName(m.instanceID, m.windowID, m.windowName)
 }
 
 // ensureMoTerms lazily creates the per-window mo-terms session that holds
@@ -1980,40 +1965,8 @@ func sanitizeTermSessionSuffix(s string) string {
 // session — callers decide whether to track that pane as a tab (popup
 // entry point) or kill it (drawer hide path). Returns "" when the session
 // already existed.
-//
-// The new session is configured so clients attached to it (i.e. the
-// popup) use the popup-keys key table, where backtick is bound to
-// detach-client.
 func (m *Model) ensureMoTerms() (string, error) {
-	// Clear legacy Tab/BTab bindings that older sidebar versions installed
-	// on the popup-keys table. tmux key tables are server-global and
-	// persist across sidebar restarts until the tmux server dies, so a
-	// fresh binary cannot rely on "we just didn't rebind them" — we have
-	// to actively unbind to reach a clean state. Unbind is idempotent, so
-	// running it every time is safe.
-	_ = m.tmux.UnbindKey("popup-keys", "Tab")
-	_ = m.tmux.UnbindKey("popup-keys", "BTab")
-
-	name := m.termSession()
-	if m.tmux.SessionExistsNamed(name) {
-		return "", nil
-	}
-	ghost, err := m.tmux.NewDetachedSession(name, m.windowPath)
-	if err != nil {
-		return "", err
-	}
-	if err := m.tmux.SetSessionOption(name, "key-table", "popup-keys"); err != nil {
-		return "", err
-	}
-	_ = m.tmux.SetSessionOption(name, "mouse", "on")
-	_ = m.tmux.BindKey("popup-keys", "`", "detach-client")
-	// Mouse bindings so the popup supports scroll and text selection.
-	// WheelUp enters copy-mode (auto-exits at bottom), WheelDown passes
-	// through, and drag starts a selection.
-	_ = m.tmux.BindKey("popup-keys", "WheelUpPane", "copy-mode", "-e")
-	_ = m.tmux.BindKey("popup-keys", "WheelDownPane", "send-keys", "-M")
-	_ = m.tmux.BindKey("popup-keys", "MouseDrag1Pane", "copy-mode", "-M")
-	return ghost, nil
+	return ops.EnsureTermSession(m.tmux, m.termSession(), m.windowPath)
 }
 
 // hidePane parks a terminal pane in the mo-terms session so it survives
@@ -2033,6 +1986,80 @@ func (m *Model) hidePane(paneID string) error {
 		_ = m.tmux.KillPane(ghost)
 	}
 	return nil
+}
+
+// windowTarget addresses this sidebar's own window for window options.
+func (m *Model) windowTarget() string {
+	if m.windowID != "" {
+		return m.windowID
+	}
+	return fmt.Sprintf("%s:%s", m.tmux.SessionName(), m.windowName)
+}
+
+// adoptTerminals adds terminals this sidebar doesn't track yet: panes
+// parked in its mo-terms session (opened by mo web, or left behind by a
+// previous sidebar process before a restart), and — once, at startup — the
+// pane a previous sidebar process left open in the drawer, named by the
+// window's @mo_drawer_pane option. Returns the adopted drawer pane and its
+// index when one was adopted ("" and -1 otherwise).
+func (m *Model) adoptTerminals() (string, int) {
+	known := make(map[string]bool, len(m.terminals))
+	for _, t := range m.terminals {
+		known[t.PaneID] = true
+	}
+	add := func(paneID string) int {
+		m.termCounter++
+		m.terminals = append(m.terminals, TerminalTab{PaneID: paneID, Name: fmt.Sprintf("term-%d", m.termCounter)})
+		known[paneID] = true
+		return len(m.terminals) - 1
+	}
+
+	drawerPane, drawerIdx := "", -1
+	if !m.drawerAdopted {
+		m.drawerAdopted = true
+		if id := m.tmux.WindowOption(m.windowTarget(), ttmux.DrawerPaneOption); id != "" && !known[id] && m.paneInOwnWindow(id) {
+			drawerPane, drawerIdx = id, add(id)
+		}
+	}
+	if panes, err := m.tmux.ListSessionPanes(m.termSession()); err == nil {
+		for _, p := range panes {
+			if !known[p.ID] {
+				add(p.ID)
+			}
+		}
+	}
+	return drawerPane, drawerIdx
+}
+
+// paneInOwnWindow reports whether paneID is currently a pane of this
+// sidebar's window (i.e. shown in the drawer, not parked).
+func (m *Model) paneInOwnWindow(paneID string) bool {
+	panes, err := m.tmux.ListWindowPanes(m.windowTarget())
+	if err != nil {
+		return false
+	}
+	for _, p := range panes {
+		if p.ID == paneID {
+			return true
+		}
+	}
+	return false
+}
+
+// publishDrawerPane records the terminal shown in the drawer (or "" when
+// the drawer is closed) in the window's @mo_drawer_pane option, so mo web
+// and a restarted sidebar can find it. Writes only on change.
+func (m *Model) publishDrawerPane() {
+	pane := ""
+	if m.drawerOpen && m.activeTermIdx >= 0 && m.activeTermIdx < len(m.terminals) {
+		pane = m.terminals[m.activeTermIdx].PaneID
+	}
+	if pane == m.publishedDrawerPane {
+		return
+	}
+	if err := m.tmux.SetWindowOption(m.windowTarget(), ttmux.DrawerPaneOption, pane); err == nil {
+		m.publishedDrawerPane = pane
+	}
 }
 
 // refreshTerminals verifies tracked terminals are still alive and appends
@@ -2069,6 +2096,13 @@ func (m *Model) refreshTerminals() {
 	}
 	m.terminals = alive
 
+	// A drawer pane left open by a previous sidebar process becomes this
+	// one's open drawer tab (only when nothing is open here already).
+	if drawerPane, idx := m.adoptTerminals(); drawerPane != "" && activePaneID == "" {
+		activePaneID, newActiveIdx = drawerPane, idx
+		m.drawerOpen = true
+	}
+
 	if len(m.terminals) == 0 {
 		m.activeTermIdx = -1
 		m.drawerOpen = false
@@ -2082,6 +2116,8 @@ func (m *Model) refreshTerminals() {
 	} else if m.activeTermIdx >= len(m.terminals) {
 		m.activeTermIdx = len(m.terminals) - 1
 	}
+
+	m.publishDrawerPane()
 
 	// Append terminal items to the sidebar list
 	if len(m.terminals) > 0 {
