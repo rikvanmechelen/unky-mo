@@ -290,3 +290,34 @@ func TestIntegrationPersistentSessionSurvivesInstantExitAndRespawns(t *testing.T
 		t.Errorf("pane_dead after respawn = %q, want 0", got)
 	}
 }
+
+// CreateWindow must not move the session's current window — launches from the
+// web dashboard (and restore-after-suspend) happen in the background, and
+// focus only moves via an explicit SwitchToWindow.
+func TestIntegrationCreateWindowKeepsCurrentWindow(t *testing.T) {
+	c := newTestClient(t)
+	activeID := func() string {
+		t.Helper()
+		out, err := c.tmuxCmd("display-message", "-p", "-t", c.SessionName, "#{window_id}").Output()
+		if err != nil {
+			t.Fatalf("display-message: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	before := activeID()
+	target, err := c.CreateWindow("background", "/tmp")
+	if err != nil {
+		t.Fatalf("CreateWindow: %v", err)
+	}
+	if got := activeID(); got != before {
+		t.Fatalf("CreateWindow moved the current window from %s to %s", before, got)
+	}
+
+	if err := c.SwitchToWindow(target); err != nil {
+		t.Fatalf("SwitchToWindow: %v", err)
+	}
+	if got := activeID(); !strings.HasSuffix(target, ":"+got) {
+		t.Fatalf("SwitchToWindow: current window %s, want %s", got, target)
+	}
+}

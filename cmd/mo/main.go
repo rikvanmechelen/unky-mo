@@ -433,6 +433,7 @@ func resumeCmd() *cobra.Command {
 			tc.SetWindowOption(target, "@mo_agent", agent.Key)
 			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
+			_ = tc.SwitchToWindow(target)
 
 			fmt.Printf("Resuming session %s in %s\n", sessionID, windowName)
 			return nil
@@ -640,6 +641,7 @@ func syncCmd() *cobra.Command {
 			tc.SetWindowOption(target, "@mo_agent", agent.Key)
 			tc.SetWindowHook(target, "pane-exited", "kill-window")
 			addCLISidebarPane(tc, target, projectPath)
+			_ = tc.SwitchToWindow(target)
 
 			fmt.Printf("Resumed session in %s\n", windowName)
 			return nil

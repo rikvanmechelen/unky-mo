@@ -193,9 +193,12 @@ func (c *Client) EnableMouse() {
 // "moma.org.cubed") are never misinterpreted by tmux as pane separators.
 func (c *Client) CreateWindow(name, cwd string) (string, error) {
 	// Use -a to append after the current window, avoiding index conflicts.
+	// -d keeps the attached client where it is: focus only ever moves via an
+	// explicit SwitchToWindow, so callers that launch in the background (the
+	// web dashboard, restore-after-suspend) don't yank the user's view.
 	// -P -F captures the new window's stable ID so the target is unambiguous.
 	args := []string{
-		"new-window", "-a", "-t", c.SessionName, "-n", name, "-c", cwd,
+		"new-window", "-d", "-a", "-t", c.SessionName, "-n", name, "-c", cwd,
 		"-P", "-F", "#{window_id}",
 	}
 	cmd := c.tmuxCmd(args...)
