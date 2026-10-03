@@ -50,9 +50,11 @@ test-integration:
 	go test -tags integration ./internal/tmux/... ./internal/integration/... ./internal/tui/sidebar/...
 
 # Regenerate all gomock mocks. Requires mockgen — `go install go.uber.org/mock/mockgen@latest`.
+# go:generate invokes mockgen by name; put GOBIN on PATH so a `go install`ed
+# mockgen is found even when the shell's PATH lacks it.
 mocks:
-	@command -v mockgen >/dev/null 2>&1 || { echo "mockgen not found — run: go install go.uber.org/mock/mockgen@latest"; exit 1; }
-	go generate ./...
+	@PATH="$(GOBIN):$$PATH" command -v mockgen >/dev/null 2>&1 || { echo "mockgen not found — run: go install go.uber.org/mock/mockgen@latest"; exit 1; }
+	PATH="$(GOBIN):$$PATH" go generate ./...
 
 # CI check: mocks are up-to-date.
 mocks-check: mocks
