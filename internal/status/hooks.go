@@ -22,9 +22,38 @@ type hookPayload struct {
 }
 
 // legacyNotificationPayload is the JSON Claude provides to Notification hooks.
+// Claude Code sends `notification_type` (verified against a captured
+// payload, Oct 2026); the camelCase `notificationType` is what the old
+// notify-hook.sh sent, still accepted for the legacy format.
 type legacyNotificationPayload struct {
 	Message          string `json:"message"`
-	NotificationType string `json:"notificationType"`
+	NotificationType string `json:"notification_type"`
+	LegacyType       string `json:"notificationType"`
+}
+
+// kind returns the notification type from whichever field carried it.
+func (np legacyNotificationPayload) kind() string {
+	if np.NotificationType != "" {
+		return np.NotificationType
+	}
+	return np.LegacyType
+}
+
+// toolFromHookInput reads tool_name/tool_input out of the forwarded hook
+// payload (PreToolUse and PermissionRequest both carry them there, never at
+// the top level).
+func toolFromHookInput(hookInput json.RawMessage, evt *HookEvent) {
+	if len(hookInput) == 0 {
+		return
+	}
+	var tp struct {
+		ToolName  string          `json:"tool_name"`
+		ToolInput json.RawMessage `json:"tool_input"`
+	}
+	if json.Unmarshal(hookInput, &tp) == nil {
+		evt.ToolName = tp.ToolName
+		evt.ToolInput = tp.ToolInput
+	}
 }
 
 // ParseHookPayload parses a hook message (from the Unix socket) into a HookEvent.
@@ -80,18 +109,13 @@ func parseUnifiedEvent(p hookPayload, evt HookEvent) (HookEvent, error) {
 		// than promoting fields to the top level, so parse it from there
 		// (same pattern as the Notification case below) — a top-level
 		// "tool_name" is never actually sent.
-		if len(p.HookInput) > 0 {
-			var tp struct {
-				ToolName  string          `json:"tool_name"`
-				ToolInput json.RawMessage `json:"tool_input"`
-			}
-			if json.Unmarshal(p.HookInput, &tp) == nil {
-				evt.ToolName = tp.ToolName
-				evt.ToolInput = tp.ToolInput
-			}
-		}
+		toolFromHookInput(p.HookInput, &evt)
 	case "PermissionRequest":
 		evt.Type = EventPermissionRequest
+		// Claude Code routes AskUserQuestion's menu through the permission
+		// flow, so its PermissionRequest names that tool — ProcessHookEvent
+		// needs the name to keep such a session a question.
+		toolFromHookInput(p.HookInput, &evt)
 	case "SessionStart":
 		evt.Type = EventSessionStart
 		if len(p.HookInput) > 0 {
@@ -109,13 +133,13 @@ func parseUnifiedEvent(p hookPayload, evt HookEvent) (HookEvent, error) {
 		if len(p.HookInput) > 0 {
 			var np legacyNotificationPayload
 			if json.Unmarshal(p.HookInput, &np) == nil {
-				switch np.NotificationType {
+				switch np.kind() {
 				case "idle_prompt":
 					evt.Type = EventNotificationIdle
 				case "permission_prompt":
 					evt.Type = EventNotificationPerm
 				default:
-					return HookEvent{}, fmt.Errorf("unknown notification type: %q", np.NotificationType)
+					return HookEvent{}, fmt.Errorf("unknown notification type: %q", np.kind())
 				}
 				return evt, nil
 			}
@@ -137,14 +161,14 @@ func parseLegacyEvent(p hookPayload, evt HookEvent) (HookEvent, error) {
 	// Legacy notification hook: {"hook_input": {"message":"...", "notificationType":"..."}, ...}
 	if len(p.HookInput) > 0 {
 		var np legacyNotificationPayload
-		if err := json.Unmarshal(p.HookInput, &np); err == nil && np.NotificationType != "" {
-			switch np.NotificationType {
+		if err := json.Unmarshal(p.HookInput, &np); err == nil && np.kind() != "" {
+			switch np.kind() {
 			case "idle_prompt":
 				evt.Type = EventNotificationIdle
 			case "permission_prompt":
 				evt.Type = EventNotificationPerm
 			default:
-				return HookEvent{}, fmt.Errorf("unknown notification type: %q", np.NotificationType)
+				return HookEvent{}, fmt.Errorf("unknown notification type: %q", np.kind())
 			}
 			return evt, nil
 		}

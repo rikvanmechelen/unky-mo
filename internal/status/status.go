@@ -181,9 +181,35 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 		if evt.Source == "compact" {
 			newStatus = StatusActive
 		}
-	case EventStop, EventNotificationIdle:
+	case EventStop:
 		newStatus = StatusIdle
-	case EventPermissionRequest, EventNotificationPerm:
+	case EventNotificationIdle:
+		// "Waiting for your input" must not clear a menu that's still open:
+		// marking it idle would let mo web type into a pending dialog.
+		if cur := m.sessions[evt.SessionID]; cur != nil && (cur.Status == StatusQuestion || cur.Status == StatusPermission) {
+			return
+		}
+		newStatus = StatusIdle
+	case EventPermissionRequest:
+		// Claude Code shows AskUserQuestion's menu through the permission
+		// flow: PreToolUse(AskUserQuestion) → PermissionRequest naming the
+		// same tool → Notification(permission_prompt). That's a question,
+		// not a permission prompt (verified against captured payloads).
+		if isInteractiveTool(evt.ToolName) {
+			newStatus = StatusQuestion
+			pendingTool = evt.ToolName
+			pendingInput = evt.ToolInput
+		} else {
+			newStatus = StatusPermission
+		}
+	case EventNotificationPerm:
+		// The notification names no tool. While a question is showing it's
+		// that question's own prompt notification (it follows the
+		// PermissionRequest above); a genuine permission prompt has already
+		// been set by its PermissionRequest.
+		if cur := m.sessions[evt.SessionID]; cur != nil && cur.Status == StatusQuestion {
+			return
+		}
 		newStatus = StatusPermission
 	case EventSessionEnd:
 		remove = true

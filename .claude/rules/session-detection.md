@@ -28,8 +28,10 @@ State transitions:
 - `UserPromptSubmit` / ordinary `PreToolUse` → Active
 - `SessionStart` → Idle (startup, `--resume` and `/clear` all land at the prompt), except `source: "compact"` → Active (auto-compaction fires mid-turn). `source` is read from the forwarded `hook_input`.
 - `PreToolUse` where `ToolName` is a known interactive tool (`isInteractiveTool`, currently just `AskUserQuestion`) → **Question**, with `PendingTool`/`PendingInput` captured from the event (see below)
-- `Stop` / `Notification(idle_prompt)` / JSONL `end_turn` → Idle
-- `PermissionRequest` / `Notification(permission_prompt)` → Permission
+- `Stop` / JSONL `end_turn` → Idle
+- `PermissionRequest` → Permission, **except** when its `tool_name` is an interactive tool (`AskUserQuestion`) → Question (see the gotcha below)
+- `Notification(permission_prompt)` → Permission, unless the session is showing a Question (the notification names no tool; it's that question's own prompt notification)
+- `Notification(idle_prompt)` → Idle, but never over an open Question or Permission (marking those idle would let `mo web` type into the dialog)
 - `SessionEnd` / PID dead → removed
 
 There are **no time-based heuristics**. The old 120s JSONL staleness threshold is gone. `ReadJSONLStatus` returns a pure snapshot of the last meaningful JSONL entry.
@@ -45,7 +47,7 @@ The bufio line limit (64KB default) would also have dropped large `PreToolUse` p
 
 ### Gotcha: `hook_input` wraps the *entire* original Claude payload — don't trust a top-level field
 
-`status-hook.sh` forwards Claude's raw stdin JSON for an event **wholesale** into the outer message's `"hook_input"` field (`printf '{"hook_input":%s,...}'`); it never promotes individual fields (like `tool_name`) up to the outer envelope. For a long time `ParseHookPayload` read `PreToolUse`'s tool name from a top-level `tool_name` field that was never actually sent — meaning `HookEvent.ToolName` was silently empty in production, and the existing unit test fixture encoded the same wrong assumption (so it passed while the real wiring was broken). Fixed by unmarshaling `tool_name`/`tool_input` out of `hook_input` for `PreToolUse`, mirroring how `Notification`'s `notificationType` was already correctly extracted that way. **Lesson: when adding a new field read from a hook event, always check what `status-hook.sh` actually sends, not what the Go struct's existing field tags imply — write the test fixture with the field nested under `hook_input`, matching the real wire shape, and if in doubt, verify against a real captured payload rather than assuming.**
+`status-hook.sh` forwards Claude's raw stdin JSON for an event **wholesale** into the outer message's `"hook_input"` field (`printf '{"hook_input":%s,...}'`); it never promotes individual fields (like `tool_name`) up to the outer envelope. For a long time `ParseHookPayload` read `PreToolUse`'s tool name from a top-level `tool_name` field that was never actually sent — meaning `HookEvent.ToolName` was silently empty in production, and the existing unit test fixture encoded the same wrong assumption (so it passed while the real wiring was broken). Fixed by unmarshaling `tool_name`/`tool_input` out of `hook_input` for `PreToolUse` (and later `PermissionRequest`). `Notification`'s type had the mirror-image bug: the parser read camelCase `notificationType`, but Claude Code sends **`notification_type`**, so every V2 Notification hook failed to parse and was dropped until Oct 2026 (the camelCase field is still accepted for the legacy format). **Lesson: when adding a new field read from a hook event, always check what `status-hook.sh` actually sends, not what the Go struct's existing field tags imply — write the test fixture with the field nested under `hook_input`, matching the real wire shape, and if in doubt, verify against a real captured payload rather than assuming.**
 
 ### Interactive tool-blocking (e.g. `AskUserQuestion`) has no dedicated hook — and can never appear in JSONL while pending
 
@@ -55,7 +57,13 @@ Compounding this: **the pending tool call is not in the JSONL transcript at all*
 
 The question's content (tool name + raw `tool_input`, e.g. `AskUserQuestion`'s `{questions:[{question,header,options}]}` shape) is captured on `sessionState.PendingTool`/`PendingInput`, exposed via `Manager.PendingQuestion(sessionID)`, and threaded through `sessionView` → `state.ProjectState.PendingQuestionTool`/`PendingQuestionInput` into the shared state file — `mo web`'s chat view renders it from there (see `internal/web/static/chat.js`) since it can't get it from the transcript either, for the same JSONL reason.
 
-**Known gap, not yet extended**: genuine `PermissionRequest` dialogs likely have the same "blocked, nothing in JSONL" problem, and Claude Code's `PermissionRequest` hook payload may *also* carry enough tool name/input to show something useful — but this is **unconfirmed**, not verified against a real payload. `mo web`'s prompt-injection endpoint currently only accepts input when status is `idle` or `question`, deliberately *not* `permission`, until that's checked.
+### Gotcha: `AskUserQuestion` goes through the permission flow
+
+Captured live from Claude Code 2.1.288 (Oct 2026), an `AskUserQuestion` menu fires, in order: `PreToolUse` (tool `AskUserQuestion`) → **`PermissionRequest` naming the same tool, with the full `tool_input`** → `Notification` (`notification_type: permission_prompt`, message "Claude needs your permission", no tool name). A genuine permission prompt fires the identical sequence, except that `PermissionRequest`'s `tool_name` is the real tool (e.g. `Bash`) and it also carries `permission_suggestions`. Without special-casing, the `PermissionRequest` overwrote Question with Permission, so the TUI showed "perm" and `mo web` showed a permission lock instead of the question banner. `ProcessHookEvent` now maps a `PermissionRequest` for an interactive tool to Question (capturing its content too, so it works even when `PreToolUse` is missed), and ignores the tool-less `permission_prompt` notification while a Question is showing. The fixtures in `internal/status/permission_question_test.go` are trimmed copies of those captured payloads.
+
+To capture raw hook messages again, launch a Claude session with `MO_HOOK_DEBUG_LOG=<file>` in its environment (e.g. `tmux new-window -e MO_HOOK_DEBUG_LOG=/tmp/hooks.log … claude`); `mo hooks send` appends every message it forwards to that file.
+
+**Still open**: `mo web`'s prompt-injection endpoint only accepts input when status is `idle` or `question`, deliberately *not* `permission`. The `PermissionRequest` payload does carry `tool_name`, `tool_input` and `permission_suggestions`, so rendering and answering a genuine permission prompt from the browser is now feasible, but not built.
 
 ## Worktree session detection
 
