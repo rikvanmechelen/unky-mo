@@ -7,38 +7,49 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="chat-page">
+<div class="chat-shell" id="chat-shell">
 
-  <header class="chat-header">
-    <a class="chat-header__back plain" href="/">Dashboard</a>
-    <div class="chat-header__row">
-      <div style="display:flex;flex-direction:column;gap:12px;">
-        <div class="chat-header__title" id="chat-title">—</div>
-        <div class="chat-header__meta" id="chat-meta"></div>
-      </div>
-      <div class="chat-header__controls">
-        <button class="link-btn link-btn--danger" id="stop-btn" type="button" style="display:none;">Stop session</button>
-        <span class="status-badge" id="status-badge"></span>
-      </div>
+  <nav class="chat-nav">
+    <div class="chat-nav__brand">
+      <span class="chat-nav__wordmark">Unky Mo</span>
+      <a class="chat-nav__back" href="/">Dashboard</a>
     </div>
-  </header>
+    <div class="chat-nav__list" id="session-nav"></div>
+    <div class="chat-nav__usage" id="usage"></div>
+  </nav>
 
-  <div class="chat-transcript" id="transcript-scroll">
-    <div class="chat-transcript__inner" id="transcript"></div>
-  </div>
+  <main class="chat-main">
+    <div class="chat-bar">
+      <a class="chat-bar__back" href="/">Dashboard</a>
+      <div class="chat-bar__title" id="chat-title">—</div>
+      <div class="chat-bar__meta" id="chat-meta"></div>
+      <span class="chat-bar__spacer"></span>
+      <button class="link-btn link-btn--danger" id="stop-btn" type="button" style="display:none;">Stop session</button>
+      <span class="status-badge" id="status-badge"></span>
+    </div>
 
-  <footer class="chat-footer">
-    <div class="chat-notice" id="chat-notice" style="display:none;"></div>
-    <div class="permission-banner" id="permission-banner" style="display:none;">A permission prompt is waiting in the terminal.</div>
-    <div class="question-banner" id="question-banner" style="display:none;"></div>
-    <form class="composer" id="composer">
-      <input class="composer__input" id="prompt-input" type="text" placeholder="Message this session" autocomplete="off">
-      <button class="composer__send" id="send-btn" type="submit">Send</button>
-    </form>
-    <div class="composer__error" id="send-error"></div>
-  </footer>
+    <div class="chat-transcript" id="transcript-scroll">
+      <div class="chat-transcript__inner" id="transcript"></div>
+    </div>
+
+    <footer class="chat-footer">
+      <div class="chat-notice" id="chat-notice" style="display:none;"></div>
+      <div class="permission-banner" id="permission-banner" style="display:none;">Waiting for permission — answer it in the terminal.</div>
+      <div class="question-banner" id="question-banner" style="display:none;"></div>
+      <form class="composer" id="composer">
+        <input class="composer__input" id="prompt-input" type="text" placeholder="Message this session" autocomplete="off">
+        <button class="composer__send" id="send-btn" type="submit">Send</button>
+      </form>
+      <div class="composer__error" id="send-error"></div>
+    </footer>
+
+    <section class="term-drawer" id="term-drawer" hidden></section>
+  </main>
+
+  <aside class="files-pane" id="files-pane" hidden></aside>
 
 </div>
+<script src="/common.js"></script>
 <script src="/actions.js"></script>
 <script src="/chat.js"></script>
 </body>

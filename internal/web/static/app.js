@@ -1,15 +1,6 @@
 // Plain polling + DOM updates. No build step, no framework — matches the
-// convention in chat.js. Status color is the only color in the interface
-// (see STATUS below); everything else is black/white/gray.
-
-const STATUS = {
-  active:     { label: "Working",          sq: "#00B140", ring: 0 },
-  idle:       { label: "Idle",             sq: "#fff",    ring: 2 },
-  permission: { label: "Needs permission", sq: "#000",    ring: 0, rowBg: "rgba(255,205,0,0.20)" },
-  question:   { label: "Needs input",      sq: "#000",    ring: 0, rowBg: "rgba(255,205,0,0.20)" },
-  external:   { label: "External session", sq: "#767676", ring: 0 },
-  none:       { label: "No session",       sq: "#ddd",    ring: 0 },
-};
+// convention in chat.js. STATUS, el, statusSquare and renderUsage live in
+// common.js, shared with the chat view.
 
 const BUCKET = {
   in_progress: { label: "In Progress", sq: "#00B140", ring: 0 },
@@ -19,25 +10,6 @@ const BUCKET = {
 };
 
 const PRIORITY_LABEL = { 0: "—", 1: "Lowest", 2: "Low", 3: "Medium", 4: "High", 5: "Highest" };
-
-function el(tag, attrs, children) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (k === "class") e.className = v;
-    else if (k === "text") e.textContent = v;
-    else if (k === "onClick") e.addEventListener("click", v);
-    else e.setAttribute(k, v);
-  }
-  for (const child of children || []) e.appendChild(child);
-  return e;
-}
-
-function statusSquare(sq, ring, extraClass) {
-  const span = el("span", { class: "status-sq" + (extraClass ? " " + extraClass : "") });
-  span.style.background = sq;
-  span.style.boxShadow = ring ? `inset 0 0 0 ${ring}px #000` : "none";
-  return span;
-}
 
 async function fetchJSON(path) {
   const res = await fetch(path);
@@ -212,38 +184,6 @@ function relativeTime(iso) {
   const hours = Math.round(mins / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
-}
-
-// ── Usage meters ──────────────────────────────────────────────
-function renderUsage(usage) {
-  const container = document.getElementById("usage");
-  container.innerHTML = "";
-  if (!usage) {
-    container.appendChild(el("div", { class: "empty-note", text: "Usage data unavailable." }));
-    return;
-  }
-
-  const meters = [
-    { label: "5-hour window", pct: usage.five_hour_pct },
-    { label: "7-day window", pct: usage.seven_day_pct },
-  ];
-  for (const m of meters) {
-    if (m.pct == null) continue;
-    const label = usage.stale ? `${m.label} (stale)` : m.label;
-    const fill = el("div", { class: "meter__fill" + (m.pct >= 80 ? " is-high" : "") });
-    fill.style.width = `${m.pct}%`;
-    const track = el("div", { class: "meter__track" }, [fill]);
-    container.appendChild(el("div", { class: "meter" }, [
-      el("div", { class: "meter__row" }, [
-        el("span", { class: "meter__label", text: label }),
-        el("span", { class: "meter__pct", text: `${m.pct}%` }),
-      ]),
-      track,
-    ]));
-  }
-  if (usage.auth_error) {
-    container.appendChild(el("div", { class: "empty-note", text: "Usage fetch failed (auth error)." }));
-  }
 }
 
 // ── Sessions ──────────────────────────────────────────────────
@@ -525,7 +465,7 @@ function renderTickets(tickets) {
 async function pollState() {
   try {
     const state = await fetchJSON("/api/state");
-    renderUsage(state.usage);
+    renderUsage(document.getElementById("usage"), state.usage);
     renderSessions(state.projects);
   } catch (e) {
     console.error(e);

@@ -2,36 +2,10 @@
 // same convention as app.js. Each SSE "transcript" event is the *exact*
 // original JSONL line (see internal/web/transcript.go) — this file owns all
 // interpretation of that schema; the backend stays schema-agnostic.
-
-const STATUS = {
-  active:     { label: "Working",          sq: "#00B140", ring: 0, bg: "#fff",    border: "#DDDDDD" },
-  idle:       { label: "Idle",             sq: "#fff",    ring: 2, bg: "#fff",    border: "#DDDDDD" },
-  permission: { label: "Needs permission", sq: "#000",    ring: 0, bg: "#FFCD00", border: "#FFCD00" },
-  question:   { label: "Needs input",      sq: "#000",    ring: 0, bg: "#FFCD00", border: "#FFCD00" },
-  external:   { label: "External session", sq: "#767676", ring: 0, bg: "#fff",    border: "#DDDDDD" },
-  none:       { label: "No session",       sq: "#ddd",    ring: 0, bg: "#fff",    border: "#DDDDDD" },
-};
+// STATUS, el, statusSquare and renderUsage come from common.js.
 
 function windowIDFromURL() {
   return new URLSearchParams(location.search).get("window"); // e.g. "@5"
-}
-
-function el(tag, attrs, children) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (k === "class") e.className = v;
-    else if (k === "text") e.textContent = v;
-    else e.setAttribute(k, v);
-  }
-  for (const child of children || []) e.appendChild(child);
-  return e;
-}
-
-function statusSquare(sq, ring) {
-  const span = el("span", { class: "status-sq" });
-  span.style.background = sq;
-  span.style.boxShadow = ring ? `inset 0 0 0 ${ring}px #000` : "none";
-  return span;
 }
 
 function isMetaContent(text) {
@@ -114,8 +88,28 @@ function renderDiff(structuredPatch) {
   return wrap;
 }
 
+
+// navGroups groups the state file's live sessions by project for the left
+// nav, keeping state-file order; external (stray) sessions come last.
+function navGroups(projects) {
+  const groups = [];
+  const byKey = new Map();
+  const rows = (projects || []).filter((p) => p.window_id && p.session_id);
+  for (const p of [...rows.filter((p) => p.section !== "external"), ...rows.filter((p) => p.section === "external")]) {
+    // Concurrent siblings are named "proj [2]" — group them under "proj".
+    const key = p.section === "external" ? "External" : (p.parent || p.name.replace(/ \[\d+\]$/, ""));
+    let g = byKey.get(key);
+    if (!g) {
+      g = { project: key, items: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.items.push(p);
+  }
+  return groups;
+}
+
 function main() {
-  const windowID = windowIDFromURL();
   const transcript = document.getElementById("transcript");
   const transcriptScroll = document.getElementById("transcript-scroll");
   const chatTitle = document.getElementById("chat-title");
@@ -129,15 +123,36 @@ function main() {
   const questionBanner = document.getElementById("question-banner");
   const chatNotice = document.getElementById("chat-notice");
   const stopBtn = document.getElementById("stop-btn");
+  const sessionNav = document.getElementById("session-nav");
+  const usageBox = document.getElementById("usage");
 
-  if (!windowID) {
-    transcript.textContent = "no ?window=@N given";
-    return;
-  }
-
+  // Per-session state — reset by resetSession when the nav switches to
+  // another window in place.
+  let windowID = null;
   const seen = new Set(); // dedup by uuid — EventSource reconnects replay the full backlog
   const toolCards = new Map(); // tool_use_id -> {card, body} — persists across messages
   let busyRow = null;
+
+  // The SSE stream is bound server-side to whichever Claude session ID the
+  // window had when it connected. /clear (or /new) starts a fresh session —
+  // new ID, new JSONL file — in the same window, so the status poll below
+  // watches session_id and, on a change, wipes the log and reconnects.
+  let es = null;
+  let streamSessionID = null;
+
+  // A message typed while a just-launched session is still starting is
+  // queued, then sent the first time the session reads idle (pollStatus).
+  let queued = null;
+
+  // Lifecycle around launches from the dashboard (?new=1): the window exists
+  // before the main TUI has attributed a Claude session to it, so for a few
+  // seconds there's no state row yet. Once one has been seen, its
+  // disappearance means the session ended (stopped here, /exit, or killed).
+  const STARTUP_GRACE_MS = 20000;
+  let starting = false;
+  let openedAt = 0;
+  let everSeen = false;
+  let ended = false;
 
   // Auto-scroll only follows new content if the viewport was already pinned
   // to the bottom — if you've scrolled up to read something, new messages
@@ -162,9 +177,14 @@ function main() {
       ]));
       return;
     }
-    const cls = kind === "user" ? "msg-user" : "msg-assistant";
-    const bubbleCls = kind === "user" ? "msg-user__bubble" : "msg-assistant__bubble";
-    transcript.appendChild(el("div", { class: cls }, [el("div", { class: bubbleCls, text })]));
+    if (kind === "user") {
+      transcript.appendChild(el("div", { class: "msg-user" }, [
+        el("span", { class: "msg-user__label", text: "You" }),
+        el("span", { class: "msg-user__text", text }),
+      ]));
+      return;
+    }
+    transcript.appendChild(el("div", { class: "msg-assistant", text }));
   }
 
   function appendToolUse(block, cwd) {
@@ -174,9 +194,10 @@ function main() {
     const action = el("span", { class: "tool-card__action", text: "Show" });
 
     const card = el("div", { class: "tool-card" }, [
-      el("button", { class: "tool-card__toggle" }, [
+      el("button", { class: "tool-card__toggle", type: "button" }, [
+        el("span", { class: "tool-card__sq" }),
         el("span", { class: "tool-card__name", text: block.name }),
-        el("span", { class: "tool-card__detail" + (detail && detail.mono ? " is-mono" : ""), text: detail ? detail.text : "" }),
+        ...(detail ? [el("span", { class: "tool-card__detail" + (detail.mono ? " is-mono" : ""), text: detail.text })] : []),
         action,
       ]),
       body,
@@ -205,7 +226,9 @@ function main() {
       card.classList.add("is-error");
     }
 
-    if (toolUseResult && typeof toolUseResult === "object" && toolUseResult.structuredPatch) {
+    // A Write that creates a file carries an empty structuredPatch — show its
+    // input/output instead of an empty diff box.
+    if (toolUseResult && typeof toolUseResult === "object" && toolUseResult.structuredPatch?.length) {
       body.appendChild(renderDiff(toolUseResult.structuredPatch));
       return;
     }
@@ -250,22 +273,22 @@ function main() {
     }
   }
 
-  // The SSE stream is bound server-side to whichever Claude session ID the
-  // window had when it connected. /clear (or /new) starts a fresh session —
-  // new ID, new JSONL file — in the same window, so the status poll below
-  // watches session_id and, on a change, wipes the log and reconnects.
-  let es = null;
-  let streamSessionID = null;
-
-  function connectTranscript(sessionID) {
-    if (es) es.close();
-    streamSessionID = sessionID;
+  function clearTranscript() {
+    if (es) { es.close(); es = null; }
+    streamSessionID = null;
     seen.clear();
     toolCards.clear();
     busyRow = null;
     transcript.replaceChildren();
-    es = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
-    es.addEventListener("transcript", (e) => {
+  }
+
+  function connectTranscript(sessionID) {
+    clearTranscript();
+    streamSessionID = sessionID;
+    const stream = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
+    es = stream;
+    stream.addEventListener("transcript", (e) => {
+      if (es !== stream) return; // a late event from a stream we've since replaced
       const msg = JSON.parse(e.data);
       if (seen.has(msg.uuid)) return;
       seen.add(msg.uuid);
@@ -293,12 +316,9 @@ function main() {
     }
   }
 
-  // A message typed while a just-launched session is still starting is
-  // queued, then sent the first time the session reads idle (pollStatus).
-  let queued = null;
-
   composer.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (!windowID) return;
     const text = promptInput.value.trim();
     if (!text) return;
     if (starting && !everSeen) {
@@ -315,7 +335,7 @@ function main() {
     if (show && !busyRow) {
       busyRow = el("div", { class: "chat-busy" }, [
         el("span", { class: "chat-busy__sq" }),
-        document.createTextNode("Claude is working in the terminal"),
+        document.createTextNode("Working"),
       ]);
       withPin(() => transcript.appendChild(busyRow));
     } else if (!show && busyRow) {
@@ -325,21 +345,15 @@ function main() {
     }
   }
 
-  let titled = false;
-
-  // Lifecycle around launches from the dashboard (?new=1): the window exists
-  // before the main TUI has attributed a Claude session to it, so for a few
-  // seconds there's no state row yet. Once one has been seen, its
-  // disappearance means the session ended (stopped here, /exit, or killed).
-  const starting = new URLSearchParams(location.search).has("new");
-  const openedAt = Date.now();
-  const STARTUP_GRACE_MS = 20000;
-  let everSeen = false;
-  let ended = false;
-
   function setNotice(text) {
     chatNotice.textContent = text || "";
     chatNotice.style.display = text ? "block" : "none";
+  }
+
+  function lockSend(label) {
+    sendBtn.disabled = true;
+    sendBtn.classList.add("is-locked");
+    sendBtn.textContent = label;
   }
 
   function markEnded() {
@@ -348,20 +362,112 @@ function main() {
     setBusyRow(false);
     setNotice("Session ended. The tmux window is closed.");
     stopBtn.style.display = "none";
-    sendBtn.disabled = true;
-    sendBtn.classList.add("is-locked");
-    sendBtn.textContent = "Session ended";
+    lockSend("Session ended");
+  }
+
+  // resetSession points the view at another window (initial load, a nav
+  // click, or back/forward) — everything per-session starts over.
+  function resetSession(id, isStarting) {
+    windowID = id;
+    clearTranscript();
+    queued = null;
+    starting = isStarting;
+    openedAt = Date.now();
+    everSeen = false;
+    ended = false;
+    promptInput.value = "";
+    sendError.textContent = "";
+    setNotice(id ? "" : "Pick a session on the left.");
+    permissionBanner.style.display = "none";
+    questionBanner.style.display = "none";
+    stopBtn.style.display = "none";
+    statusBadge.replaceChildren();
+    chatTitle.textContent = "—";
+    chatMeta.replaceChildren();
+    document.title = "Unky Mo — Chat";
+    if (!id) lockSend("No session");
+    pollStatus();
   }
 
   stopBtn.addEventListener("click", async () => {
-    if (await stopSession(windowID, chatMeta.firstChild ? chatMeta.firstChild.textContent : windowID)) markEnded();
+    const id = windowID;
+    if (await stopSession(id, chatMeta.firstChild ? chatMeta.firstChild.textContent : id) && id === windowID) markEnded();
   });
+
+  function switchTo(id, push) {
+    if (id === windowID) return;
+    if (push) history.pushState({}, "", `/chat?window=${encodeURIComponent(id)}`);
+    resetSession(id, false);
+  }
+
+  window.addEventListener("popstate", () => {
+    const id = windowIDFromURL();
+    if (id !== windowID) resetSession(id, new URLSearchParams(location.search).has("new"));
+  });
+
+  // The nav's links are rebuilt only when the set of sessions changes; on a
+  // plain status/label change the existing rows are updated in place, so a
+  // click that straddles the 2s poll isn't swallowed by a replaced node.
+  let navShape = null;
+  const navRows = new Map(); // window_id -> {link, sq, branch, status}
+
+  function fillNavRow(row, p) {
+    const meta = STATUS[p.status] || STATUS.none;
+    const current = p.window_id === windowID;
+    row.link.classList.toggle("is-current", current);
+    row.link.title = `${p.name} · ${p.window_name || p.window_id}`;
+    row.sq.replaceWith(row.sq = statusSquare(meta.navSq || meta.sq, meta.ring, "", current ? "#fff" : "#000"));
+    row.branch.textContent = p.branch || p.window_name || p.window_id;
+    row.status.textContent = meta.short;
+  }
+
+  function newNavRow(p) {
+    const row = {
+      link: el("a", { class: "nav-session plain", href: `/chat?window=${encodeURIComponent(p.window_id)}` }),
+      sq: el("span"),
+      branch: el("span", { class: "nav-session__branch" }),
+      status: el("span", { class: "nav-session__status" }),
+    };
+    row.link.append(row.sq, row.branch, row.status);
+    row.link.addEventListener("click", (e) => {
+      // Modified clicks keep their browser meaning (new tab/window).
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      switchTo(p.window_id, true);
+    });
+    return row;
+  }
+
+  function renderSessionNav(projects) {
+    const groups = navGroups(projects);
+    const shape = JSON.stringify(groups.map((g) => [g.project, g.items.map((p) => p.window_id)]));
+    if (shape !== navShape) {
+      navShape = shape;
+      navRows.clear();
+      if (!groups.length) {
+        sessionNav.replaceChildren(el("div", { class: "chat-nav__empty", text: "No live sessions." }));
+        return;
+      }
+      sessionNav.replaceChildren(...groups.map((g) => el("div", { class: "nav-group" }, [
+        el("div", { class: "nav-group__project", text: g.project }),
+        ...g.items.map((p) => {
+          const row = newNavRow(p);
+          navRows.set(p.window_id, row);
+          return row.link;
+        }),
+      ])));
+    }
+    for (const g of groups) for (const p of g.items) fillNavRow(navRows.get(p.window_id), p);
+  }
 
   async function pollStatus() {
     try {
       const res = await fetch("/api/state");
       const data = await res.json();
-      if (ended) return;
+      renderSessionNav(data.projects);
+      renderUsage(usageBox, data.usage, { compact: true });
+      if (!windowID || ended) return;
+
       const p = (data.projects || []).find((pr) => pr.window_id === windowID && pr.session_id);
       if (!p) {
         if (everSeen) { markEnded(); return; }
@@ -381,8 +487,7 @@ function main() {
       statusBadge.style.background = meta.bg;
       statusBadge.style.boxShadow = `inset 0 0 0 1px ${meta.border}`;
 
-      if (p && !titled) {
-        titled = true;
+      if (p) {
         chatTitle.textContent = p.name || windowID;
         document.title = `Unky Mo — ${p.name || windowID}`;
         chatMeta.replaceChildren(
@@ -424,13 +529,13 @@ function main() {
         : canSend ? "Send" : !p ? "No session" : "Claude is working…";
       promptInput.placeholder = status === "question"
         ? "Type a number or your answer…"
-        : "Message this session";
+        : p ? `Message ${p.name}` : "Message this session";
     } catch (err) {
       // transient — leave the last known status showing
     }
   }
 
-  pollStatus();
+  resetSession(windowIDFromURL(), new URLSearchParams(location.search).has("new"));
   setInterval(pollStatus, 2000);
 }
 
