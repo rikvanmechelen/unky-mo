@@ -28,7 +28,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -118,6 +118,13 @@ type Shells interface {
 	Tail(path string, maxBytes int) (text string, truncated bool, err error)
 }
 
+// ClaudePane reads the visible screen of a session's Claude pane, for the
+// chat view's copy of Claude Code's spinner line. target is always built
+// from the state file, never from the request.
+type ClaudePane interface {
+	Capture(target string) (string, error)
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -131,6 +138,8 @@ type Deps struct {
 	Git       GitFiles
 	Terminals Terminals
 	Shells    Shells
+	// ClaudePane reads Claude's own pane (spinner line).
+	ClaudePane ClaudePane
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.
@@ -378,6 +387,17 @@ func (r realTerminals) New(w state.ProjectState) (string, error) {
 		return ghost, nil
 	}
 	return r.client.NewWindowInSession(session, w.Path)
+}
+
+// realClaudePane captures Claude's pane through tmux.
+type realClaudePane struct{ client *tmux.Client }
+
+func NewClaudePane(client *tmux.Client) ClaudePane { return realClaudePane{client: client} }
+
+// Capture returns just the visible screen (no scrollback): the spinner is
+// always drawn there, right above the prompt box.
+func (r realClaudePane) Capture(target string) (string, error) {
+	return r.client.CapturePane(target, 0)
 }
 
 // realShells finds shells via ps/lsof (claude.ActiveShells) for the live

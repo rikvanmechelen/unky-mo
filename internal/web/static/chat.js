@@ -239,6 +239,7 @@ function main() {
   const filesEl = document.getElementById("files-pane");
   const filesPane = createFilesPane(filesEl);
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
+  const spinner = createSpinner(document.getElementById("spinner"));
 
   // Per-session state — reset by resetSession when the nav switches to
   // another window in place.
@@ -253,7 +254,6 @@ function main() {
   let messages = [];
   let leaf = null;
   const toolCards = new Map(); // tool_use_id -> {card, body} — persists across messages
-  let busyRow = null;
 
   // The SSE stream is bound server-side to whichever Claude session ID the
   // window had when it connected. /clear (or /new) starts a fresh session —
@@ -447,7 +447,6 @@ function main() {
     messages = [];
     leaf = null;
     toolCards.clear();
-    busyRow = null;
     transcript.replaceChildren();
   }
 
@@ -502,14 +501,11 @@ function main() {
   function rerenderActiveBranch() {
     const chain = new Set();
     for (let u = leaf; u && !chain.has(u); u = nodes.get(u)) chain.add(u);
-    const hadBusy = !!busyRow;
     transcript.replaceChildren();
     toolCards.clear();
-    busyRow = null;
     for (const m of messages) {
       if (chain.has(m.uuid) || (isToolResultOnly(m) && chain.has(parentOf(m)))) renderMessage(m);
     }
-    if (hadBusy) setBusyRow(true);
   }
 
   async function sendPrompt(text) {
@@ -546,20 +542,6 @@ function main() {
     }
     if (await sendPrompt(text)) promptInput.value = "";
   });
-
-  function setBusyRow(show) {
-    if (show && !busyRow) {
-      busyRow = el("div", { class: "chat-busy" }, [
-        el("span", { class: "chat-busy__sq" }),
-        document.createTextNode("Working"),
-      ]);
-      withPin(() => transcript.appendChild(busyRow));
-    } else if (!show && busyRow) {
-      const row = busyRow;
-      busyRow = null;
-      row.remove();
-    }
-  }
 
   function setNotice(text) {
     chatNotice.textContent = text || "";
@@ -607,7 +589,7 @@ function main() {
   function markEnded() {
     ended = true;
     if (es) { es.close(); es = null; }
-    setBusyRow(false);
+    spinner.setActive(false);
     hideBanners();
     setBadge("ended");
     setNotice("Session ended. The tmux window is closed.");
@@ -641,6 +623,7 @@ function main() {
     shell.classList.toggle("has-files", !!id);
     filesPane.setWindow(id);
     drawer.setWindow(id);
+    spinner.setWindow(id);
     pollStatus();
   }
 
@@ -776,7 +759,7 @@ function main() {
         questionKey = null;
       }
 
-      setBusyRow(status === "active");
+      spinner.setActive(status === "active");
 
       if (queued && status === "idle") {
         const text = queued;

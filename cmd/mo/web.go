@@ -37,18 +37,19 @@ func webCmd() *cobra.Command {
 
 			tmuxClient := tmux.NewClient(cfg.TmuxSession)
 			deps := web.Deps{
-				State:     web.NewStateReader(cfg.StateFilePath),
-				Projects:  web.NewProjectLister(cfg.LoadProjects),
-				Worktrees: web.NewWorktreeReader(),
-				PRs:       web.NewPRClient(github.NewClient(nil)),
-				Tickets:   web.NewTicketSource(jira.BuildProviders(jiraInstancesFromConfig(cfg.Tickets))),
-				Prompts:   web.NewPromptSender(tmuxClient),
-				History:   web.NewSessionHistory(),
-				Sessions:  web.NewSessionOps(ops.NewContext(tmuxClient)),
-				Git:       web.NewGitFiles(moexec.DefaultCommander),
-				Terminals: web.NewTerminals(tmuxClient),
-				Shells:    web.NewShells(),
-				Agents:    cfg.Agents,
+				State:      web.NewStateReader(cfg.StateFilePath),
+				Projects:   web.NewProjectLister(cfg.LoadProjects),
+				Worktrees:  web.NewWorktreeReader(),
+				PRs:        web.NewPRClient(github.NewClient(nil)),
+				Tickets:    web.NewTicketSource(jira.BuildProviders(jiraInstancesFromConfig(cfg.Tickets))),
+				Prompts:    web.NewPromptSender(tmuxClient),
+				History:    web.NewSessionHistory(),
+				Sessions:   web.NewSessionOps(ops.NewContext(tmuxClient)),
+				Git:        web.NewGitFiles(moexec.DefaultCommander),
+				Terminals:  web.NewTerminals(tmuxClient),
+				ClaudePane: web.NewClaudePane(tmuxClient),
+				Shells:     web.NewShells(),
+				Agents:     cfg.Agents,
 			}
 
 			credsPath := webCredentialsPath()

@@ -71,6 +71,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/files", s.handleSessionFiles)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/diff", s.handleSessionDiff)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/spinner", s.handleSpinner)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells", s.handleShells)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells/{pid}/output", s.handleShellOutput)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals", s.handleTerminals)
