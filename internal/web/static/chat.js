@@ -730,7 +730,6 @@ function main() {
       // entry when a session is live in it.
       const row = (data.projects || []).find((pr) => pr.window_id === windowID);
       const p = row && row.session_id ? row : null;
-      const waitingToStart = starting && !everSeen;
       if (!p) {
         if (everSeen) { markEnded(); return; }
         if (!starting) setNotice("No session is running in this window.");
@@ -740,6 +739,9 @@ function main() {
         everSeen = true;
         setNotice("");
       }
+      // After the block above, so the poll that first sees the session
+      // already counts it as started.
+      const waitingToStart = starting && !everSeen;
       const status = p ? p.status : "none";
       const external = status === "external";
       // External sessions aren't mo's to stop (the TUI imports them instead).
