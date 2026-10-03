@@ -11,9 +11,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
+	moexec "github.com/rvanmech/unky-mo/internal/exec"
+	"github.com/rvanmech/unky-mo/internal/gitfiles"
 	"github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
@@ -22,7 +25,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -80,6 +83,15 @@ type SessionOps interface {
 	IsDirty(path string) (bool, error)
 }
 
+// GitFiles reads a checkout's changes, file list and branch for the chat
+// view's Files panel and the session nav. dir is always a live session's
+// cwd from the state file, never a browser-supplied path.
+type GitFiles interface {
+	Changes(dir string) (*gitfiles.Changes, error)
+	Tree(dir string) (root string, paths []string, err error)
+	Branch(dir string) string
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -90,6 +102,7 @@ type Deps struct {
 	Prompts   PromptSender
 	History   SessionHistory
 	Sessions  SessionOps
+	Git       GitFiles
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.
@@ -223,3 +236,30 @@ func (realSessionOps) IsDirty(path string) (bool, error) { return project.IsDirt
 type errUnknownProvider string
 
 func (e errUnknownProvider) Error() string { return "unknown ticket provider: " + string(e) }
+
+// realGitFiles runs gitfiles against the real git binary.
+type realGitFiles struct{ cmd moexec.Commander }
+
+func NewGitFiles(cmd moexec.Commander) GitFiles { return realGitFiles{cmd: cmd} }
+
+// gitTimeout bounds one panel refresh so a wedged git (e.g. a lock held by
+// another process) can't pile up requests.
+const gitTimeout = 10 * time.Second
+
+func (g realGitFiles) Changes(dir string) (*gitfiles.Changes, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetChanges(ctx, g.cmd, dir)
+}
+
+func (g realGitFiles) Tree(dir string) (string, []string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.Tree(ctx, g.cmd, dir)
+}
+
+func (g realGitFiles) Branch(dir string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.CurrentBranch(ctx, g.cmd, dir)
+}

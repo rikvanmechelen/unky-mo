@@ -23,6 +23,12 @@ type Server struct {
 	ticketCache *ttlCache
 	transcripts *transcriptHub
 
+	// Files panel + nav branch caches, keyed by checkout path. Short TTLs:
+	// they only dedupe several open tabs polling the same checkout.
+	filesCache  *ttlCache
+	treeCache   *ttlCache
+	branchCache *ttlCache
+
 	// launchMu serializes session-mutating requests (launch, replace, stop).
 	launchMu sync.Mutex
 }
@@ -43,6 +49,9 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		prCache:     newTTLCache(90 * time.Second),
 		ticketCache: newTTLCache(ticketRefresh),
 		transcripts: newTranscriptHub(),
+		filesCache:  newTTLCache(2 * time.Second),
+		treeCache:   newTTLCache(10 * time.Second),
+		branchCache: newTTLCache(15 * time.Second),
 	}
 	s.routes()
 	return s
@@ -57,6 +66,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{name}/worktrees", s.handleWorktrees)
 	s.mux.HandleFunc("GET /api/projects/{name}/prs", s.handlePRs)
 	s.mux.HandleFunc("GET /api/projects/{name}/prs/{number}", s.handlePRDetail)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/files", s.handleSessionFiles)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/tickets", s.handleTickets)
 	s.mux.HandleFunc("GET /api/tickets/{id}", s.handleTicketDetail)
 	s.mux.HandleFunc("GET /api/transcript/{windowID}", s.handleTranscript)
@@ -97,6 +108,21 @@ func (s *Server) findProjectPath(name string) (string, bool) {
 	}
 	for _, p := range projects {
 		if p.Name == name {
+			return p.Path, true
+		}
+	}
+	return "", false
+}
+
+// sessionPath returns the cwd of the live session at windowID, from the
+// shared state file. ok is false if no live session exists there.
+func (s *Server) sessionPath(windowID string) (string, bool) {
+	st, err := s.deps.State.Read()
+	if err != nil {
+		return "", false
+	}
+	for _, p := range st.Projects {
+		if p.WindowID == windowID && p.SessionID != "" && p.Path != "" {
 			return p.Path, true
 		}
 	}

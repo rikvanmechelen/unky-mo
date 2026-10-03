@@ -201,6 +201,9 @@ function main() {
   const stopBtn = document.getElementById("stop-btn");
   const sessionNav = document.getElementById("session-nav");
   const usageBox = document.getElementById("usage");
+  const shell = document.getElementById("chat-shell");
+  const filesEl = document.getElementById("files-pane");
+  const filesPane = createFilesPane(filesEl);
 
   // Per-session state — reset by resetSession when the nav switches to
   // another window in place.
@@ -469,6 +472,9 @@ function main() {
     chatMeta.replaceChildren();
     document.title = "Unky Mo — Chat";
     if (!id) lockSend("No session");
+    filesEl.hidden = !id;
+    shell.classList.toggle("has-files", !!id);
+    filesPane.setWindow(id);
     pollStatus();
   }
 
@@ -500,7 +506,10 @@ function main() {
     row.link.classList.toggle("is-current", current);
     row.link.title = `${p.name} · ${p.window_name || p.window_id}`;
     row.sq.replaceWith(row.sq = statusSquare(meta.navSq || meta.sq, meta.ring, "", current ? "#fff" : "#000"));
-    row.branch.textContent = p.branch || p.window_name || p.window_id;
+    // Siblings share a checkout (and so a branch) — keep their "[2]" /
+    // custom-title suffix so the rows stay tellable apart.
+    const suffix = p.branch ? ((p.name || "").match(/ \[[^\]]+\]$/) || [""])[0] : "";
+    row.branch.textContent = p.branch ? p.branch + suffix : (p.window_name || p.window_id);
     row.status.textContent = meta.short;
   }
 

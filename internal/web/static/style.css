@@ -423,6 +423,55 @@ h1, h2 {
 .composer__error { color: var(--red); font-size: 13px; font-family: var(--font-mono); }
 .composer__error:empty { display: none; }
 
+/* ── Files aside ────────────────────────────────────────────── */
+.files-pane { display: flex; flex-direction: column; min-height: 0; }
+.files-pane[hidden] { display: none; }
+.files-pane__head { flex: none; padding: 24px 20px 12px; display: flex; flex-direction: column; gap: 12px; }
+.files-pane__title { font-size: 22px; line-height: 22px; font-weight: 700; letter-spacing: var(--tracking-bold); }
+.files-tabs { display: flex; border-bottom: 1px solid var(--gray-ddd); }
+.files-tab {
+  all: unset; cursor: pointer; padding: 0 0 8px; margin: 0 20px -1px 0;
+  font-family: var(--font-sans); font-size: 14px; line-height: 1;
+  border-bottom: 2px solid transparent;
+}
+.files-tab.is-active { border-bottom-color: var(--black); font-weight: 700; }
+.files-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.files-pane__list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+.files-pane__note { padding: 8px 20px; font-size: 13px; line-height: 1.25; color: var(--gray-666); font-style: italic; }
+
+.file-row {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: 8px; align-items: center;
+  padding: 4px 20px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+}
+.file-row:hover { background: var(--gray-f6); }
+button.file-row { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; padding: 4px 20px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+button.file-row:hover { background: var(--gray-f6); }
+button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.file-row.is-dir .file-row__name { color: var(--gray-444); }
+.file-row.is-dir .file-row__mark { color: var(--gray-767); font-weight: 400; }
+.file-row__mark { font-weight: 700; }
+.file-row__mark.is-mod { color: var(--blue); }
+.file-row__mark.is-add { color: var(--green); }
+.file-row__mark.is-del { color: var(--red); }
+.file-row__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A long path gives up its folder part first so the file name stays readable. */
+.file-row__name:has(.file-row__dir) { display: flex; min-width: 0; }
+.file-row__dir { color: var(--gray-767); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.file-row__base { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.file-row__counts { font-size: 11px; display: flex; gap: 4px; }
+.file-row__plus { color: var(--green); }
+.file-row__minus { color: var(--red); }
+.file-row__bin { color: var(--gray-767); }
+
+.files-pane__foot {
+  flex: none; padding: 16px 20px 20px; border-top: 1px solid var(--gray-ddd);
+  font-size: 12px; line-height: 1.5; color: var(--gray-444);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.files-pane__foot:empty { display: none; }
+.files-pane__total { font-weight: 700; color: var(--black); }
+
 /* ── Narrow widths: drop the files aside, then the nav ───────── */
 @media (max-width: 1100px) {
   .chat-shell.has-files { grid-template-columns: 260px minmax(0, 1fr); }

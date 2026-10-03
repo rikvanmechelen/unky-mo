@@ -46,11 +46,22 @@
     <section class="term-drawer" id="term-drawer" hidden></section>
   </main>
 
-  <aside class="files-pane" id="files-pane" hidden></aside>
+  <aside class="files-pane" id="files-pane" hidden>
+    <div class="files-pane__head">
+      <span class="files-pane__title">Files</span>
+      <span class="files-tabs">
+        <button class="files-tab is-active" data-mode="changed" type="button">Changed <span id="files-count"></span></button>
+        <button class="files-tab" data-mode="all" type="button">All files</button>
+      </span>
+    </div>
+    <div class="files-pane__list" id="files-list"></div>
+    <div class="files-pane__foot" id="files-foot"></div>
+  </aside>
 
 </div>
 <script src="/common.js"></script>
 <script src="/actions.js"></script>
+<script src="/files.js"></script>
 <script src="/chat.js"></script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rvanmech/unky-mo/internal/config"
+	moexec "github.com/rvanmech/unky-mo/internal/exec"
 	"github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/tickets"
@@ -44,6 +45,7 @@ func webCmd() *cobra.Command {
 				Prompts:   web.NewPromptSender(tmuxClient),
 				History:   web.NewSessionHistory(),
 				Sessions:  web.NewSessionOps(ops.NewContext(tmuxClient)),
+				Git:       web.NewGitFiles(moexec.DefaultCommander),
 				Agents:    cfg.Agents,
 			}
 
