@@ -17,6 +17,7 @@ type ParkParams struct {
 	ResumeID          string // if non-empty, replacement runs the agent's resume command
 	ShellCmd          string // explicit shell command; empty → agent default or resume
 	AgentKey          string // coding agent mnemonic for the @mo_agent window option
+	NoSwitch          bool   // skip focusing the tmux client on the new window
 }
 
 // ParkAndLaunch signals the current primary's Claude to exit, waits for it
@@ -45,7 +46,7 @@ func ParkAndLaunch(ctx *Context, p ParkParams) (*LaunchResult, error) {
 		ShellCmd:      shellCmd,
 		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
-		SwitchFocus:   true,
+		SwitchFocus:   !p.NoSwitch,
 	})
 }
 
@@ -57,6 +58,7 @@ type SiblingParams struct {
 	ResumeID    string // optional; resume a specific historical session in the new sibling
 	ShellCmd    string // explicit shell command; empty → agent default or resume
 	AgentKey    string // coding agent mnemonic for the @mo_agent window option
+	NoSwitch    bool   // skip focusing the tmux client on the new window
 }
 
 // LaunchSibling always creates a new concurrent sibling window for the
@@ -93,7 +95,7 @@ func LaunchSibling(ctx *Context, p SiblingParams) (*LaunchResult, error) {
 		ShellCmd:      shellCmd,
 		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
-		SwitchFocus:   true,
+		SwitchFocus:   !p.NoSwitch,
 	})
 }
 

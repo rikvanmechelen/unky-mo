@@ -13,6 +13,7 @@ import (
 
 	"github.com/rvanmech/unky-mo/internal/config"
 	"github.com/rvanmech/unky-mo/internal/github"
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 	"github.com/rvanmech/unky-mo/internal/tickets/jira"
 	"github.com/rvanmech/unky-mo/internal/tmux"
@@ -33,13 +34,17 @@ func webCmd() *cobra.Command {
 				return err
 			}
 
+			tmuxClient := tmux.NewClient(cfg.TmuxSession)
 			deps := web.Deps{
 				State:     web.NewStateReader(cfg.StateFilePath),
 				Projects:  web.NewProjectLister(cfg.LoadProjects),
 				Worktrees: web.NewWorktreeReader(),
 				PRs:       web.NewPRClient(github.NewClient(nil)),
 				Tickets:   web.NewTicketSource(jira.BuildProviders(jiraInstancesFromConfig(cfg.Tickets))),
-				Prompts:   web.NewPromptSender(tmux.NewClient(cfg.TmuxSession)),
+				Prompts:   web.NewPromptSender(tmuxClient),
+				History:   web.NewSessionHistory(),
+				Sessions:  web.NewSessionOps(ops.NewContext(tmuxClient)),
+				Agents:    cfg.Agents,
 			}
 
 			credsPath := webCredentialsPath()

@@ -186,6 +186,63 @@ h1, h2 {
 .pr-row__title { font-size: 16px; line-height: 1.25; }
 .pr-row__state { font-size: 14px; line-height: 1.25; }
 
+/* ── Session actions ────────────────────────────────────────── */
+.btn {
+  height: 40px; padding: 0 18px; border: 1px solid var(--black); border-radius: 0;
+  background: var(--white); color: var(--black);
+  font-family: var(--font-sans); font-size: 14px; font-weight: 700; letter-spacing: var(--tracking-bold);
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--gray-f6); }
+.btn:disabled { color: var(--gray-767); border-color: var(--gray-ddd); cursor: progress; }
+.btn--primary { background: var(--black); color: var(--white); }
+.btn--primary:hover { background: var(--gray-444); }
+.btn--danger { background: var(--red); border-color: var(--red); color: var(--white); }
+.btn--danger:hover { background: #b80023; }
+.btn--small { height: 32px; padding: 0 12px; font-size: 13px; }
+
+.link-btn {
+  all: unset; cursor: pointer; font-size: 14px; line-height: 1; font-weight: 700;
+  border-bottom: 1px solid currentColor;
+}
+.link-btn:hover { color: var(--gray-666); }
+.link-btn:disabled { color: var(--gray-767); border-bottom-color: transparent; cursor: default; font-weight: 400; }
+.link-btn--danger { color: var(--red); }
+.link-btn--danger:hover { color: #b80023; }
+.session-row__action { display: inline-flex; gap: 16px; align-items: baseline; }
+
+.agent-select, .text-input {
+  height: 32px; border: 1px solid var(--black); border-radius: 0; background: var(--white);
+  font-family: var(--font-sans); font-size: 13px; padding: 0 8px;
+}
+.text-input { flex: 1; min-width: 0; font-family: var(--font-mono); }
+
+.project__block { display: flex; flex-direction: column; gap: 12px; }
+.checkout-list { display: flex; flex-direction: column; gap: 20px; }
+.checkout { display: flex; flex-direction: column; }
+.checkout__head { display: flex; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid var(--black); }
+.checkout__spacer { flex: 1; }
+.checkout-session {
+  display: grid; grid-template-columns: 1fr auto auto; column-gap: 16px; align-items: baseline;
+  padding: 10px 0; border-bottom: 1px solid var(--gray-eee);
+}
+.checkout-session__title { font-size: 15px; line-height: 1.25; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.checkout-session.is-recent .checkout-session__title { font-weight: 400; }
+.checkout-session__meta { font-size: 13px; color: var(--gray-666); white-space: nowrap; }
+.checkout-session__actions { display: inline-flex; gap: 16px; justify-self: end; }
+.checkout-session__actions a { font-size: 14px; line-height: 1; font-weight: 700; }
+.checkout .empty-note { padding: 10px 0; }
+.worktree-form { display: flex; gap: 8px; align-items: center; }
+
+.dialog {
+  border: 2px solid var(--black); border-radius: 0; padding: 28px; max-width: 520px; width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 16px; font-family: var(--font-sans);
+}
+.dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.dialog__title { font-size: 22px; line-height: 1.1; font-weight: 700; letter-spacing: var(--tracking-bold); }
+.dialog__text { font-size: 15px; line-height: 1.35; color: var(--gray-444); }
+.dialog__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
 /* ── Tickets table ──────────────────────────────────────────── */
 .tickets-head, .ticket-row {
   display: grid;
@@ -231,6 +288,9 @@ h1, h2 {
 .chat-header__row { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
 .chat-header__title { font-size: 40px; line-height: 40px; font-weight: 700; letter-spacing: var(--tracking-bold); }
 .chat-header__meta { display: flex; gap: 16px; font-family: var(--font-mono); font-size: 13px; color: var(--gray-444); }
+
+.chat-header__controls { display: flex; align-items: center; gap: 20px; }
+.chat-notice { align-self: flex-start; font-size: 14px; line-height: 1.25; color: var(--gray-444); font-style: italic; max-width: 880px; }
 
 .status-badge {
   display: inline-flex; align-items: center; gap: 10px;

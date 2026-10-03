@@ -127,3 +127,36 @@ func TestTranscriptHubTeardownOnLastUnsubscribe(t *testing.T) {
 		t.Fatal("fresh subscriber never got a live update after teardown+recreate")
 	}
 }
+
+// A session launched from the dashboard has no JSONL until its first turn —
+// and in a fresh worktree not even the project directory. Subscribing must
+// succeed with an empty backlog and still deliver the first message once
+// Claude creates the file.
+func TestTranscriptHubFileAndDirAppearAfterSubscribe(t *testing.T) {
+	root := t.TempDir() // stands in for ~/.claude/projects
+	path := root + "/-ws-alpha-worktrees-feat/session.jsonl"
+
+	h := newTranscriptHub()
+	backlog, ch, unsubscribe, err := h.subscribe("sess1", path)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+	if len(backlog) != 0 {
+		t.Fatalf("expected empty backlog, got %d", len(backlog))
+	}
+
+	line := `{"type":"user","uuid":"u1","message":{"content":"hi"}}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	select {
+	case msg := <-ch:
+		if string(msg) != line {
+			t.Fatalf("want %q, got %q", line, string(msg))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the first message of a newly created transcript")
+	}
+}

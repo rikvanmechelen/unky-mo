@@ -16,13 +16,15 @@ type WorktreeParams struct {
 	Branch      string // branch name (created if missing)
 	ShellCmd    string // command to exec; empty defaults to "claude" via LaunchSession
 	AgentKey    string // coding agent mnemonic; stored as @mo_agent on the tmux window
+	NoSwitch    bool   // skip focusing the tmux client on the target window
 }
 
 // WorktreeResult reports the outcome.
 type WorktreeResult struct {
 	WorktreePath   string
 	WindowName     string
-	Launched       bool // true if a new Claude session was spawned (vs focused existing)
+	Target         string // "session:@N" of a freshly launched window; empty when an existing window was reused
+	Launched       bool   // true if a new Claude session was spawned (vs focused existing)
 	Status         string
 	ExistsConflict bool // true when the worktree already existed for this branch
 }
@@ -59,16 +61,24 @@ func CreateWorktreeAndLaunch(ctx *Context, p WorktreeParams) (*WorktreeResult, e
 	// If a live session already exists at this worktree, prefer focusing its
 	// real window (may have been renamed).
 	if realWin, sess := PrimaryWindowForTarget(ctx, p.ProjectName, p.Branch, wtPath); sess != nil && realWin != "" {
+		res.WindowName = realWin
+		if p.NoSwitch {
+			res.Status = "Session already running in " + realWin
+			return res, nil
+		}
 		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, realWin)); err != nil {
 			res.Status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
 			return res, nil
 		}
 		res.Status = "Switched to " + realWin
-		res.WindowName = realWin
 		return res, nil
 	}
 	// Otherwise: focus bare window if it happens to exist, else launch fresh.
 	if ctx.Tmux.WindowExists(windowName) {
+		if p.NoSwitch {
+			res.Status = "Window already exists: " + windowName
+			return res, nil
+		}
 		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, windowName)); err != nil {
 			res.Status = fmt.Sprintf("Worktree created but failed to switch: %v", err)
 			return res, nil
@@ -76,17 +86,19 @@ func CreateWorktreeAndLaunch(ctx *Context, p WorktreeParams) (*WorktreeResult, e
 		res.Status = "Switched to " + windowName
 		return res, nil
 	}
-	if _, err := LaunchSession(ctx, LaunchParams{
+	launch, err := LaunchSession(ctx, LaunchParams{
 		WindowName:    windowName,
 		Cwd:           wtPath,
 		ShellCmd:      p.ShellCmd,
 		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
-		SwitchFocus:   true,
-	}); err != nil {
+		SwitchFocus:   !p.NoSwitch,
+	})
+	if err != nil {
 		res.Status = fmt.Sprintf("Launch failed: %v", err)
 		return res, err
 	}
+	res.Target = launch.Target
 	res.Launched = true
 	res.Status = "Launched Claude in " + windowName
 	return res, nil
@@ -193,16 +205,7 @@ func CleanupWorktree(ctx *Context, p CleanupParams) (*CleanupResult, error) {
 	res := &CleanupResult{}
 
 	// Stage 1: kill live sessions (if the caller provided any).
-	if len(p.Sessions) > 0 {
-		windowIDBySession := sessionToWindowIDMapForSessions(ctx, p.Sessions)
-		for _, s := range p.Sessions {
-			SignalAndWaitExit(ctx, s.PID)
-			if wID, ok := windowIDBySession[s.SessionID]; ok {
-				_ = ctx.Tmux.KillWindow(ctx.Tmux.SessionName() + ":" + wID)
-			}
-			res.KilledSessions++
-		}
-	}
+	res.KilledSessions = StopSessions(ctx, p.Sessions)
 
 	// Stage 2: remove worktree (ignore "no worktree" — plain branch rows).
 	var parts []string
@@ -227,6 +230,25 @@ func CleanupWorktree(ctx *Context, p CleanupParams) (*CleanupResult, error) {
 		res.Status += " (" + strings.Join(parts, ", ") + ")"
 	}
 	return res, nil
+}
+
+// StopSessions SIGINTs each live session (SIGTERM fallback, via
+// SignalAndWaitExit) and kills the tmux window hosting it, so the sidebar and
+// any terminal-drawer panes go with it. Windows are resolved up front, before
+// any process exits and drops out of the PPID chain. Returns the number of
+// sessions stopped.
+func StopSessions(ctx *Context, sessions []claude.Session) int {
+	if len(sessions) == 0 || requireContext(ctx) != nil {
+		return 0
+	}
+	windowIDBySession := sessionToWindowIDMapForSessions(ctx, sessions)
+	for _, s := range sessions {
+		SignalAndWaitExit(ctx, s.PID)
+		if wID, ok := windowIDBySession[s.SessionID]; ok {
+			_ = ctx.Tmux.KillWindow(ctx.Tmux.SessionName() + ":" + wID)
+		}
+	}
+	return len(sessions)
 }
 
 // sessionToWindowIDMapForSessions walks tmux windows and attributes each of

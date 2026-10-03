@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
@@ -21,6 +22,9 @@ type Server struct {
 	prCache     *ttlCache
 	ticketCache *ttlCache
 	transcripts *transcriptHub
+
+	// launchMu serializes session-mutating requests (launch, replace, stop).
+	launchMu sync.Mutex
 }
 
 // NewServer builds a Server. ticketRefresh is the ticket cache TTL
@@ -57,6 +61,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/tickets/{id}", s.handleTicketDetail)
 	s.mux.HandleFunc("GET /api/transcript/{windowID}", s.handleTranscript)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/prompt", s.handlePrompt)
+	s.mux.HandleFunc("DELETE /api/sessions/{windowID}", s.handleStopSession)
+	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
+	s.mux.HandleFunc("GET /api/projects/{name}/sessions", s.handleProjectSessions)
+	s.mux.HandleFunc("POST /api/projects/{name}/sessions", s.handleLaunch)
 
 	static, err := fs.Sub(staticFiles, "static")
 	if err == nil {

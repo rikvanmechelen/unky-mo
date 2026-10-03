@@ -14,6 +14,10 @@ type ResumeParams struct {
 	Cwd        string // working directory for launch fallback
 	ShellCmd   string // resume command (e.g. "claude --resume <id>"); empty defaults to "claude --resume <SessionID>"
 	AgentKey   string // coding agent mnemonic for the @mo_agent window option
+	// NoSwitch skips focusing the tmux client on the target window. The
+	// web dashboard sets it — nobody is watching the terminal, so moving the
+	// attached client's view would be a surprise.
+	NoSwitch bool
 }
 
 // ResumeResult reports what happened.
@@ -39,6 +43,9 @@ func ResumeInDir(ctx *Context, p ResumeParams) (*ResumeResult, error) {
 	}
 	res := &ResumeResult{Target: windowName}
 	if windowName != "" && ctx.Tmux.WindowExists(windowName) {
+		if p.NoSwitch {
+			return res, nil
+		}
 		if err := ctx.Tmux.SwitchToWindow(resolveTarget(ctx, windowName)); err != nil {
 			return res, fmt.Errorf("switch to window: %w", err)
 		}
@@ -56,7 +63,7 @@ func ResumeInDir(ctx *Context, p ResumeParams) (*ResumeResult, error) {
 		ShellCmd:      shellCmd,
 		AgentKey:      p.AgentKey,
 		AttachSidebar: true,
-		SwitchFocus:   true,
+		SwitchFocus:   !p.NoSwitch,
 	})
 	if err != nil {
 		return res, err

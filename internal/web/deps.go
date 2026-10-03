@@ -9,15 +9,20 @@ package web
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
+	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/config"
 	"github.com/rvanmech/unky-mo/internal/github"
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -51,6 +56,27 @@ type PromptSender interface {
 	SendLiteralText(target, text string) error
 }
 
+// SessionHistory reads a checkout's past Claude sessions from its JSONL
+// transcripts under ~/.claude/projects.
+type SessionHistory interface {
+	RecentSessions(path string, n int) []claude.RecentSession
+	TranscriptExists(path, sessionID string) bool
+}
+
+// SessionOps is the subset of internal/ops the web dashboard drives to
+// start, resume, replace and stop sessions — the same operations the TUI
+// calls, so the web is a full stand-in for it.
+type SessionOps interface {
+	LiveSessions() ([]claude.Session, error)
+	WindowExists(name string) bool
+	SwitchToWindow(target string) error
+	Launch(p ops.LaunchParams) (*ops.LaunchResult, error)
+	LaunchSibling(p ops.SiblingParams) (*ops.LaunchResult, error)
+	ParkAndLaunch(p ops.ParkParams) (*ops.LaunchResult, error)
+	CreateWorktreeAndLaunch(p ops.WorktreeParams) (*ops.WorktreeResult, error)
+	StopSessions(sessions []claude.Session) int
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -59,6 +85,12 @@ type Deps struct {
 	PRs       PRClient
 	Tickets   TicketSource
 	Prompts   PromptSender
+	History   SessionHistory
+	Sessions  SessionOps
+	// Agents is the configured [[agent]] list. Launches only ever run a
+	// command from here — the browser picks an agent by key, never sends a
+	// command itself.
+	Agents []config.AgentConfig
 }
 
 // realStateReader wraps state.Read for production use.
@@ -130,6 +162,49 @@ func NewPromptSender(client *tmux.Client) PromptSender { return realPromptSender
 
 func (r realPromptSender) SendLiteralText(target, text string) error {
 	return r.client.SendLiteralText(target, text)
+}
+
+// realSessionHistory wraps internal/claude's transcript readers.
+type realSessionHistory struct{}
+
+func NewSessionHistory() SessionHistory { return realSessionHistory{} }
+
+func (realSessionHistory) RecentSessions(path string, n int) []claude.RecentSession {
+	return claude.RecentSessions(path, n)
+}
+
+func (realSessionHistory) TranscriptExists(path, sessionID string) bool {
+	_, err := os.Stat(filepath.Join(claude.ProjectsDirForPath(path), sessionID+".jsonl"))
+	return err == nil
+}
+
+// realSessionOps adapts an *ops.Context to SessionOps.
+type realSessionOps struct{ ctx *ops.Context }
+
+func NewSessionOps(ctx *ops.Context) SessionOps { return realSessionOps{ctx: ctx} }
+
+func (r realSessionOps) LiveSessions() ([]claude.Session, error) { return r.ctx.Claude.LiveSessions() }
+func (r realSessionOps) WindowExists(name string) bool           { return r.ctx.Tmux.WindowExists(name) }
+func (r realSessionOps) SwitchToWindow(target string) error      { return r.ctx.Tmux.SwitchToWindow(target) }
+
+func (r realSessionOps) Launch(p ops.LaunchParams) (*ops.LaunchResult, error) {
+	return ops.LaunchSession(r.ctx, p)
+}
+
+func (r realSessionOps) LaunchSibling(p ops.SiblingParams) (*ops.LaunchResult, error) {
+	return ops.LaunchSibling(r.ctx, p)
+}
+
+func (r realSessionOps) ParkAndLaunch(p ops.ParkParams) (*ops.LaunchResult, error) {
+	return ops.ParkAndLaunch(r.ctx, p)
+}
+
+func (r realSessionOps) CreateWorktreeAndLaunch(p ops.WorktreeParams) (*ops.WorktreeResult, error) {
+	return ops.CreateWorktreeAndLaunch(r.ctx, p)
+}
+
+func (r realSessionOps) StopSessions(sessions []claude.Session) int {
+	return ops.StopSessions(r.ctx, sessions)
 }
 
 type errUnknownProvider string

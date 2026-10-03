@@ -127,6 +127,8 @@ function main() {
   const sendError = document.getElementById("send-error");
   const permissionBanner = document.getElementById("permission-banner");
   const questionBanner = document.getElementById("question-banner");
+  const chatNotice = document.getElementById("chat-notice");
+  const stopBtn = document.getElementById("stop-btn");
 
   if (!windowID) {
     transcript.textContent = "no ?window=@N given";
@@ -309,13 +311,54 @@ function main() {
 
   let titled = false;
 
+  // Lifecycle around launches from the dashboard (?new=1): the window exists
+  // before the main TUI has attributed a Claude session to it, so for a few
+  // seconds there's no state row yet. Once one has been seen, its
+  // disappearance means the session ended (stopped here, /exit, or killed).
+  const starting = new URLSearchParams(location.search).has("new");
+  const openedAt = Date.now();
+  const STARTUP_GRACE_MS = 20000;
+  let everSeen = false;
+  let ended = false;
+
+  function setNotice(text) {
+    chatNotice.textContent = text || "";
+    chatNotice.style.display = text ? "block" : "none";
+  }
+
+  function markEnded() {
+    ended = true;
+    if (es) { es.close(); es = null; }
+    setBusyRow(false);
+    setNotice("Session ended. The tmux window is closed.");
+    stopBtn.style.display = "none";
+    sendBtn.disabled = true;
+    sendBtn.classList.add("is-locked");
+    sendBtn.textContent = "Session ended";
+  }
+
+  stopBtn.addEventListener("click", async () => {
+    if (await stopSession(windowID, chatMeta.firstChild ? chatMeta.firstChild.textContent : windowID)) markEnded();
+  });
+
   async function pollStatus() {
     try {
       const res = await fetch("/api/state");
       const data = await res.json();
-      const p = (data.projects || []).find((pr) => pr.window_id === windowID);
+      if (ended) return;
+      const p = (data.projects || []).find((pr) => pr.window_id === windowID && pr.session_id);
+      if (!p) {
+        if (everSeen) { markEnded(); return; }
+        if (!starting) setNotice("No session is running in this window.");
+        else if (Date.now() - openedAt < STARTUP_GRACE_MS) setNotice("Starting session…");
+        else setNotice("The session hasn't come up yet. It may be waiting on a prompt in tmux (for example, trusting a new folder).");
+      } else {
+        everSeen = true;
+        setNotice("");
+      }
+      stopBtn.style.display = p ? "" : "none";
       const status = p ? p.status : "none";
-      if (p && p.session_id && p.session_id !== streamSessionID) connectTranscript(p.session_id);
+      if (p && p.session_id !== streamSessionID) connectTranscript(p.session_id);
       const meta = STATUS[status] || STATUS.none;
 
       statusBadge.replaceChildren(statusSquare(meta.sq, meta.ring), document.createTextNode(meta.label));
@@ -353,7 +396,7 @@ function main() {
       const canSend = status === "idle" || status === "question";
       sendBtn.disabled = !canSend;
       sendBtn.classList.toggle("is-locked", !canSend);
-      sendBtn.textContent = canSend ? "Send" : "Claude is working…";
+      sendBtn.textContent = canSend ? "Send" : !p ? (starting ? "Starting…" : "No session") : "Claude is working…";
       promptInput.placeholder = status === "question"
         ? "Type a number or your answer…"
         : "Message this session";

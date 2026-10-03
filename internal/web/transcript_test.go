@@ -120,3 +120,11 @@ func TestTranscriptCursorHandlesTruncation(t *testing.T) {
 		t.Fatalf("expected recovery to re-read from scratch and return %q, got %v", line2, msgs)
 	}
 }
+
+func TestTranscriptCursorMissingFileIsEmpty(t *testing.T) {
+	c := newTranscriptCursor(t.TempDir() + "/missing.jsonl")
+	msgs, err := c.readNew()
+	if err != nil || len(msgs) != 0 {
+		t.Fatalf("want no messages and no error, got %v, %v", msgs, err)
+	}
+}

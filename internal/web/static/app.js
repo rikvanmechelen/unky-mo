@@ -45,6 +45,86 @@ async function fetchJSON(path) {
   return res.json();
 }
 
+// ── Session actions (dialogs + stop live in actions.js) ───────
+let AGENTS = [];
+
+function chatURL(windowID, starting) {
+  return `/chat?window=${encodeURIComponent(windowID)}` + (starting ? "&new=1" : "");
+}
+
+function agentPicker() {
+  if (AGENTS.length < 2) return null;
+  const select = el("select", { class: "agent-select", "aria-label": "Agent" });
+  for (const a of AGENTS) {
+    const opt = el("option", { value: a.key, text: a.name });
+    if (a.default) opt.selected = true;
+    select.appendChild(opt);
+  }
+  return select;
+}
+
+// startSession posts a launch/resume and lands on the session's chat. A busy
+// primary window comes back as 409 + choices — the TUI's switch / park+new /
+// concurrent menu — which we show and re-post with the picked mode.
+async function startSession(projectName, body, button) {
+  const label = button ? button.textContent : "";
+  if (button) { button.disabled = true; button.textContent = "Starting…"; }
+  try {
+    for (;;) {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectName)}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        location.href = chatURL(data.window_id, body.mode !== "switch");
+        return;
+      }
+      if (res.status === 409 && data.choices) {
+        const mode = await chooseMode(data);
+        if (!mode) return;
+        if (mode === "switch" && data.primary) {
+          location.href = chatURL(data.primary.window_id, false);
+          return;
+        }
+        body = { ...body, mode };
+        continue;
+      }
+      await showDialog({ title: "Couldn't start session", text: data.error || `request failed (${res.status})`, actions: [{ label: "OK" }] });
+      return;
+    }
+  } finally {
+    if (button) { button.disabled = false; button.textContent = label; }
+  }
+}
+
+function chooseMode(conflict) {
+  const name = conflict.primary ? conflict.primary.window_name : "the primary window";
+  const options = {
+    switch:  { label: "Switch to running session", value: "switch" },
+    replace: { label: `Replace it (stops ${name})`, value: "replace", danger: true },
+    sibling: { label: "Run alongside", value: "sibling" },
+  };
+  return showDialog({
+    title: "A session is already running here",
+    text: conflict.error,
+    actions: [...conflict.choices.map((c) => options[c]).filter(Boolean), { label: "Cancel" }],
+  });
+}
+
+
+function relativeTime(iso) {
+  const t = Date.parse(iso);
+  if (!t || t < 0) return "";
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 // ── Usage meters ──────────────────────────────────────────────
 function renderUsage(usage) {
   const container = document.getElementById("usage");
@@ -106,7 +186,15 @@ function renderSessions(projects) {
       el("span", { class: "session-row__branch", text: p.branch || "" }),
       el("span", { class: "session-row__note", text: sessionNote(p) }),
       el("span", { class: "session-row__action" }, p.window_id
-        ? [el("a", { href: `/chat?window=${encodeURIComponent(p.window_id)}`, text: "Open chat" })]
+        ? [
+            el("a", { href: chatURL(p.window_id), text: "Open chat" }),
+            ...(p.session_id ? [el("button", {
+              class: "link-btn link-btn--danger",
+              type: "button",
+              text: "Stop",
+              onClick: async () => { if (await stopSession(p.window_id, p.window_name)) pollState(); },
+            })] : []),
+          ]
         : []),
     ]);
     if (meta.rowBg) row.style.background = meta.rowBg;
@@ -115,22 +203,77 @@ function renderSessions(projects) {
 }
 
 // ── Projects ──────────────────────────────────────────────────
-function branchTagClass(b) {
-  if (b.IsMain) return { cls: "branch-tag branch-tag--main", label: "Main checkout" };
-  if (b.WorktreePath) return { cls: "branch-tag branch-tag--worktree", label: "Worktree" };
-  return { cls: "branch-tag", label: "Branch only" };
-}
+// renderCheckouts lists each checkout (main + worktrees) with the sessions
+// live there and recent ones to resume — the TUI's project detail rows.
+function renderCheckouts(projectName, checkouts, reload) {
+  const list = el("div", { class: "checkout-list" });
+  for (const c of checkouts || []) {
+    const picker = agentPicker();
+    const tag = c.is_main
+      ? el("span", { class: "branch-tag branch-tag--main", text: "Main checkout" })
+      : el("span", { class: "branch-tag branch-tag--worktree", text: "Worktree" });
+    const newBtn = el("button", { class: "btn btn--primary btn--small", type: "button", text: "New session" });
+    newBtn.addEventListener("click", () =>
+      startSession(projectName, { branch: c.branch, agent: picker ? picker.value : "" }, newBtn));
 
-function renderBranches(branches) {
-  const list = el("div", { class: "branch-list" });
-  for (const b of branches || []) {
-    const tag = branchTagClass(b);
-    list.appendChild(el("div", { class: "branch-row" }, [
-      el("span", { class: "branch-row__name", text: b.Name }),
-      el("span", { class: tag.cls, text: tag.label }),
+    const rows = [];
+    for (const l of c.live) {
+      rows.push(el("div", { class: "checkout-session" }, [
+        el("span", { class: "checkout-session__title", text: l.window_name }),
+        el("span", { class: "checkout-session__meta", text: (STATUS[l.status] || STATUS.none).label }),
+        el("span", { class: "checkout-session__actions" }, [
+          el("a", { href: chatURL(l.window_id), text: "Open chat" }),
+          el("button", {
+            class: "link-btn link-btn--danger", type: "button", text: "Stop",
+            onClick: async () => { if (await stopSession(l.window_id, l.window_name)) reload(); },
+          }),
+        ]),
+      ]));
+    }
+    for (const r of c.recent) {
+      if (r.live && r.window_id) continue; // already listed as live above
+      const resumeBtn = el("button", { class: "link-btn", type: "button", text: r.live ? "Running elsewhere" : "Resume" });
+      if (r.live) resumeBtn.disabled = true;
+      resumeBtn.addEventListener("click", () =>
+        startSession(projectName, { branch: c.branch, resume_id: r.session_id, agent: picker ? picker.value : "" }, resumeBtn));
+      rows.push(el("div", { class: "checkout-session is-recent" }, [
+        el("span", { class: "checkout-session__title", text: r.title, title: r.summary || "" }),
+        el("span", { class: "checkout-session__meta", text: relativeTime(r.last_active) }),
+        el("span", { class: "checkout-session__actions" }, [resumeBtn]),
+      ]));
+    }
+    if (rows.length === 0) rows.push(el("div", { class: "empty-note", text: "No sessions yet." }));
+
+    list.appendChild(el("div", { class: "checkout" }, [
+      el("div", { class: "checkout__head" }, [
+        el("span", { class: "branch-row__name", text: c.branch }),
+        tag,
+        el("span", { class: "checkout__spacer" }),
+        ...(picker ? [picker] : []),
+        newBtn,
+      ]),
+      ...rows,
     ]));
   }
   return list;
+}
+
+// renderWorktreeStarter: branches that aren't checked out anywhere, plus a
+// free-text new branch — both create a worktree and launch in it (the TUI's
+// `w` / `W`).
+function renderWorktreeStarter(projectName, branches) {
+  const input = el("input", { class: "text-input", type: "text", placeholder: "Branch name", list: `branches-${projectName}` });
+  const datalist = el("datalist", { id: `branches-${projectName}` },
+    (branches || []).filter((b) => !b.IsMain && !b.WorktreePath).map((b) => el("option", { value: b.Name })));
+  const picker = agentPicker();
+  const btn = el("button", { class: "btn btn--small", type: "submit", text: "Create worktree & start" });
+  const form = el("form", { class: "worktree-form" }, [input, datalist, ...(picker ? [picker] : []), btn]);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const branch = input.value.trim();
+    if (branch) startSession(projectName, { branch, agent: picker ? picker.value : "" }, btn);
+  });
+  return form;
 }
 
 function renderPRs(prs) {
@@ -168,6 +311,29 @@ function renderProjects(projects) {
     detail.style.display = "none";
     let loaded = false;
 
+    const loadDetail = async () => {
+      const enc = encodeURIComponent(name);
+      const [checkouts, branches, prs] = await Promise.all([
+        fetchJSON(`/api/projects/${enc}/sessions`).catch(() => []),
+        fetchJSON(`/api/projects/${enc}/worktrees`).catch(() => []),
+        fetchJSON(`/api/projects/${enc}/prs`).catch(() => []),
+      ]);
+      detail.textContent = "";
+      detail.className = "project__detail";
+      detail.appendChild(el("div", { class: "project__block" }, [
+        el("div", { class: "project__sub-heading", text: "Sessions" }),
+        renderCheckouts(name, checkouts, loadDetail),
+      ]));
+      detail.appendChild(el("div", { class: "project__block" }, [
+        el("div", { class: "project__sub-heading", text: "New worktree" }),
+        renderWorktreeStarter(name, branches),
+      ]));
+      detail.appendChild(el("div", { class: "project__block" }, [
+        el("div", { class: "project__sub-heading", text: "Open pull requests" }),
+        renderPRs(prs),
+      ]));
+    };
+
     const action = el("span", { class: "project__action", text: "Details" });
     const toggle = el("button", {
       class: "project__toggle",
@@ -184,20 +350,7 @@ function renderProjects(projects) {
         loaded = true;
         detail.textContent = "Loading…";
         detail.className = "project__detail-loading";
-        const [branches, prs] = await Promise.all([
-          fetchJSON(`/api/projects/${encodeURIComponent(name)}/worktrees`).catch(() => []),
-          fetchJSON(`/api/projects/${encodeURIComponent(name)}/prs`).catch(() => []),
-        ]);
-        detail.textContent = "";
-        detail.className = "project__detail";
-        detail.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px;" }, [
-          el("div", { class: "project__sub-heading", text: "Branches" }),
-          renderBranches(branches),
-        ]));
-        detail.appendChild(el("div", { style: "display:flex;flex-direction:column;gap:12px;" }, [
-          el("div", { class: "project__sub-heading", text: "Open pull requests" }),
-          renderPRs(prs),
-        ]));
+        await loadDetail();
       },
     }, [
       el("span", { class: "project__name", text: name }),
@@ -266,8 +419,8 @@ async function pollTickets() {
 
 document.getElementById("subtitle").textContent = `mo web — ${location.host || "localhost"}`;
 
+fetchJSON("/api/agents").then((a) => { AGENTS = a || []; }).catch(() => {}).finally(pollProjects);
 pollState();
-pollProjects();
 pollTickets();
 setInterval(pollState, 2000);
 setInterval(pollProjects, 60000);

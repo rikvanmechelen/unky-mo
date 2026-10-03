@@ -2333,10 +2333,7 @@ func (m Model) agentTagForKey(key string) string {
 // agentResumeCmd builds the shell command for resuming a session with the
 // given agent. If the agent has no ResumeCmd, falls back to a fresh launch.
 func agentResumeCmd(agent config.AgentConfig, sessionID string) string {
-	if agent.ResumeCmd != "" {
-		return agent.ResumeCmd + " " + sessionID
-	}
-	return agent.Cmd
+	return ops.AgentShellCmd(&agent, sessionID)
 }
 
 // agentForBranch returns the agent to use for a project+branch. Resolution
@@ -4338,39 +4335,12 @@ func (m Model) removeAndRecreateWorktree(projectPath, projectName, branch string
 	}
 }
 
-// killCleanupSessions is a thin TUI adapter over ops.CleanupWorktree's
-// kill-only mode (DeleteBranch=false, no worktree removal — just the kill
-// step). We pass an empty branch to skip the worktree removal; the callers
-// always follow up with runCleanup for the actual removal.
+// killCleanupSessions is a thin TUI adapter over ops.StopSessions. The
+// callers always follow up with runCleanup for the actual worktree removal.
 func (m Model) killCleanupSessions(sessions []claude.Session) tea.Cmd {
 	return func() tea.Msg {
-		// Kill-only: re-use ops.CleanupWorktree would also try to remove a
-		// worktree by branch, which we don't have here. Use ops.SignalAndWaitExit
-		// + window resolution directly.
-		windowBySession := map[string]string{}
-		if windows, err := m.tmux.ListWindows(); err == nil {
-			for _, w := range windows {
-				panePIDs, err := m.tmux.WindowPanePIDs(w.ID)
-				if err != nil {
-					continue
-				}
-				for _, s := range sessions {
-					if _, already := windowBySession[s.SessionID]; already {
-						continue
-					}
-					if m.claude.IsDescendantOf(s.PID, panePIDs) {
-						windowBySession[s.SessionID] = w.ID
-					}
-				}
-			}
-		}
-		for _, s := range sessions {
-			ops.SignalAndWaitExit(m.ops, s.PID)
-			if wID, ok := windowBySession[s.SessionID]; ok {
-				_ = m.tmux.KillWindow(m.tmux.SessionName() + ":" + wID)
-			}
-		}
-		return statusMsgEvent(fmt.Sprintf("Killed %d session(s)", len(sessions)))
+		n := ops.StopSessions(m.ops, sessions)
+		return statusMsgEvent(fmt.Sprintf("Killed %d session(s)", n))
 	}
 }
 

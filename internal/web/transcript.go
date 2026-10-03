@@ -3,9 +3,12 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/rvanmech/unky-mo/internal/status"
@@ -36,6 +39,11 @@ func newTranscriptCursor(path string) *transcriptCursor {
 // rather than returned or dropped.
 func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 	f, err := os.Open(c.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A just-launched session has no transcript until its first turn
+		// is written — that's "nothing yet", not an error.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +155,12 @@ func (h *transcriptHub) subscribe(sessionID, path string) (backlog []json.RawMes
 		// self-heals on the next write.)
 		_, _ = ts.cursor.readNew()
 		h.sessions[sessionID] = ts
+		// The watcher watches the transcript's directory, which won't exist
+		// yet for a session just launched in a checkout Claude has never run
+		// in (e.g. a fresh worktree) — fsnotify can't watch a missing dir,
+		// and live updates would silently never arrive. Create it, exactly
+		// as Claude itself would on its first write.
+		ensureTranscriptDir(path)
 		if h.watcher != nil {
 			h.watcher.WatchSession(sessionID, path)
 		}
@@ -172,6 +186,20 @@ func (h *transcriptHub) subscribe(sessionID, path string) (backlog []json.RawMes
 		}
 	}
 	return backlog, ch, unsubscribe, nil
+}
+
+// ensureTranscriptDir creates path's parent directory when it's missing,
+// but only under an existing ~/.claude/projects-style root — never builds a
+// whole tree from nothing.
+func ensureTranscriptDir(path string) {
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); err == nil {
+		return
+	}
+	if _, err := os.Stat(filepath.Dir(dir)); err != nil {
+		return
+	}
+	_ = os.Mkdir(dir, 0o755)
 }
 
 func (h *transcriptHub) onFileChange(sessionID, _ string) {

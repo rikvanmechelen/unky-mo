@@ -190,7 +190,11 @@ func ResumeAll(ctx *Context, path string, p RestoreParams) (*RestoreResult, erro
 			continue
 		}
 
-		shellCmd := buildResumeCmd(cfg, sess)
+		agent := cfg.AgentByKey(sess.AgentKey)
+		if agent == nil {
+			agent = cfg.DefaultAgent()
+		}
+		shellCmd := AgentShellCmd(agent, sess.SessionID)
 		_, launchErr := LaunchSession(ctx, LaunchParams{
 			WindowName:    sess.WindowName,
 			Cwd:           sess.Cwd,
@@ -210,18 +214,19 @@ func ResumeAll(ctx *Context, path string, p RestoreParams) (*RestoreResult, erro
 	return res, nil
 }
 
-// buildResumeCmd constructs the shell command for resuming a session using
-// the appropriate agent's ResumeCmd. Falls back to the default agent.
-func buildResumeCmd(cfg *config.Config, sess SuspendedSession) string {
-	agent := cfg.AgentByKey(sess.AgentKey)
+// AgentShellCmd builds the shell command that launches agent — resuming
+// resumeID via the agent's ResumeCmd when one is given. A nil agent falls
+// back to plain `claude` / `claude --resume <id>`; an agent without a
+// ResumeCmd can't resume, so it launches fresh.
+func AgentShellCmd(agent *config.AgentConfig, resumeID string) string {
 	if agent == nil {
-		agent = cfg.DefaultAgent()
+		if resumeID != "" {
+			return "claude --resume " + resumeID
+		}
+		return "claude"
 	}
-	if agent != nil && agent.ResumeCmd != "" {
-		return agent.ResumeCmd + " " + sess.SessionID
+	if resumeID != "" && agent.ResumeCmd != "" {
+		return agent.ResumeCmd + " " + resumeID
 	}
-	if agent != nil {
-		return agent.Cmd
-	}
-	return "claude --resume " + sess.SessionID
+	return agent.Cmd
 }
