@@ -369,7 +369,7 @@ h1, h2 {
 .msg-assistant a { overflow-wrap: anywhere; }
 .md-table-wrap { overflow-x: auto; }
 .md-table { border-collapse: collapse; font-size: 14px; line-height: 1.35; }
-.md-table th, .md-table td { text-align: left; vertical-align: top; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--gray-ddd); }
+.md-table th, .md-table td { text-align: left; vertical-align: top; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--gray-ddd); overflow-wrap: break-word; min-width: 6ch; }
 .md-table th { font-weight: 700; border-bottom-color: var(--black); }
 
 .tool-card { display: flex; flex-direction: column; margin-left: 4px; }
@@ -389,6 +389,8 @@ h1, h2 {
 .tool-card.is-error .tool-card__name { color: var(--red); }
 
 .tool-card__body { flex-direction: column; gap: 8px; margin: 8px 0 0 16px; }
+.msg-teammate__body { margin: 8px 0 0 16px; padding-left: 12px; border-left: 1px solid var(--gray-ddd); font-size: 15px; }
+.msg-teammate__body[hidden] { display: none; }
 .tool-card__field { display: flex; flex-direction: column; gap: 4px; }
 .tool-card__field-label { font-size: 11px; line-height: 1; color: var(--gray-767); }
 .tool-card__field pre {

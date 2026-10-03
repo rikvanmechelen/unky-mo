@@ -10,7 +10,10 @@ const MD_SAFE_URL = /^(https?:|mailto:)/i;
 // renderInline appends text with inline markup to parent.
 function renderInline(parent, text) {
   // Order matters: code spans first so their contents stay literal.
-  const re = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|(?<![\w*])\*([^*\s][^*\n]*?)\*(?![\w*])|(?<![\w_])_([^_\s][^_\n]*?)_(?![\w_])|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+  // Emphasis must open before a word character and close after something
+  // other than a slash or space, so globs like internal/ops/*.go … cmd/*
+  // stay literal.
+  const re = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|(?<![\w*/])\*([\w"'(\[][^*\n]*?)(?<![\s/])\*(?![\w*])|(?<![\w_])_([\w"'(\[][^_\n]*?)(?<![\s/])_(?![\w_])|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
   let last = 0, m;
   while ((m = re.exec(text))) {
     if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));

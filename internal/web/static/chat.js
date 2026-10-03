@@ -27,8 +27,27 @@ function stripAnsi(text) {
 // typed ({kind: "user"}), a meta row ({kind: "meta"}), or noise to hide
 // ({kind: "skip"}). Slash commands, their output and background-task
 // notifications all arrive as "user" lines in the JSONL but aren't yours.
+// parseTeammateMessages extracts the <teammate-message …>…</teammate-message>
+// blocks agent-team teammates send their lead (as plain user lines with no
+// other marker). Returns [] when text has none.
+function parseTeammateMessages(text) {
+  const items = [];
+  const re = /<teammate-message\s+([^>]*)>([\s\S]*?)<\/teammate-message>/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const attrs = {};
+    for (const a of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
+    items.push({ id: attrs.teammate_id || "teammate", color: attrs.color || "", summary: attrs.summary || "", body: m[2].trim() });
+  }
+  return items;
+}
+
 function describeUserString(msg, text) {
   if (msg.isCompactSummary) return { kind: "meta", text: "Conversation compacted" };
+  if (text.includes("<teammate-message")) {
+    const items = parseTeammateMessages(text);
+    if (items.length) return { kind: "teammates", items };
+  }
   if (msg.isMeta) return { kind: "skip" }; // command caveat, system nudges
   if (msg.origin?.kind === "task-notification" || text.startsWith("<task-notification>")) {
     return { kind: "meta", text: tagText(text, "summary") || "Background task finished" };
@@ -288,6 +307,43 @@ function main() {
     transcript.appendChild(el("div", { class: "msg-assistant" }, [renderMarkdown(text)]));
   }
 
+  // Teammate colours (from the team config) mapped onto the MoMA palette.
+  const TEAMMATE_COLORS = {
+    blue: "var(--blue)", green: "var(--green)", yellow: "var(--yellow)", red: "var(--red)",
+    purple: "#753BBD", orange: "#FF8F1C", pink: "#E93CAC", cyan: "#00AFD7",
+  };
+
+  // appendTeammates renders each teammate message as a collapsible row —
+  // the teammate, its summary, and the report as markdown on demand. An
+  // idle notification is just a meta line.
+  function appendTeammates(items) {
+    for (const t of items) {
+      let payload = null;
+      try { payload = JSON.parse(t.body); } catch (_) { /* a markdown report */ }
+      if (payload && payload.type === "idle_notification") {
+        appendBubble("meta", `${t.id} is idle`);
+        continue;
+      }
+      const body = el("div", { class: "msg-teammate__body msg-assistant" });
+      body.hidden = true;
+      const action = el("span", { class: "tool-card__action", text: "Show" });
+      const sq = el("span", { class: "tool-card__sq" });
+      sq.style.background = TEAMMATE_COLORS[t.color] || "var(--gray-767)";
+      const toggle = el("button", { class: "tool-card__toggle", type: "button" }, [
+        sq,
+        el("span", { class: "tool-card__name", text: t.id }),
+        ...(t.summary ? [el("span", { class: "tool-card__detail", text: t.summary })] : []),
+        action,
+      ]);
+      toggle.addEventListener("click", () => withPin(() => {
+        if (body.hidden && !body.childNodes.length) body.appendChild(renderMarkdown(t.body));
+        body.hidden = !body.hidden;
+        action.textContent = body.hidden ? "Show" : "Hide";
+      }));
+      transcript.appendChild(el("div", { class: "tool-card msg-teammate" }, [toggle, body]));
+    }
+  }
+
   function appendToolUse(block, cwd) {
     const detail = toolSummaryDetail(block, cwd);
     const body = el("div", { class: "tool-card__body" });
@@ -370,7 +426,8 @@ function main() {
       const content = msg.message?.content;
       if (typeof content === "string") {
         const d = describeUserString(msg, content);
-        if (d.kind !== "skip") appendBubble(d.kind, d.text);
+        if (d.kind === "teammates") appendTeammates(d.items);
+        else if (d.kind !== "skip") appendBubble(d.kind, d.text);
         return;
       }
       for (const block of content || []) {
