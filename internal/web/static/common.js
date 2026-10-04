@@ -1,6 +1,18 @@
 // Helpers shared by the dashboard (app.js) and the chat view (chat.js).
 // Loaded first via a plain <script> tag — no modules, no build step.
 
+// Browsers treat any focused text field as :focus-visible, so clicking into
+// one drew the keyboard focus ring. Text fields show it only after a Tab
+// (data-focus-source="keyboard" on <html>), and a pointer press hides it
+// again. A Tab that a handler already used (shift+tab cycling the permission
+// mode in the composer) doesn't count.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && !e.defaultPrevented) document.documentElement.dataset.focusSource = "keyboard";
+});
+document.addEventListener("pointerdown", () => {
+  document.documentElement.dataset.focusSource = "pointer";
+}, true);
+
 // Status color is the only color in the interface; everything else is
 // black/white/gray. `short` is the compact label used in the chat nav, and
 // `navSq` overrides `sq` there (the badge's black-on-yellow square would
