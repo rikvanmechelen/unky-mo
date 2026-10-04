@@ -35,7 +35,7 @@ const STATUS = {
 
 // setFavicon syncs the tab icon with the most urgent status across all
 // sessions (the /api/state rows): yellow if any needs you, green if any is
-// working, else the idle outline. Both pages call it on every state poll.
+// working, else the idle outline. Every page calls it on each state poll.
 function setFavicon(rows) {
   const has = (...s) => (rows || []).some((r) => s.includes(r.status));
   const name = has("permission", "question") ? "needs-you" : has("active") ? "working" : "idle";

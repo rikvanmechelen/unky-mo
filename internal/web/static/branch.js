@@ -68,4 +68,14 @@ function branchMain() {
   editor.setAvailable(true);
 }
 
+// The tab icon follows session status here too, like the other pages.
+async function pollFavicon() {
+  try {
+    const res = await fetch("/api/state");
+    if (res.ok) setFavicon((await res.json()).projects);
+  } catch (_) { /* keep the last icon */ }
+}
+
 branchMain();
+pollFavicon();
+setInterval(pollFavicon, 2000);
