@@ -80,3 +80,69 @@ function promptDialog({ title, text, placeholder, confirmLabel }) {
     input.focus();
   });
 }
+
+// restartMo does what ctrl+alt+r does in the TUI: restart the TUI, every
+// sidebar and this web server, picking up a freshly-installed binary. The
+// server is replaced too, so it waits for /api/boot to report a new id and
+// then reloads the page (new static files; editor drafts live in
+// localStorage, so nothing unsaved is lost).
+async function restartMo() {
+  const ok = await showDialog({
+    title: "Restart mo?",
+    text: "Restarts the TUI, all sidebars and the web server, like ctrl+alt+r. Run make install first to pick up changes.",
+    actions: [{ label: "Cancel" }, { label: "Restart", value: true }],
+  });
+  if (!ok) return;
+
+  const bootID = async () => {
+    const res = await fetch("/api/boot", { cache: "no-store" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    return (await res.json()).boot;
+  };
+  let before;
+  try {
+    before = await bootID();
+  } catch (e) {
+    await showDialog({ title: "Couldn't restart", text: `The web server didn't answer (${e.message}).`, actions: [{ label: "OK" }] });
+    return;
+  }
+  const res = await fetch("/api/restart", { method: "POST" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    await showDialog({ title: "Couldn't restart", text: data.error || `request failed (${res.status})`, actions: [{ label: "OK" }] });
+    return;
+  }
+
+  // A modal that esc can't dismiss while the servers come back.
+  const overlay = dialogNode("dialog", "dialog");
+  overlay.appendChild(dialogNode("div", "dialog__title", "Restarting mo…"));
+  const note = dialogNode("div", "dialog__text", "Waiting for the web server to come back.");
+  overlay.appendChild(note);
+  overlay.addEventListener("cancel", (e) => e.preventDefault());
+  document.body.appendChild(overlay);
+  overlay.showModal();
+
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      if ((await bootID()) !== before) {
+        location.reload();
+        return;
+      }
+    } catch {
+      // The old server is gone and the new one isn't listening yet.
+    }
+  }
+  note.textContent = "The web server didn't come back within 30s. Check it with: tmux attach -t mo-web";
+  const row = dialogNode("div", "dialog__actions");
+  const close = dialogNode("button", "btn", "Close");
+  close.type = "button";
+  close.addEventListener("click", () => { overlay.close(); overlay.remove(); });
+  row.appendChild(close);
+  overlay.appendChild(row);
+}
+
+for (const btn of document.querySelectorAll("[data-restart-mo]")) {
+  btn.addEventListener("click", () => restartMo());
+}

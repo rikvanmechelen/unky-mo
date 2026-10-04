@@ -38,6 +38,10 @@ type Server struct {
 	// between footer re-reads after each shift+tab (zero in tests).
 	modeMu     sync.Mutex
 	modeSettle time.Duration
+
+	// bootID identifies this process, so a browser that asked for a
+	// restart can tell when the new server is up (GET /api/boot).
+	bootID string
 }
 
 // NewServer builds a Server. ticketRefresh is the ticket cache TTL
@@ -63,6 +67,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		branchCache: newTTLCache(15 * time.Second),
 		shellsCache: newTTLCache(2 * time.Second),
 		agentsCache: newTTLCache(time.Second),
+		bootID:      newBootID(),
 	}
 	s.routes()
 	return s
@@ -105,6 +110,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/sessions/{windowID}/attachments/{id}", s.handleDeleteAttachment)
 	s.mux.HandleFunc("DELETE /api/sessions/{windowID}", s.handleStopSession)
 	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
+	s.mux.HandleFunc("GET /api/boot", s.handleBoot)
+	s.mux.HandleFunc("POST /api/restart", s.handleRestart)
 	s.mux.HandleFunc("GET /api/projects/{name}/sessions", s.handleProjectSessions)
 	s.mux.HandleFunc("POST /api/projects/{name}/sessions", s.handleLaunch)
 	s.mux.HandleFunc("POST /api/projects/{name}/cleanup", s.handleCleanup)

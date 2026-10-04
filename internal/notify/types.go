@@ -12,6 +12,9 @@ const (
 	// NotifyHookEvent is a V2 hook message (it carries hook_event_name),
 	// passed through raw for status.ParseHookPayload to interpret.
 	NotifyHookEvent NotificationType = "hook_event"
+	// NotifyRestart asks the TUI to restart itself and every sidebar, as
+	// ctrl+alt+r does. Sent by `mo restart` and the web dashboard.
+	NotifyRestart NotificationType = "mo_restart"
 )
 
 // Notification represents a message received from a Claude Code hook.

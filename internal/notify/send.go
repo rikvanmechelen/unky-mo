@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -44,12 +45,33 @@ func SendLogged(socketPath string, r io.Reader, logPath string) error {
 		}
 	}
 
+	return writeLine(socketPath, line.Bytes())
+}
+
+// ErrTUINotRunning means nothing is listening on the socket.
+var ErrTUINotRunning = errors.New("the mo TUI isn't running")
+
+// SendRestart asks the running TUI to restart itself and every sidebar
+// (what ctrl+alt+r does), which also restarts mo web. It returns once the
+// message is written, before the restart happens.
+func SendRestart(socketPath string) error {
+	if err := writeLine(socketPath, []byte(`{"type":"`+string(NotifyRestart)+`"}`+"\n")); err != nil {
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && opErr.Op == "dial" {
+			return ErrTUINotRunning
+		}
+		return err
+	}
+	return nil
+}
+
+func writeLine(socketPath string, line []byte) error {
 	conn, err := net.DialTimeout("unix", socketPath, time.Second)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
-	_, err = conn.Write(line.Bytes())
+	_, err = conn.Write(line)
 	return err
 }

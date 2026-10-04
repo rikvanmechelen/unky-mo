@@ -53,6 +53,7 @@ func webCmd() *cobra.Command {
 				ClaudePane: web.NewClaudePane(tmuxClient),
 				Shells:     web.NewShells(),
 				Subagents:  claude.NewSubagentReader(),
+				Restarter:  web.NewRestarter(cfg.SocketPath),
 				Agents:     cfg.Agents,
 			}
 			if deps.Attachments, err = web.NewAttachmentStore(); err != nil {

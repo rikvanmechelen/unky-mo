@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -55,6 +56,7 @@ func TestNotificationTypeConstantsMatchWire(t *testing.T) {
 		NotifyIdlePrompt:       "idle_prompt",
 		NotifyPermissionPrompt: "permission_prompt",
 		NotifySessionStop:      "session_stop",
+		NotifyRestart:          "mo_restart",
 	}
 	for k, want := range cases {
 		if string(k) != want {
@@ -238,6 +240,28 @@ func TestSendDeliversV2HookEventRaw(t *testing.T) {
 func TestSendNoServerIsError(t *testing.T) {
 	if err := Send(filepath.Join(t.TempDir(), "missing.sock"), strings.NewReader(`{}`)); err == nil {
 		t.Fatal("expected an error when nothing is listening")
+	}
+}
+
+func TestSendRestartDeliversRestart(t *testing.T) {
+	srv, path := startServer(t)
+	if err := SendRestart(path); err != nil {
+		t.Fatalf("SendRestart: %v", err)
+	}
+	select {
+	case got := <-srv.Messages():
+		if got.Type != NotifyRestart {
+			t.Fatalf("type: want %q, got %q", NotifyRestart, got.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for restart notification")
+	}
+}
+
+func TestSendRestartNoServerIsTUINotRunning(t *testing.T) {
+	err := SendRestart(filepath.Join(t.TempDir(), "missing.sock"))
+	if !errors.Is(err, ErrTUINotRunning) {
+		t.Fatalf("want ErrTUINotRunning, got %v", err)
 	}
 }
 

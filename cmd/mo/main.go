@@ -52,6 +52,7 @@ func main() {
 	rootCmd.AddCommand(debugCmd())
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(webCmd())
+	rootCmd.AddCommand(restartCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

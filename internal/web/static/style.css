@@ -90,6 +90,7 @@ h1, h2 {
 .dash-header__brand { grid-column: span 6; display: flex; flex-direction: column; gap: 16px; }
 .dash-header__wordmark { font-size: 60px; line-height: 60px; font-weight: 700; letter-spacing: var(--tracking-bold); }
 .dash-header__subtitle { font-size: 14px; line-height: 1.25; color: var(--gray-666); }
+.dash-header__restart { align-self: flex-start; font-size: 13px; font-weight: 400; }
 .dash-header__usage { grid-column: 7 / span 6; display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
 @media (max-width: 900px) {
   .dash-header__brand, .dash-header__usage { grid-column: span 12; }
@@ -298,6 +299,7 @@ h1, h2 {
 .chat-nav__brand { flex: none; padding: 24px 20px 20px; display: flex; flex-direction: column; gap: 6px; }
 .chat-nav__wordmark { font-size: 30px; line-height: 30px; font-weight: 700; letter-spacing: var(--tracking-bold); }
 .chat-nav__back { align-self: flex-start; font-size: 13px; line-height: 1.25; }
+.chat-nav__restart { align-self: flex-start; font-size: 13px; line-height: 1.25; font-weight: 400; }
 .chat-nav__list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .chat-nav__empty { padding: 0 20px; font-size: 13px; color: var(--gray-666); font-style: italic; }
 .chat-nav__usage { flex: none; padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--gray-ddd); }

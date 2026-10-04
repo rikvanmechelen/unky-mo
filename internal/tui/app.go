@@ -1262,9 +1262,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// terminal. (Running it as a child via tea.ExecProcess left every
 			// old TUI waiting underneath — a chain that grew with each
 			// restart, and quitting resurrected the previous, older TUI.)
-			m.restartSidebars()
-			m.restartRequested = true
-			return m, tea.Quit
+			return m.beginRestart()
 
 		case key.Matches(msg, keys.Suspend):
 			// On the ticket detail screen, `s` means "start working" instead
@@ -1412,6 +1410,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case notificationMsg:
+		if msg.Type == notify.NotifyRestart {
+			// `mo restart` or the web dashboard's "Restart mo" — the same
+			// as ctrl+alt+r, but immune to whatever input has the keyboard.
+			return m.beginRestart()
+		}
 		m.routeNotificationToStatusMgr(notify.Notification(msg))
 		cmds := []tea.Cmd{m.refreshSessions()}
 		if m.notifServer != nil {
@@ -3829,6 +3832,15 @@ func mgrStatusToTUI(s status.SessionStatus) SessionStatus {
 	default:
 		return StatusNone
 	}
+}
+
+// beginRestart restarts the sidebars and quits; Run then execs the
+// freshly-installed binary in place. Shared by ctrl+alt+r and the
+// NotifyRestart socket message.
+func (m Model) beginRestart() (tea.Model, tea.Cmd) {
+	m.restartSidebars()
+	m.restartRequested = true
+	return m, tea.Quit
 }
 
 // restartSidebars sends ctrl+alt+r to all sidebar panes (pane .1 in each

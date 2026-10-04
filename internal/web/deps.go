@@ -3,7 +3,8 @@
 // chat-style live transcript of a session (tailed from its JSONL file) with
 // a prompt box that injects text into the live session via tmux. It never
 // touches the hook socket or status.Manager — those are owned exclusively by
-// the running main TUI process — so session status (used to gate prompt
+// the running main TUI process (apart from the write-only restart message,
+// see Restarter) — so session status (used to gate prompt
 // submission on the session being idle) comes from the shared state file.
 package web
 
@@ -21,6 +22,7 @@ import (
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
 	"github.com/rvanmech/unky-mo/internal/gitfiles"
 	"github.com/rvanmech/unky-mo/internal/github"
+	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
@@ -29,7 +31,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane,Subagents
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane,Subagents,Restarter
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -173,6 +175,7 @@ type Deps struct {
 	// and cycles its permission mode.
 	ClaudePane ClaudePane
 	Subagents  Subagents
+	Restarter  Restarter
 	// Attachments holds images uploaded from the composer until the prompt
 	// that references them is sent.
 	Attachments *AttachmentStore
@@ -181,6 +184,20 @@ type Deps struct {
 	// command itself.
 	Agents []config.AgentConfig
 }
+
+// Restarter asks the running TUI to restart itself, every sidebar and this
+// web server (what ctrl+alt+r does). It's the one thing the web sends to the
+// hook socket: a write-only control message, never a status read.
+type Restarter interface {
+	Restart() error
+}
+
+type socketRestarter struct{ socketPath string }
+
+// NewRestarter sends notify.NotifyRestart to the TUI's socket.
+func NewRestarter(socketPath string) Restarter { return socketRestarter{socketPath: socketPath} }
+
+func (r socketRestarter) Restart() error { return notify.SendRestart(r.socketPath) }
 
 // realStateReader wraps state.Read for production use.
 type realStateReader struct{ path string }
