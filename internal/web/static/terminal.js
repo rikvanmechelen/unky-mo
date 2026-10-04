@@ -30,7 +30,7 @@ function createTerminalDrawer(root) {
   let terminals = [];
   let shells = []; // Claude's own Bash-tool shells: read-only tabs
   let selected = null; // tab key: a pane id (no "%"), or "s<pid>" for a shell
-  let open = false; // collapsed until a tab, Show or New terminal opens it
+  let open = false; // collapsed until a tab, Show or New terminal opens it; the open tab or Hide collapses it
   let tabsKey = null; // last rendered tab data — unchanged polls don't rebuild (keeps clicks)
   let lastOutput = null;
   let gen = 0; // bumped on window switch; stale responses are dropped
@@ -72,6 +72,12 @@ function createTerminalDrawer(root) {
           el("span", { class: "term-tab__label", text: t.label }),
         ]);
         tab.addEventListener("click", () => {
+          // Tapping the open tab again collapses the drawer, like Hide.
+          if (open && selected === t.key) {
+            open = false;
+            render();
+            return;
+          }
           selected = t.key;
           open = true;
           lastOutput = null;
