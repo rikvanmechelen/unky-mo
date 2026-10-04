@@ -41,8 +41,10 @@ const SURFACE_KINDS = [
   { key: "env", label: "Env vars" },
   { key: "deps", label: "Dependencies" },
   { key: "migrations", label: "Migrations" },
+  { key: "permissions", label: "Permissions" },
 ];
 const SURFACE_SHOWN = 40; // entries shown per category before "N more"
+const LANG_LABEL = { go: "Go", ruby: "Ruby", node: "JavaScript/TypeScript", python: "Python", kotlin: "Kotlin/Java", swift: "Swift" };
 const OVERVIEW_BG_POLL_MS = 15000; // while the tab is hidden, for the strip
 const TRACE_COLUMNS = 20; // turns shown as columns; older ones scroll
 const AGENT_REFRESH_MS = 15000; // a running subagent's transcript is re-read this often
@@ -241,13 +243,16 @@ function layoutTreemap(items, w, h) {
   return out;
 }
 
-// archGraph picks what the architecture graph shows: the touched packages,
-// the changed edges and their endpoints, plus existing imports (all of them
-// with allImports, else only those between packages already shown).
+// archGraph picks what the architecture graph shows. By default that's the
+// change itself: the ends of the dependencies it adds or removes, and the
+// existing dependencies between them for context. With allImports, every
+// touched unit and everything it depends on (dense for Rails, whose layers
+// reference each other in cycles).
 function archGraph(arch, allImports) {
+  const status = new Map((arch.packages || []).map((p) => [p.path, p.status]));
   const nodes = new Map(); // path → {path, status}
-  const add = (p, status) => { if (!nodes.has(p)) nodes.set(p, { path: p, status: status || "" }); };
-  for (const p of arch.packages || []) add(p.path, p.status);
+  const add = (p) => { if (!nodes.has(p)) nodes.set(p, { path: p, status: status.get(p) || "" }); };
+  if (allImports) for (const p of arch.packages || []) add(p.path);
   const edges = [];
   for (const e of arch.edges || []) { add(e.from); add(e.to); edges.push(e); }
   for (const e of arch.existing || []) {
@@ -311,6 +316,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   let archEtag = null;
   let allImports = storageGet(OVERVIEW_ALL_IMPORTS_KEY) === true;
   let lastLoad = 0;
+  let fetching = false; // a fetch of origin's base is running
   const trace = createIntentTrace(describeUser);
   let traceShown = -1; // trace.version last rendered
   let traceTimer = 0;
@@ -669,7 +675,35 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       seg,
       ...(mode === "branch" && data.fallback ? [el("span", { class: "overview__muted", text: data.head ? "Nothing to compare: the branch is already part of its base." : "On the default branch, or no default branch found: showing uncommitted changes." })] : []),
       ...(data.truncated ? [el("span", { class: "overview__muted", text: "File list truncated." })] : []),
+      ...staleBase(),
     ]);
+  }
+
+  // staleBase warns when origin's copy of the base is a week or more old:
+  // the merge base is old too, and work already merged shows as changed.
+  function staleBase() {
+    if (data.mode !== "branch" || !data.baseFetched) return [];
+    const days = Math.floor((Date.now() / 1000 - data.baseFetched) / 86400);
+    if (days < 7) return [];
+    const btn = el("button", { class: "link-btn", type: "button", text: fetching ? "Fetching…" : "Fetch" });
+    btn.disabled = fetching;
+    btn.addEventListener("click", fetchBase);
+    return [el("span", { class: "overview-stale" }, [document.createTextNode(`${data.base} last fetched ${days} days ago · `), btn])];
+  }
+
+  async function fetchBase() {
+    if (fetching) return;
+    fetching = true;
+    render();
+    try {
+      const res = await fetch(`${api}/fetch-base`, { method: "POST" });
+      if (!res.ok) error = `Couldn't fetch: ${(await res.json().catch(() => ({}))).error || res.status}`;
+      etag = null; archEtag = null;
+    } finally {
+      fetching = false;
+      await load();
+      render();
+    }
   }
 
   function chip(n, label, cls) {
@@ -689,8 +723,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     if (arch?.repo) {
       const added = arch.edges.filter((e) => e.op === "+").length, removed = arch.edges.length - added;
       if (arch.violations) out.push(chip(String(arch.violations), arch.violations === 1 ? "new import breaks a layer rule" : "new imports break a layer rule", "is-bad"));
-      else if (arch.module) out.push(chip(`+${added} −${removed}`, "imports between packages"));
-      const cats = SURFACE_KINDS.filter((k) => arch.surface[k.key].length);
+      else if (arch.languages?.length) out.push(chip(`+${added} −${removed}`, "dependencies between parts"));
+      const cats = SURFACE_KINDS.filter((k) => arch.surface[k.key]?.length);
       const n = cats.reduce((s, k) => s + arch.surface[k.key].length, 0);
       out.push(chip(String(n), n ? (n === 1 ? "contract change: " : "contract changes: ") + cats.map((k) => k.label.toLowerCase()).join(" · ") : "contract changes"));
     }
@@ -732,19 +766,22 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   function rulesNote() {
     const r = arch.rules;
-    if (r.error) return el("div", { class: "overview-rules is-error", text: `${r.path}: ${r.error} — rules not applied.` });
-    if (!r.found) return el("div", { class: "overview-rules", text: `No layer rules: add ${r.path} to flag imports that cross layers.` });
-    return el("div", { class: "overview-rules", text: `Checked against ${r.path} (${plural(r.layers, "layer")}).` });
+    const presets = r.presets?.length ? `built-in ${r.presets.join(", ")} rules` + (r.autoPresets ? " (detected)" : "") : "";
+    if (r.error) return el("div", { class: "overview-rules is-error", text: `${r.path}: ${r.error}` + (presets ? ` — only the ${presets} applied.` : " — rules not applied.") });
+    if (!r.found && !presets) return el("div", { class: "overview-rules", text: `No layer rules: add ${r.path} to flag dependencies that cross layers.` });
+    if (!r.found) return el("div", { class: "overview-rules", text: `Checked against the ${presets}. Add ${r.path} to add your own layers, or presets = [] to turn these off.` });
+    const own = r.layers ? `${r.path} (${plural(r.layers, "layer")})` : r.path;
+    return el("div", { class: "overview-rules", text: `Checked against ${own}` + (presets ? ` and the ${presets}.` : ".") });
   }
 
   function architecture() {
     const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Architecture" })]);
-    if (!arch.module) {
-      return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "The import graph covers Go modules for now." })]);
+    if (!arch.languages?.length) {
+      return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "No supported language in this change (Go, Ruby on Rails, JavaScript/TypeScript, Python, Kotlin/Java, Swift)." })]);
     }
     const toggle = el("label", { class: "overview__muted overview-toggle" }, [
       el("input", { type: "checkbox", id: "overview-all-imports", ...(allImports ? { checked: "" } : {}) }),
-      document.createTextNode(" all imports"),
+      document.createTextNode(" all dependencies"),
     ]);
     toggle.querySelector("input").addEventListener("change", (e) => {
       allImports = e.target.checked;
@@ -754,7 +791,9 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     head.appendChild(toggle);
     const changed = arch.edges.length;
     const parts = [head];
-    parts.push(changed || allImports ? archSvg() : el("div", { class: "overview__note", text: `No imports between packages added or removed (${plural(arch.packages.length, "package")} touched).` }));
+    parts.push(changed || allImports ? archSvg() : el("div", { class: "overview__note", text: `No dependencies between parts of the code added or removed (${plural(arch.packages.length, "part")} touched).` }));
+    const approx = arch.languages.filter((l) => !l.exact && l.units);
+    if (approx.length) parts.push(el("div", { class: "overview-rules", text: `${approx.map((l) => LANG_LABEL[l.name] || l.name).join(", ")}: dependencies are inferred from names, so they're approximate (dotted).` }));
     const listed = arch.edges.filter((e) => e.violation || e.fixed);
     if (listed.length) parts.push(el("div", { class: "overview-violations" }, listed.map(violationRow)));
     parts.push(rulesNote());
@@ -780,7 +819,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const { nodes, edges } = archGraph(arch, allImports);
     const { rows } = layoutArchGraph(nodes, edges);
     const CHAR = 6.6, PAD = 10, H = 24, ROW = 64, GAP = 14, M = 8;
-    const width = (n) => Math.max(40, n.path.length * CHAR + 2 * PAD);
+    const label = (n) => arch.labels?.[n.path] || n.path;
+    const width = (n) => Math.max(40, label(n).length * CHAR + 2 * PAD);
     const rowW = rows.map((r) => r.reduce((s, n) => s + width(n), 0) + GAP * (r.length - 1));
     const W = Math.max(...rowW) + 2 * M;
     const box = new Map();
@@ -807,10 +847,10 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       const down = b.y > a.y;
       const y1 = down ? a.y + H : a.y, y2 = down ? b.y : b.y + H;
       const dy = Math.max(24, Math.abs(y2 - y1) / 2) * (down ? 1 : -1);
-      const cls = e.violation ? "is-bad" : e.op === "+" ? "is-new" : e.op === "-" ? "is-removed" : "is-existing";
+      const cls = (e.violation ? "is-bad" : e.op === "+" ? "is-new" : e.op === "-" ? "is-removed" : "is-existing") + (e.approx ? " is-approx" : "");
       const path = svgEl("path", { class: `overview-arch__edge ${cls}`, d: `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}`, "marker-end": "url(#ov-arrow)" });
       const title = svgEl("title", {});
-      title.textContent = `${e.from} → ${e.to}` + (e.op === "+" ? " (new)" : e.op === "-" ? " (removed)" : "") + (e.violation ? ` — breaks: ${e.violation}` : "");
+      title.textContent = `${e.from} → ${e.to}` + (e.op === "+" ? " (new)" : e.op === "-" ? " (removed)" : "") + (e.approx ? " · approximate" : "") + (e.violation ? ` — breaks: ${e.violation}` : "");
       path.appendChild(title);
       svg.appendChild(path);
     }
@@ -819,14 +859,14 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       const g = svgEl("g", { class: `overview-arch__node is-${n.status || "context"}` });
       g.appendChild(svgEl("rect", { x: b.x, y: b.y, width: b.w, height: H }));
       const t = svgEl("text", { x: b.x + b.w / 2, y: b.y + H / 2 + 4, "text-anchor": "middle" });
-      t.textContent = n.path;
+      t.textContent = label(n);
       const title = svgEl("title", {});
       title.textContent = n.path + (n.status ? ` (${n.status})` : " (not changed)");
       g.append(title, t);
       svg.appendChild(g);
     }
     const legend = el("div", { class: "overview-legend is-static" }, [
-      el("span", {}, [el("i", { class: "overview-sw is-edge-new" }), document.createTextNode("new import")]),
+      el("span", {}, [el("i", { class: "overview-sw is-edge-new" }), document.createTextNode("new dependency")]),
       el("span", {}, [el("i", { class: "overview-sw is-edge-removed" }), document.createTextNode("removed")]),
       el("span", {}, [el("i", { class: "overview-sw is-edge-bad" }), document.createTextNode("breaks a rule")]),
     ]);
@@ -835,9 +875,9 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   function surfaceSection() {
     const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Contract surface" })]);
-    const cats = SURFACE_KINDS.filter((k) => arch.surface[k.key].length);
+    const cats = SURFACE_KINDS.filter((k) => arch.surface[k.key]?.length);
     if (!cats.length) {
-      return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "No exported API, routes, flags, config keys, env vars, dependencies or migrations changed." })]);
+      return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "No exported API, routes, flags, config keys, env vars, dependencies, migrations or permissions changed." })]);
     }
     const rows = cats.map((k) => {
       const all = arch.surface[k.key];

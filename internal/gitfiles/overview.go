@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
@@ -67,20 +68,24 @@ type KindTotal struct {
 // branch that isn't checked out (GetOverviewAt): the commit compared to,
 // instead of a working tree.
 type Overview struct {
-	Root      string             `json:"root"`
-	Branch    string             `json:"branch"`
-	Mode      string             `json:"mode"`
-	Fallback  bool               `json:"fallback,omitempty"`
-	Base      string             `json:"base,omitempty"`
-	MergeBase string             `json:"mergeBase,omitempty"`
-	Rev       string             `json:"rev,omitempty"`
-	Head      string             `json:"head,omitempty"`
-	Files     []OverviewFile     `json:"files"`
-	Added     int                `json:"added"`
-	Removed   int                `json:"removed"`
-	Kinds     map[Kind]KindTotal `json:"kinds"`
-	Areas     []string           `json:"areas"`
-	Truncated bool               `json:"truncated,omitempty"`
+	Root      string `json:"root"`
+	Branch    string `json:"branch"`
+	Mode      string `json:"mode"`
+	Fallback  bool   `json:"fallback,omitempty"`
+	Base      string `json:"base,omitempty"`
+	MergeBase string `json:"mergeBase,omitempty"`
+	Rev       string `json:"rev,omitempty"`
+	Head      string `json:"head,omitempty"`
+	// BaseFetched is when origin's copy of Base was last updated (unix
+	// seconds), 0 when unknown or Base isn't origin's: an old fetch means an
+	// old merge base, and an overview that shows work already merged.
+	BaseFetched int64              `json:"baseFetched,omitempty"`
+	Files       []OverviewFile     `json:"files"`
+	Added       int                `json:"added"`
+	Removed     int                `json:"removed"`
+	Kinds       map[Kind]KindTotal `json:"kinds"`
+	Areas       []string           `json:"areas"`
+	Truncated   bool               `json:"truncated,omitempty"`
 }
 
 // GetOverview reads the change of the checkout containing dir in mode
@@ -104,6 +109,7 @@ func GetOverview(ctx context.Context, cmd moexec.Commander, dir, mode string) (*
 			// merge base that is HEAD.
 			if mb != "" && !(mb == head && isBranch(o.Branch, base)) {
 				o.Mode, o.Fallback, o.Base, o.MergeBase, rev = ModeBranch, false, base, mb, mb
+				o.BaseFetched = BaseFetched(ctx, cmd, root, base)
 			}
 		}
 	}
@@ -286,6 +292,41 @@ func baseSpec(ctx context.Context, cmd moexec.Commander, root, base string) []st
 	return []string{"+refs/heads/" + base + ":refs/remotes/origin/" + base}
 }
 
+// BaseFetched returns when origin's copy of base ("origin/main") was last
+// updated, from its reflog, in unix seconds; 0 when base isn't origin's or
+// there's no reflog.
+func BaseFetched(ctx context.Context, cmd moexec.Commander, root, base string) int64 {
+	if !strings.HasPrefix(base, "origin/") {
+		return 0
+	}
+	line := gitLine(ctx, cmd, root, "reflog", "--date=unix", "-n1", "refs/remotes/"+base, "--")
+	_, rest, ok := strings.Cut(line, "@{")
+	if !ok {
+		return 0
+	}
+	stamp, _, _ := strings.Cut(rest, "}")
+	t, _ := strconv.ParseInt(stamp, 10, 64)
+	return t
+}
+
+// FetchBase updates origin's copy of base ("origin/main") in the repo at
+// root, and nothing else.
+func FetchBase(ctx context.Context, cmd moexec.Commander, root, base string) error {
+	branch, ok := strings.CutPrefix(base, "origin/")
+	if !ok {
+		return fmt.Errorf("%s isn't a branch of origin", base)
+	}
+	specs := baseSpec(ctx, cmd, root, branch)
+	if specs == nil {
+		return ErrBadBranch
+	}
+	_, stderr, err := cmd.Output(ctx, root, "git", append([]string{"fetch", "--quiet", "--no-tags", "origin"}, specs...)...)
+	if err != nil {
+		return fmt.Errorf("git fetch: %s", strings.TrimSpace(string(stderr)))
+	}
+	return nil
+}
+
 // ErrBadBranch is returned for a name that isn't a valid branch name.
 var ErrBadBranch = errors.New("not a valid branch name")
 
@@ -414,13 +455,23 @@ func Classify(p, status string, lines int, wsOnly bool, header []byte) Kind {
 }
 
 func isTestPath(base, dirs string) bool {
-	for _, d := range []string{"/test/", "/tests/", "/spec/", "/__tests__/", "/testdata/"} {
+	// Test dirs, including Gradle's src/test and src/androidTest and
+	// SwiftPM/Xcode's Tests (and FooTests/FooUITests targets).
+	for _, d := range []string{"/test/", "/tests/", "/spec/", "/__tests__/", "/testdata/", "/androidTest/", "/Tests/"} {
 		if strings.Contains(dirs, d) {
 			return true
 		}
 	}
+	for _, seg := range strings.Split(strings.Trim(dirs, "/"), "/") {
+		if strings.HasSuffix(seg, "Tests") && len(seg) > len("Tests") && seg[0] >= 'A' && seg[0] <= 'Z' {
+			return true
+		}
+	}
 	if strings.HasSuffix(base, "_test.go") || strings.HasSuffix(base, "_spec.rb") || strings.HasSuffix(base, "_test.rb") ||
-		strings.HasSuffix(base, "_test.py") || (strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py")) {
+		strings.HasSuffix(base, "_test.py") || (strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py")) ||
+		base == "conftest.py" ||
+		strings.HasSuffix(base, "Tests.swift") || strings.HasSuffix(base, "Test.swift") ||
+		strings.HasSuffix(base, "Test.kt") || strings.HasSuffix(base, "Tests.kt") || strings.HasSuffix(base, "Test.java") {
 		return true
 	}
 	// foo.test.js, foo.spec.tsx, …

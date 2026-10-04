@@ -169,3 +169,21 @@ func TestArchitectureRejects(t *testing.T) {
 		t.Errorf("not a repo: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// Fetch updates the overview's base and drops the cached overviews.
+func TestFetchBase(t *testing.T) {
+	srv, git := filesFixture(t)
+	o := branchOverview()
+	o.Base = "origin/main"
+	git.EXPECT().Overview("/ws/foo/sub", gitfiles.ModeBranch).Return(o, nil).Times(2) // re-read after the fetch
+	git.EXPECT().FetchBase("/ws/foo", "origin/main").Return(nil)
+	if rec := post(t, srv, "/api/sessions/@5/fetch-base", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(t, srv, "/api/sessions/@5/overview"); rec.Code != http.StatusOK {
+		t.Errorf("overview after fetch: %d", rec.Code)
+	}
+	if rec := post(t, srv, "/api/sessions/@6/fetch-base", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("ended window: %d", rec.Code)
+	}
+}

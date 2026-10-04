@@ -136,6 +136,9 @@ type GitFiles interface {
 	ResolvePR(root string, n int, base string) (string, error)
 	OverviewAt(root, branch, head, base string) (*gitfiles.Overview, error)
 	TreeAt(root, head string) ([]string, error)
+	// FetchBase updates origin's copy of an overview's base ("origin/main"):
+	// the Overview's "Fetch" when that copy is old.
+	FetchBase(root, base string) error
 }
 
 // ChangeAnalyzer works out a change's architecture delta (package imports
@@ -393,8 +396,13 @@ type realAnalyzer struct{ cmd moexec.Commander }
 
 func NewChangeAnalyzer(cmd moexec.Commander) ChangeAnalyzer { return realAnalyzer{cmd: cmd} }
 
+// analysisTimeout bounds one architecture analysis: it reads every changed
+// file and the unchanged files of the units they touch (cached by blob
+// after the first time).
+const analysisTimeout = 30 * time.Second
+
 func (a realAnalyzer) Analyze(o *gitfiles.Overview) (*review.Analysis, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), analysisTimeout)
 	defer cancel()
 	return review.Analyze(ctx, a.cmd, o)
 }
@@ -502,6 +510,12 @@ func (g realGitFiles) OverviewAt(root, branch, head, base string) (*gitfiles.Ove
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.GetOverviewAt(ctx, g.cmd, root, branch, head, base)
+}
+
+func (g realGitFiles) FetchBase(root, base string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+	return gitfiles.FetchBase(ctx, g.cmd, root, base)
 }
 
 func (g realGitFiles) TreeAt(root, head string) ([]string, error) {

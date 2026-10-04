@@ -159,7 +159,7 @@ func TestAnalyzeArchitecture(t *testing.T) {
 	if a.Module != "example.com/m" {
 		t.Errorf("module %q", a.Module)
 	}
-	wantPkgs := []Package{{"a", "changed"}, {"cmd/mo", "changed"}, {"d", "changed"}, {"e", "added"}, {"f", "removed"}}
+	wantPkgs := []Package{{"a", "changed", "go"}, {"cmd/mo", "changed", "go"}, {"d", "changed", "go"}, {"e", "added", "go"}, {"f", "removed", "go"}}
 	if !reflect.DeepEqual(a.Packages, wantPkgs) {
 		t.Errorf("packages %+v, want %+v", a.Packages, wantPkgs)
 	}
@@ -274,7 +274,7 @@ func TestRuleCheck(t *testing.T) {
 		{"internal/webby", "internal/status", ""},                     // a prefix is a path, not a string prefix
 	}
 	for _, c := range cases {
-		if got := rs.check(c.from, c.to); got != c.want {
+		if got := rs.check(c.from, c.to, "go"); got != c.want {
 			t.Errorf("check(%s, %s) = %q, want %q", c.from, c.to, got, c.want)
 		}
 	}
@@ -399,5 +399,145 @@ func TestAnalyzeHeadCommit(t *testing.T) {
 	}
 	if got := changeKeys(a.Surface.Env); !reflect.DeepEqual(got, []string{"+NEW_TOKEN"}) {
 		t.Errorf("env %v", got)
+	}
+}
+
+func TestRuleGlobs(t *testing.T) {
+	rs := &ruleSet{layers: []layer{
+		{Name: "model", Paths: []string{"*/model"}, Deny: []string{"*/ui", "*/data"}},
+		{Name: "app model", Paths: []string{"app/model"}, Deny: []string{"app/ui"}},
+	}}
+	cases := []struct{ from, to, want string }{
+		{"core/model", "core/ui", "model must not import core/ui"},
+		{"core/model/sub", "feature/data/remote", "model must not import feature/data/remote"},
+		{"core/model", "core/util", ""},
+		{"app/model", "app/data", ""}, // the literal layer is more specific than "*/model"
+		{"app/model", "app/ui", "app model must not import app/ui"},
+		{"model", "ui", ""}, // "*/model" needs two segments
+	}
+	for _, c := range cases {
+		if got := rs.check(c.from, c.to, "go"); got != c.want {
+			t.Errorf("check(%s, %s) = %q, want %q", c.from, c.to, got, c.want)
+		}
+	}
+}
+
+// Presets apply on their own when their stack is detected, unless the rules
+// file says which (or none); the repo's own layers win over a preset's.
+func TestPresets(t *testing.T) {
+	presets["test-stack"] = preset{
+		detect: func(idx *index) bool { return idx.has("go.mod") },
+		layers: []layer{{Name: "core", Paths: []string{"a"}, Deny: []string{"c"}}},
+	}
+	defer delete(presets, "test-stack")
+	dir := moduleRepo(t)
+
+	// No rules file: detected.
+	write(t, dir, ".unky-mo/architecture.toml", "")
+	a := analyze(t, dir)
+	if !a.Rules.AutoPresets || strings.Join(a.Rules.Presets, ",") != "test-stack" || a.Violations != 1 {
+		t.Errorf("auto: %+v, violations %d", a.Rules, a.Violations)
+	}
+	for _, e := range a.Edges {
+		if e.From == "a" && e.To == "c" && e.Violation != "test-stack: core must not import c" {
+			t.Errorf("a>c: %+v", e)
+		}
+	}
+
+	// presets = [] turns them off.
+	write(t, dir, ".unky-mo/architecture.toml", "presets = []\n")
+	if a := analyze(t, dir); len(a.Rules.Presets) != 0 || a.Violations != 0 {
+		t.Errorf("off: %+v, violations %d", a.Rules, a.Violations)
+	}
+
+	// The repo's own layer for the same path wins over the preset's.
+	write(t, dir, ".unky-mo/architecture.toml", "presets = [\"test-stack\"]\n[[layer]]\nname = \"mine\"\npaths = [\"a\"]\nallow = [\"b\", \"c\"]\n")
+	if a := analyze(t, dir); a.Rules.AutoPresets || a.Violations != 0 || a.Rules.Layers != 1 {
+		t.Errorf("own layer: %+v, violations %d", a.Rules, a.Violations)
+	}
+
+	// An unknown preset is reported.
+	write(t, dir, ".unky-mo/architecture.toml", "presets = [\"nope\"]\n")
+	if a := analyze(t, dir); !strings.Contains(a.Rules.Error, `unknown preset "nope"`) {
+		t.Errorf("unknown: %+v", a.Rules)
+	}
+}
+
+// An unchanged file's references are cached by blob id: a second analysis
+// doesn't parse it again.
+func TestSymbolCache(t *testing.T) {
+	dir := moduleRepo(t)
+	analyze(t, dir)
+	n := 0
+	idx := newIndex(&repo{ctx: context.Background(), cmd: moexec.DefaultCommander, root: dir})
+	v := idx.symbols("refs:go\x00example.com/m", "d/d2.go", func(string) any { n++; return nil })
+	if n != 0 || v == nil {
+		t.Errorf("d/d2.go's refs weren't cached (parsed %d times, got %v)", n, v)
+	}
+}
+
+func TestDraftRules(t *testing.T) {
+	presets["test-stack"] = preset{detect: func(idx *index) bool { return idx.has("go.mod") }}
+	defer delete(presets, "test-stack")
+	dir := moduleRepo(t)
+	text, err := DraftRules(context.Background(), moexec.DefaultCommander, dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# presets = [\"test-stack\"]", "detected for this repo: test-stack", "#   a -> b, c", "#   e -> a"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("draft lacks %q:\n%s", want, text)
+		}
+	}
+	// a_test.go's import of d is a test import: not listed.
+	if strings.Contains(text, "a -> b, c, d") {
+		t.Errorf("test import listed:\n%s", text)
+	}
+	// The draft parses as a rules file.
+	var doc struct {
+		Presets *[]string `toml:"presets"`
+		Layer   []layer   `toml:"layer"`
+	}
+	if _, msg := decodeRules(text, &doc); msg != "" {
+		t.Errorf("draft doesn't parse: %s", msg)
+	}
+	if text, err := DraftRules(context.Background(), moexec.DefaultCommander, dir, []string{}); err != nil || !strings.Contains(text, "\npresets = []\n") {
+		t.Errorf("chosen none: %v\n%s", err, text)
+	}
+	if _, err := DraftRules(context.Background(), moexec.DefaultCommander, dir, []string{"nope"}); err == nil {
+		t.Error("unknown preset accepted")
+	}
+}
+
+func TestDoubleStarGlob(t *testing.T) {
+	for _, c := range []struct {
+		p, pat string
+		want   bool
+	}{
+		{"app/src/main/kotlin/org/moma/data", "**/data", true},
+		{"app/src/main/kotlin/org/moma/data/remote", "**/data", true},
+		{"app/src/main/kotlin/org/moma/database", "**/data", false},
+		{"data", "**/data", true},
+		{"core/data/src/main/kotlin/x/ui", "core/**/ui", true},
+		{"feature/ui", "core/**/ui", false},
+	} {
+		if got := under(c.p, c.pat); got != c.want {
+			t.Errorf("under(%s, %s) = %v", c.p, c.pat, got)
+		}
+	}
+}
+
+// An analysis that runs out of time says so instead of returning what it
+// managed to read.
+func TestAnalyzeTimeout(t *testing.T) {
+	dir := moduleRepo(t)
+	o, err := gitfiles.GetOverview(context.Background(), moexec.DefaultCommander, dir, gitfiles.ModeBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if a, err := Analyze(ctx, moexec.DefaultCommander, o); err == nil {
+		t.Errorf("got %+v, want a timeout error", a)
 	}
 }

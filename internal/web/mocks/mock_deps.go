@@ -650,6 +650,20 @@ func (mr *MockGitFilesMockRecorder) CommitFile(root, hash, path any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitFile", reflect.TypeOf((*MockGitFiles)(nil).CommitFile), root, hash, path)
 }
 
+// FetchBase mocks base method.
+func (m *MockGitFiles) FetchBase(root, base string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchBase", root, base)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FetchBase indicates an expected call of FetchBase.
+func (mr *MockGitFilesMockRecorder) FetchBase(root, base any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchBase", reflect.TypeOf((*MockGitFiles)(nil).FetchBase), root, base)
+}
+
 // Log mocks base method.
 func (m *MockGitFiles) Log(dir, scope string) (*gitfiles.Log, error) {
 	m.ctrl.T.Helper()

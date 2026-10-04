@@ -8,6 +8,7 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -46,6 +47,9 @@ type Surface struct {
 	Env        []Change `json:"env"`
 	Deps       []Change `json:"deps"`
 	Migrations []Change `json:"migrations"`
+	// Permissions: Android manifest permissions and exported components,
+	// iOS privacy usage keys and entitlements.
+	Permissions []Change `json:"permissions"`
 }
 
 // EdgeFile is a file (current path) that adds or drops an import, at the
@@ -67,34 +71,53 @@ type Edge struct {
 	Files     []EdgeFile `json:"files,omitempty"`
 	Violation string     `json:"violation,omitempty"`
 	Fixed     string     `json:"fixed,omitempty"`
+	Lang      string     `json:"lang,omitempty"`
+	Approx    bool       `json:"approx,omitempty"` // inferred from names, not an import
 }
 
-// Package is a Go package the change touches: "added" (all its files are
-// new), "removed" (all deleted) or "changed".
+// Package is a unit the change touches (a Go package, a Rails layer, …):
+// "added" (all its files are new), "removed" (all deleted) or "changed".
+// Lang is the language that analyzed it.
 type Package struct {
 	Path   string `json:"path"`
 	Status string `json:"status"`
+	Lang   string `json:"lang"`
 }
 
-// Rules describes the repo's layer rules file: whether it exists, and why
-// it couldn't be used if it's broken.
+// LangInfo is a language found in the repo: whether its references are
+// exact (imports) or inferred from names, and how many units it touched.
+type LangInfo struct {
+	Name  string `json:"name"`
+	Exact bool   `json:"exact"`
+	Units int    `json:"units"`
+}
+
+// Rules describes the rules that applied: the repo's rules file (whether it
+// exists, why it couldn't be used if it's broken) and the presets.
 type Rules struct {
 	Path   string `json:"path"`
 	Found  bool   `json:"found"`
 	Error  string `json:"error,omitempty"`
-	Layers int    `json:"layers"`
+	Layers int    `json:"layers"` // the file's own layers
+	// Presets are the built-in rule sets that applied: chosen by the file's
+	// presets = [...], or (AutoPresets) by detecting the stack.
+	Presets     []string `json:"presets"`
+	AutoPresets bool     `json:"autoPresets,omitempty"`
 }
 
 // Analysis is the architecture delta and contract surface of a change.
 type Analysis struct {
-	Module     string    `json:"module,omitempty"`
-	Packages   []Package `json:"packages"`
-	Edges      []Edge    `json:"edges"`
-	Existing   []Edge    `json:"existing"`
-	Violations int       `json:"violations"`
-	Rules      Rules     `json:"rules"`
-	Surface    Surface   `json:"surface"`
-	Truncated  bool      `json:"truncated,omitempty"`
+	Module   string    `json:"module,omitempty"`
+	Packages []Package `json:"packages"`
+	// Labels are short display names for units with long paths.
+	Labels     map[string]string `json:"labels,omitempty"`
+	Languages  []LangInfo        `json:"languages"`
+	Edges      []Edge            `json:"edges"`
+	Existing   []Edge            `json:"existing"`
+	Violations int               `json:"violations"`
+	Rules      Rules             `json:"rules"`
+	Surface    Surface           `json:"surface"`
+	Truncated  bool              `json:"truncated,omitempty"`
 }
 
 // file is one changed file with its two versions' text (nil where that
@@ -112,16 +135,29 @@ func (f *file) oldPath() string {
 	return f.Path
 }
 
+// manifests are the dependency and config files the surface reads.
+var manifests = map[string]bool{
+	"go.mod": true, "package.json": true, "Gemfile": true, "Gemfile.lock": true, "pyproject.toml": true,
+	"AndroidManifest.xml": true, "build.gradle": true, "build.gradle.kts": true, "libs.versions.toml": true,
+	"Info.plist": true, "project.yml": true, "Package.swift": true, "Package.resolved": true, "Podfile": true, "project.pbxproj": true,
+}
+
 // analyzed reports whether a changed file's contents matter to the
-// analysis: code and the dependency manifests, not docs or binaries.
+// analysis: code some language reads, and the manifests; not docs or
+// binaries.
 func analyzed(p string) bool {
-	switch path.Base(p) {
-	case "go.mod", "package.json", "Gemfile":
+	if b := path.Base(p); manifests[b] || strings.HasPrefix(b, "requirements") && strings.HasSuffix(b, ".txt") ||
+		strings.HasSuffix(b, ".entitlements") || strings.HasSuffix(b, ".xcconfig") || strings.HasSuffix(b, ".plist") {
 		return true
 	}
+	for _, l := range languages() {
+		if l.owns(p) {
+			return true
+		}
+	}
 	switch path.Ext(p) {
-	case ".go", ".rb", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py":
-		return true
+	case ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py":
+		return true // surface patterns (routes, env) until those languages have analyzers
 	}
 	return false
 }
@@ -161,26 +197,6 @@ func text(c *gitfiles.Content, err error) *string {
 	return &c.Text
 }
 
-// lsFiles lists the checkout's tracked and untracked (not ignored) files,
-// or the head commit's files.
-func (r *repo) lsFiles() []string {
-	if r.head != "" {
-		paths, _ := gitfiles.TreeAt(r.ctx, r.cmd, r.root, r.head)
-		return paths
-	}
-	out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-	if err != nil {
-		return nil
-	}
-	var paths []string
-	for _, p := range strings.Split(string(out), "\x00") {
-		if p != "" {
-			paths = append(paths, p)
-		}
-	}
-	return paths
-}
-
 // inBase reports whether literal occurs anywhere in the base version's
 // tracked files; inWorktree whether it does in the working tree's tracked
 // and untracked files. They tell a name that's new to the repo from one
@@ -207,7 +223,7 @@ func (r *repo) inWorktree(literal string) bool {
 // contract surface.
 func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Analysis, error) {
 	r := &repo{ctx: ctx, cmd: cmd, root: o.Root, rev: o.Rev, head: o.Head}
-	a := &Analysis{Packages: []Package{}, Edges: []Edge{}, Existing: []Edge{}}
+	a := &Analysis{Packages: []Package{}, Languages: []LangInfo{}, Edges: []Edge{}, Existing: []Edge{}}
 
 	var files []*file
 	for _, of := range o.Files {
@@ -228,17 +244,65 @@ func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*
 		files = append(files, f)
 	}
 
-	a.Module = modulePath(r)
-	rules := loadRules(r)
-	a.Rules = rules.info
-	if a.Module != "" {
-		goArchitecture(r, a, files, rules)
+	idx := newIndex(r)
+	var langs []language
+	for _, l := range languages() {
+		if l.detect(idx) {
+			langs = append(langs, l)
+		}
 	}
-	a.Surface = surface(r, a.Module != "", o.Files, files)
+	rules := loadRules(r, idx)
+	a.Rules = rules.info
+	node, kotlin, swift := false, false, false
+	for _, l := range langs {
+		switch l.(type) {
+		case *goLang:
+			a.Module = l.(*goLang).module
+		case *nodeLang:
+			node = true
+		case *ktLang:
+			kotlin = true
+		case *swiftLang:
+			swift = true
+		}
+		n, ne := len(a.Packages), len(a.Edges)+len(a.Existing)
+		edgeDelta(idx, l, a, files, rules)
+		if lb, ok := l.(labeler); ok && len(a.Packages)+len(a.Edges)+len(a.Existing) > n+ne {
+			if a.Labels == nil {
+				a.Labels = map[string]string{}
+			}
+			for _, p := range a.Packages[n:] {
+				a.Labels[p.Path] = lb.label(p.Path)
+			}
+			for _, e := range append(append([]Edge{}, a.Edges...), a.Existing...) {
+				if e.Lang == l.name() {
+					a.Labels[e.From], a.Labels[e.To] = lb.label(e.From), lb.label(e.To)
+				}
+			}
+		}
+		a.Languages = append(a.Languages, LangInfo{Name: l.name(), Exact: l.exact(), Units: len(a.Packages) - n})
+	}
+	a.Surface = surface(r, a.Module != "", isRailsApp(idx), node, o.Files, files)
+	if kotlin {
+		androidSurface(&a.Surface, files)
+	}
+	if swift {
+		iosSurface(&a.Surface, files)
+	}
+	if kotlin || swift {
+		a.Surface.Routes, a.Surface.Deps = sortChanges(a.Surface.Routes), sortChanges(a.Surface.Deps)
+		a.Surface.Migrations = sortChanges(a.Surface.Migrations)
+	}
+	a.Surface.Permissions = sortChanges(a.Surface.Permissions)
 	for _, e := range a.Edges {
 		if e.Violation != "" {
 			a.Violations++
 		}
+	}
+	// Reads that ran out of time failed quietly along the way: a partial
+	// analysis would look complete, so say it isn't.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("analysis didn't finish in time: %w", err)
 	}
 	return a, nil
 }

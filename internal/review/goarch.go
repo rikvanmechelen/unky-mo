@@ -7,7 +7,6 @@ import (
 	"go/printer"
 	"go/token"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -57,159 +56,32 @@ func isGoSource(p string) bool {
 // pkgDir is the package (directory) of a file, "." at the root.
 func pkgDir(p string) string { return path.Dir(p) }
 
-// importSide collects one version's imports of a package's changed files:
-// imported package → the files (and lines) importing it.
-type importSide map[string][]EdgeFile
+// goLang analyzes Go: a unit is a package (directory), a reference an
+// import of another package of the same module. Exact.
+type goLang struct{ module string }
 
-func (s importSide) add(imps []goImport, file string) {
-	for _, imp := range imps {
-		s[imp.to] = append(s[imp.to], EdgeFile{Path: file, Line: imp.line})
-	}
+func (g *goLang) name() string { return "go" }
+func (g *goLang) exact() bool  { return true }
+
+func (g *goLang) detect(idx *index) bool {
+	g.module = modulePath(idx.r)
+	return g.module != ""
 }
 
-// goArchitecture fills in the touched packages and the import edges that
-// appear or disappear. An edge only counts as added (removed) when no
-// unchanged file of the package imports it as well: an import moving
-// between files isn't an architecture change.
-func goArchitecture(r *repo, a *Analysis, files []*file, rules *ruleSet) {
-	before := map[string]importSide{} // package → its changed files' base imports
-	after := map[string]importSide{}
-	changed := map[string]bool{} // paths (old and new) of changed files
-	hasBefore := map[string]bool{}
-	hasAfter := map[string]bool{}
-	unparsed := map[string]bool{} // packages with a file that doesn't parse
-	side := func(m map[string]importSide, dir string) importSide {
-		if m[dir] == nil {
-			m[dir] = importSide{}
-		}
-		return m[dir]
-	}
-	for _, f := range files {
-		changed[f.Path], changed[f.oldPath()] = true, true
-		if f.before != nil && isGoSource(f.oldPath()) {
-			dir := pkgDir(f.oldPath())
-			hasBefore[dir] = true
-			if imps, ok := goImports(*f.before, a.Module); ok {
-				side(before, dir).add(imps, f.Path)
-			} else {
-				unparsed[dir] = true
-			}
-		}
-		if f.after != nil && isGoSource(f.Path) {
-			dir := pkgDir(f.Path)
-			hasAfter[dir] = true
-			if imps, ok := goImports(*f.after, a.Module); ok {
-				side(after, dir).add(imps, f.Path)
-			} else {
-				unparsed[dir] = true
-			}
-		}
-	}
-	touched := map[string]bool{}
-	for d := range hasBefore {
-		touched[d] = true
-	}
-	for d := range hasAfter {
-		touched[d] = true
-	}
-	if len(touched) == 0 {
-		return
-	}
+func (g *goLang) owns(p string) bool   { return strings.HasSuffix(p, ".go") }
+func (g *goLang) unit(p string) string { return pkgDir(p) }
+func (g *goLang) refsKey() string      { return g.module }
 
-	// The unchanged Go files of each touched package, and what they import.
-	unchanged := map[string]importSide{}
-	hasUnchanged := map[string]bool{}
-	for _, p := range r.lsFiles() {
-		dir := pkgDir(p)
-		if !touched[dir] || !isGoSource(p) || changed[p] {
-			continue
-		}
-		hasUnchanged[dir] = true
-		if src := r.readAfter(p); src != nil {
-			if imps, ok := goImports(*src, a.Module); ok {
-				side(unchanged, dir).add(imps, p)
-			}
-		}
+func (g *goLang) refs(_, src string) ([]ref, bool) {
+	imps, ok := goImports(src, g.module)
+	if !ok {
+		return nil, false
 	}
-
-	dirs := make([]string, 0, len(touched))
-	for d := range touched {
-		dirs = append(dirs, d)
+	refs := make([]ref, len(imps))
+	for i, imp := range imps {
+		refs[i] = ref{to: imp.to, line: imp.line}
 	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		status := "changed"
-		switch {
-		case !hasBefore[dir] && !hasUnchanged[dir]:
-			status = "added"
-		case !hasAfter[dir] && !hasUnchanged[dir]:
-			status = "removed"
-		}
-		a.Packages = append(a.Packages, Package{Path: dir, Status: status})
-		if unparsed[dir] {
-			continue // a file mid-edit would show its imports as all removed
-		}
-		b, af, u := before[dir], after[dir], unchanged[dir]
-		for _, to := range sortedKeys(af) {
-			if to == dir {
-				continue
-			}
-			if _, had := b[to]; had {
-				continue
-			}
-			if _, kept := u[to]; kept {
-				continue
-			}
-			e := Edge{From: dir, To: to, Op: OpAdded, Files: af[to]}
-			e.Violation = rules.check(dir, to)
-			a.Edges = append(a.Edges, e)
-		}
-		for _, to := range sortedKeys(b) {
-			if to == dir {
-				continue
-			}
-			if _, has := af[to]; has {
-				continue
-			}
-			if _, kept := u[to]; kept {
-				continue
-			}
-			e := Edge{From: dir, To: to, Op: OpRemoved, Files: b[to]}
-			e.Fixed = rules.check(dir, to)
-			a.Edges = append(a.Edges, e)
-		}
-		// Everything else the package imports now, for context.
-		if status == "removed" {
-			continue
-		}
-		now := map[string]bool{}
-		for to := range af {
-			now[to] = true
-		}
-		for to := range u {
-			now[to] = true
-		}
-		for _, to := range sortedKeys(now) {
-			if to == dir {
-				continue
-			}
-			if _, had := b[to]; !had {
-				if _, kept := u[to]; !kept {
-					continue // added: already in Edges
-				}
-			}
-			a.Existing = append(a.Existing, Edge{From: dir, To: to})
-		}
-	}
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return refs, true
 }
 
 // goDecl is one exported top-level declaration: its signature (types only,

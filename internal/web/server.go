@@ -108,6 +108,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/overview", s.handleOverview)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/architecture", s.handleArchitecture)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/scope", s.handleScope)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/fetch-base", s.handleFetchBase)
 	// The reviewer view: a branch, or a pull request (resolved by number).
 	for _, prefix := range []string{"/api/projects/{name}/branches/{branch}", "/api/projects/{name}/pulls/{pr}"} {
 		s.mux.HandleFunc("GET "+prefix+"/overview", s.handleBranchOverview)
@@ -116,6 +117,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("PUT "+prefix+"/file", s.handleBranchSaveFile)
 		s.mux.HandleFunc("GET "+prefix+"/tree", s.handleBranchTree)
 		s.mux.HandleFunc("POST "+prefix+"/scope", s.handleBranchScope)
+		s.mux.HandleFunc("POST "+prefix+"/fetch-base", s.handleBranchFetchBase)
 	}
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}", s.handleCommit)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}/file", s.handleCommitFile)

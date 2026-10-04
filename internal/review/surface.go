@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/rvanmech/unky-mo/internal/gitfiles"
 )
 
@@ -36,6 +37,8 @@ func ext(exts ...string) func(string) bool {
 }
 
 var (
+	pyFile   = ext(".py")
+	isURLsPy = func(p string) bool { return path.Base(p) == "urls.py" }
 	goFile   = ext(".go")
 	jsFile   = ext(".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 	isRoutes = func(p string) bool { return p == "config/routes.rb" || strings.HasSuffix(p, "/config/routes.rb") }
@@ -48,6 +51,13 @@ var routePatterns = []pattern{
 	{re: regexp.MustCompile("\\b(?:app|router)\\.(get|post|put|patch|delete|all)\\(\\s*['\"`](/[^'\"`]*)['\"`]"), ok: jsFile,
 		name: func(m []string) string { return strings.ToUpper(m[1]) + " " + m[2] }},
 	// Rails routes.rb: one route per line.
+	// Flask @app.route("/x"); FastAPI @app.get("/x"), @router.post("/x").
+	{re: regexp.MustCompile(`@\w+\.route\(\s*["']([^"']+)["']`), ok: pyFile},
+	{re: regexp.MustCompile(`@\w+\.(get|post|put|patch|delete)\(\s*["']([^"']*)["']`), ok: pyFile,
+		name: func(m []string) string { return strings.ToUpper(m[1]) + " " + m[2] }},
+	// Django path("x/", …) and re_path(r"^x/$", …) in urls.py.
+	{re: regexp.MustCompile(`\b(?:re_)?path\(\s*r?["']([^"']*)["']`), ok: isURLsPy,
+		name: func(m []string) string { return "/" + m[1] }},
 	// A trailing comment needs a space before its "#": 'health#show' isn't one.
 	{re: regexp.MustCompile(`(?m)^[ \t]*((?:get|post|put|patch|delete|match|root|resources?|namespace|scope|mount)\b.*?)(?:[ \t]+#.*)?[ \t]*$`), ok: isRoutes},
 }
@@ -55,6 +65,10 @@ var routePatterns = []pattern{
 var flagPatterns = []pattern{
 	// cobra/pflag: Flags().String("name", …), Flags().BoolVarP(&v, "name", …).
 	{re: regexp.MustCompile(`Flags\(\)\.\w+\(\s*(?:&[\w.\[\]]+\s*,\s*)?"([\w-]+)"`), ok: goFile},
+	// argparse add_argument("--x"), click @click.option("--x"), typer.Option(…, "--x").
+	{re: regexp.MustCompile(`\badd_argument\(\s*["'](-{1,2}[\w-]+)["']`), ok: pyFile},
+	{re: regexp.MustCompile(`@click\.option\(\s*["'](-{1,2}[\w-]+)["']`), ok: pyFile},
+	{re: regexp.MustCompile(`typer\.Option\([^)]*?["'](--[\w-]+)["']`), ok: pyFile},
 }
 
 var configPatterns = []pattern{
@@ -65,6 +79,7 @@ var envPatterns = []pattern{
 	{re: regexp.MustCompile(`os\.(?:Getenv|LookupEnv)\("(\w+)"\)`), ok: goFile},
 	{re: regexp.MustCompile(`ENV(?:\.fetch\(\s*|\[\s*)["'](\w+)["']`), ok: ext(".rb")},
 	{re: regexp.MustCompile(`process\.env(?:\.(\w+)|\[\s*["'](\w+)["']\s*\])`), ok: jsFile},
+	{re: regexp.MustCompile(`import\.meta\.env\.(\w+)`), ok: jsFile},
 	{re: regexp.MustCompile(`os\.(?:getenv\(|environ\.get\(|environ\[)\s*["'](\w+)["']`), ok: ext(".py")},
 }
 
@@ -205,7 +220,7 @@ func isMigration(p string) bool {
 		return true
 	}
 	dirs := "/" + path.Dir(p) + "/"
-	return strings.Contains(dirs, "/db/migrate/") || strings.Contains(dirs, "/migrations/")
+	return strings.Contains(dirs, "/db/migrate/") || strings.Contains(dirs, "/migrations/") || strings.Contains(dirs, "/alembic/versions/")
 }
 
 func migrations(all []gitfiles.OverviewFile) []Change {
@@ -231,6 +246,9 @@ func deps(files []*file) []Change {
 	var out []Change
 	for _, f := range files {
 		var parse func(string) map[string]depEntry
+		if b := path.Base(f.Path); strings.HasPrefix(b, "requirements") && strings.HasSuffix(b, ".txt") {
+			parse = requirementsDeps
+		}
 		switch path.Base(f.Path) {
 		case "go.mod":
 			parse = goModRequires
@@ -238,8 +256,12 @@ func deps(files []*file) []Change {
 			parse = packageJSONDeps
 		case "Gemfile":
 			parse = gemfileGems
+		case "pyproject.toml":
+			parse = pyprojectDeps
 		default:
-			continue
+			if parse == nil {
+				continue
+			}
 		}
 		before, after := map[string]depEntry{}, map[string]depEntry{}
 		if f.before != nil {
@@ -307,6 +329,74 @@ func goModRequires(src string) map[string]depEntry {
 	return out
 }
 
+// pyDepRe reads a PEP 508 requirement's name and version spec.
+var pyDepRe = regexp.MustCompile(`^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*([^;#]*)`)
+
+func pyRequirement(s string, line int, out map[string]depEntry) {
+	if m := pyDepRe.FindStringSubmatch(s); m != nil && !strings.HasPrefix(strings.TrimSpace(s), "-") {
+		out[strings.ToLower(m[1])] = depEntry{version: strings.TrimSpace(m[2]), line: line}
+	}
+}
+
+// requirementsDeps parses a requirements*.txt.
+func requirementsDeps(src string) map[string]depEntry {
+	out := map[string]depEntry{}
+	for i, line := range strings.Split(src, "\n") {
+		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
+			pyRequirement(t, i+1, out)
+		}
+	}
+	return out
+}
+
+// pyprojectDeps reads pyproject.toml's [project] dependencies and
+// optional groups, and Poetry's dependency tables.
+func pyprojectDeps(src string) map[string]depEntry {
+	out := map[string]depEntry{}
+	var doc struct {
+		Project struct {
+			Dependencies []string            `toml:"dependencies"`
+			Optional     map[string][]string `toml:"optional-dependencies"`
+		} `toml:"project"`
+		Tool struct {
+			Poetry struct {
+				Dependencies    map[string]any `toml:"dependencies"`
+				DevDependencies map[string]any `toml:"dev-dependencies"`
+			} `toml:"poetry"`
+		} `toml:"tool"`
+	}
+	if _, err := toml.Decode(src, &doc); err != nil {
+		return out
+	}
+	lineOf := func(name string) int {
+		if i := strings.Index(src, name); i >= 0 {
+			return 1 + strings.Count(src[:i], "\n")
+		}
+		return 0
+	}
+	for _, d := range doc.Project.Dependencies {
+		pyRequirement(d, lineOf(d), out)
+	}
+	for group, ds := range doc.Project.Optional {
+		for _, d := range ds {
+			tmp := map[string]depEntry{}
+			pyRequirement(d, lineOf(d), tmp)
+			for k, v := range tmp {
+				v.version = strings.TrimSpace(v.version + " (" + group + ")")
+				out[k] = v
+			}
+		}
+	}
+	for name, v := range doc.Tool.Poetry.Dependencies {
+		if name == "python" {
+			continue
+		}
+		ver, _ := v.(string)
+		out[strings.ToLower(name)] = depEntry{version: ver, line: lineOf(name)}
+	}
+	return out
+}
+
 func packageJSONDeps(src string) map[string]depEntry {
 	var doc map[string]json.RawMessage
 	if json.Unmarshal([]byte(src), &doc) != nil {
@@ -345,8 +435,9 @@ func gemfileGems(src string) map[string]depEntry {
 }
 
 // surface collects every category of contract change. goModule says
-// whether the repo is a Go module (exported API only means something then).
-func surface(r *repo, goModule bool, all []gitfiles.OverviewFile, files []*file) Surface {
+// whether the repo is a Go module (exported API only means something then),
+// rails whether it's a Rails app, node whether it has JS/TS code.
+func surface(r *repo, goModule, rails, node bool, all []gitfiles.OverviewFile, files []*file) Surface {
 	var s Surface
 	if goModule {
 		s.Exports = goExports(files)
@@ -357,6 +448,12 @@ func surface(r *repo, goModule bool, all []gitfiles.OverviewFile, files []*file)
 	s.Env = textChanges(r, files, envPatterns)
 	s.Deps = deps(files)
 	s.Migrations = migrations(all)
+	if rails {
+		railsSurface(r, &s, all, files)
+	}
+	if node {
+		nodeSurface(r, &s, all, files)
+	}
 	s.Exports, s.Routes, s.Flags, s.Config = sortChanges(s.Exports), sortChanges(s.Routes), sortChanges(s.Flags), sortChanges(s.Config)
 	s.Env, s.Deps, s.Migrations = sortChanges(s.Env), sortChanges(s.Deps), sortChanges(s.Migrations)
 	return s

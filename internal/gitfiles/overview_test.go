@@ -35,6 +35,14 @@ func TestClassify(t *testing.T) {
 		{"src/ui/button.spec.js", "M", 10, false, nil, KindTest},
 		{"tests/test_api.py", "M", 10, false, nil, KindTest},
 		{"internal/gitfiles/testdata/x.json", "A", 10, false, nil, KindTest},
+		{"app/src/test/kotlin/me/x/RepoTest.kt", "M", 10, false, nil, KindTest},
+		{"app/src/androidTest/java/me/x/UiCheck.kt", "M", 10, false, nil, KindTest},
+		{"app/src/main/kotlin/me/x/data/Repo.kt", "M", 10, false, nil, KindLogic},
+		{"MoMATests/LoginTests.swift", "M", 10, false, nil, KindTest},
+		{"Packages/Core/Tests/CoreTests/ModelTests.swift", "M", 10, false, nil, KindTest},
+		{"MoMA/Features/Login/LoginView.swift", "M", 10, false, nil, KindLogic},
+		{"tests/conftest.py", "M", 10, false, nil, KindTest},
+		{"pkg/conftest.py", "M", 10, false, nil, KindTest},
 		{"README.md", "M", 3, false, nil, KindDocs},
 		{"docs/plans/x.html", "A", 3, false, nil, KindDocs},
 		{"old.go", "R", 0, false, nil, KindRenamed},
@@ -351,5 +359,45 @@ func TestResolveBranch(t *testing.T) {
 	// A base that isn't a branch name is left out of the fetch.
 	if got, err := ResolvePR(ctx, cmd, dir, 7, "--upload-pack=x"); err != nil || got != head {
 		t.Errorf("bad base: %q, %v", got, err)
+	}
+}
+
+// BaseFetched reads when origin's copy of the base was last updated;
+// FetchBase updates it.
+func TestBaseFetched(t *testing.T) {
+	dir := otherBranch(t)
+	ctx, cmd := context.Background(), moexec.DefaultCommander
+	remote := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("init bare: %v\n%s", err, out)
+	}
+	run(t, dir, "remote", "add", "origin", remote)
+	run(t, dir, "push", "-q", "origin", "main", "other")
+	run(t, dir, "fetch", "-q", "origin")
+	run(t, dir, "remote", "set-head", "origin", "main")
+	if BaseFetched(ctx, cmd, dir, "origin/main") == 0 {
+		t.Error("no fetch time after a fetch")
+	}
+	if BaseFetched(ctx, cmd, dir, "main") != 0 || BaseFetched(ctx, cmd, dir, "origin/nope") != 0 {
+		t.Error("fetch time for a base that isn't origin's")
+	}
+	run(t, dir, "checkout", "-q", "--", "a.go") // the fixture's uncommitted edit
+	run(t, dir, "checkout", "-q", "other")
+	o, err := GetOverview(ctx, cmd, dir, ModeBranch)
+	if err != nil || o.Base != "origin/main" || o.BaseFetched == 0 {
+		t.Errorf("overview base %q fetched %d, %v", o.Base, o.BaseFetched, err)
+	}
+
+	// origin's main moves on; FetchBase brings it in.
+	head := gitOut(t, dir, "rev-parse", "other")
+	run(t, remote, "update-ref", "refs/heads/main", head)
+	if err := FetchBase(ctx, cmd, dir, "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	if gitOut(t, dir, "rev-parse", "origin/main") != head {
+		t.Error("origin/main not updated")
+	}
+	if err := FetchBase(ctx, cmd, dir, "main"); err == nil {
+		t.Error("fetched a base that isn't origin's")
 	}
 }

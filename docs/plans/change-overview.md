@@ -348,7 +348,7 @@ A page `/branch?project=<name>&branch=<branch>[&pr=<n>]` whose API lives under `
 
 ## Later
 
-- Fetch `origin`'s default branch now and then for checkout targets too, or show how old the merge base is.
+- Architecture checks for Rails, Node, Python, Kotlin and Swift, and base freshness: planned in `docs/plans/architecture-languages.md`.
 - A session ↔ ticket link that isn't the branch name (e.g. from the TUI's ticket view).
 - Import graphs for JS/TS (relative imports) and Rails (Packwerk, if the MoMA repos use it).
 - The TUI sidebar showing the strip's count.

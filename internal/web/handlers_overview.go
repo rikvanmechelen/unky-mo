@@ -113,6 +113,42 @@ func (s *Server) serveArchitecture(w http.ResponseWriter, r *http.Request, key s
 	writeHashed(w, r, v.([]byte))
 }
 
+// handleFetchBase updates origin's copy of the session's overview base,
+// for the Overview's "last fetched N days ago · Fetch".
+func (s *Server) handleFetchBase(w http.ResponseWriter, r *http.Request) {
+	windowID := r.PathValue("windowID")
+	dir, ok := s.sessionPath(windowID)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
+		return
+	}
+	o, err := s.overview(dir, gitfiles.ModeBranch)
+	s.fetchBase(w, o, err)
+}
+
+// fetchBase fetches o's base and forgets the overviews computed from the
+// old one.
+func (s *Server) fetchBase(w http.ResponseWriter, o *gitfiles.Overview, err error) {
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	if o.Base == "" {
+		writeError(w, http.StatusConflict, fmt.Errorf("this change has no base branch to fetch"))
+		return
+	}
+	s.fetchMu.Lock()
+	err = s.deps.Git.FetchBase(o.Root, o.Base)
+	s.fetchMu.Unlock()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	s.overviewCache.clear()
+	s.archCache.clear()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // overview reads (through a short cache) the change of the checkout at dir.
 func (s *Server) overview(dir, mode string) (*gitfiles.Overview, error) {
 	v, err := s.overviewCache.get(dir+"\x00"+mode, func() (any, error) { return s.deps.Git.Overview(dir, mode) })

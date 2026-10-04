@@ -315,6 +315,16 @@ func (s *Server) handleBranchSaveFile(w http.ResponseWriter, r *http.Request) {
 	s.saveFile(w, r, t.dir)
 }
 
+func (s *Server) handleBranchFetchBase(w http.ResponseWriter, r *http.Request) {
+	t, status, err := s.resolveBranchTarget(r)
+	if err != nil {
+		writeError(w, status, err)
+		return
+	}
+	o, err := s.targetOverview(t, gitfiles.ModeBranch)
+	s.fetchBase(w, o, err)
+}
+
 func (s *Server) handleBranchTree(w http.ResponseWriter, r *http.Request) {
 	t, status, err := s.resolveBranchTarget(r)
 	if err != nil {

@@ -27,6 +27,14 @@ func newTTLCache(ttl time.Duration) *ttlCache {
 	return &ttlCache{ttl: ttl, now: time.Now, items: map[string]cacheEntry{}}
 }
 
+// clear forgets every entry, e.g. after a fetch moved what they were
+// computed from.
+func (c *ttlCache) clear() {
+	c.mu.Lock()
+	c.items = map[string]cacheEntry{}
+	c.mu.Unlock()
+}
+
 func (c *ttlCache) get(key string, fetch func() (any, error)) (any, error) {
 	c.mu.Lock()
 	entry, ok := c.items[key]
