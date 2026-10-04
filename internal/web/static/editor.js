@@ -158,6 +158,7 @@ function storageSet(key, value) {
 // branch's merge base (opened from the Overview tab). Both are editable on
 // the working-copy side and share all the diff code.
 const isDiffKind = (kind) => kind === "diff" || kind === "bdiff";
+const READ_ONLY_NOTE = "Read-only: this branch isn't checked out, so this is its last commit.";
 const DIFF_REV = { diff: "HEAD", bdiff: "base" };
 const DIFF_BASE_LABEL = { diff: "HEAD", bdiff: "the branch base" };
 
@@ -180,8 +181,11 @@ function clockTime() {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// createEditorTabs builds the tab strip. Without a chatPanel (the reviewer
+// view) there's no Chat tab and the Overview is the home tab.
 function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
-  let windowID = null;
+  let windowID = null; // the target's storage key (a window id, or "branch:…")
+  let api = ""; // the target's API prefix, e.g. /api/sessions/@3
   let available = false;
   // Each tab: {kind ("file"|"diff"|"bdiff"|"commit"), path, key, wrap, host, banner, info,
   // status, saveBtn, view, merge, layout, base, etag, conflict, dirty,
@@ -215,7 +219,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     reviewBtn.textContent = `Review (${n})`;
   }
 
-  const fileURL = () => `/api/sessions/${encodeURIComponent(windowID)}/file`;
+  const fileURL = () => `${api}/file`;
   const draftKey = (tab) => EDITOR_DRAFT_KEY + windowID + "\u0000" + tab.key;
 
   function save() {
@@ -224,7 +228,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
 
   function renderStrip() {
     const items = [
-      { tab: null, label: "Chat", title: "Conversation" },
+      ...(chatPanel ? [{ tab: null, label: "Chat", title: "Conversation" }] : []),
       ...(overview ? [{ tab: null, pinned: "overview", label: "Overview", title: "The shape of this branch's change" }] : []),
       ...tabs.map((t) => ({
         tab: t,
@@ -253,9 +257,10 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   }
 
   function activate(tab) {
+    if (!tab && !chatPanel) { showOverview(); return; }
     active = tab;
     if (overviewShown) { overviewShown = false; overview.setVisible(false); }
-    chatPanel.hidden = !!tab;
+    if (chatPanel) chatPanel.hidden = !!tab;
     editorPanel.hidden = !tab;
     for (const t of tabs) t.wrap.hidden = t !== tab;
     renderStrip();
@@ -269,7 +274,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   function showOverview() {
     active = null;
     overviewShown = true;
-    chatPanel.hidden = true;
+    if (chatPanel) chatPanel.hidden = true;
     editorPanel.hidden = true;
     for (const t of tabs) t.wrap.hidden = true;
     overview.setVisible(true);
@@ -401,11 +406,11 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
       tab.dirty = dirty;
       renderStrip();
     }
-    tab.saveBtn.disabled = !tab.view || tab.deleted || tab.saving || (!dirty && !tab.conflict);
+    tab.saveBtn.disabled = !tab.view || tab.deleted || tab.readOnly || tab.saving || (!dirty && !tab.conflict);
     if (tab.view && !tab.deleted && tab.kind !== "commit") review.sync(tab.view, tab.path);
     if (isDiffKind(tab.kind) && tab.view && !tab.deleted && !tab.mixedEol) {
       const c = CM.getChunks(tab.view.state);
-      setInfo(tab, c && !c.chunks.length ? `No changes against ${DIFF_BASE_LABEL[tab.kind]}.` : "");
+      setInfo(tab, c && !c.chunks.length ? `No changes against ${DIFF_BASE_LABEL[tab.kind]}.` : tab.readOnly ? READ_ONLY_NOTE : "");
     }
     if (statusText !== undefined) tab.status.textContent = statusText;
     else if (tab.view && !tab.saving) tab.status.textContent = dirty ? "Modified" : tab.status.textContent === "Modified" ? "" : tab.status.textContent;
@@ -499,7 +504,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
         parent: tab.host,
         a: { doc: original, extensions: [...readOnlyExtensions(tab.path), CM.EditorState.readOnly.of(true)] },
         b: { doc, extensions: exts },
-        ...(tab.deleted ? {} : { revertControls: "a-to-b", renderRevertControl: () => revertButton("⟵") }),
+        ...(tab.deleted || tab.readOnly ? {} : { revertControls: "a-to-b", renderRevertControl: () => revertButton("⟵") }),
         collapseUnchanged: collapse,
       });
       tab.view = tab.merge.b;
@@ -511,7 +516,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
           extensions: [...exts, CM.unifiedMergeView({
             original,
             // Only "Revert": accepting would mean changing HEAD.
-            mergeControls: tab.deleted ? false : (type, action) => {
+            mergeControls: tab.deleted || tab.readOnly ? false : (type, action) => {
               if (type !== "reject") return el("span", { hidden: "" });
               const b = revertButton("Revert");
               b.addEventListener("mousedown", action);
@@ -549,7 +554,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   function tabExtensions(tab) {
     const exts = editorExtensions(tab.path, { onSave: () => saveTab(tab), onChange: () => updateState(tab) });
     if (tab.deleted) return [...exts, CM.EditorState.readOnly.of(true)];
-    return [...exts, ...review.extension(tab.path), ...(tab.mixedEol ? [CM.EditorState.readOnly.of(true)] : [])];
+    return [...exts, ...review.extension(tab.path), ...(tab.mixedEol || tab.readOnly ? [CM.EditorState.readOnly.of(true)] : [])];
   }
 
   // viewReady runs once a tab has a (new) editor: show its comments and
@@ -590,7 +595,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     const g = gen;
     tab.loading = true;
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/commits/${tab.hash}/file?path=${encodeURIComponent(tab.path)}`);
+      const res = await fetch(`${api}/commits/${tab.hash}/file?path=${encodeURIComponent(tab.path)}`);
       const data = await res.json().catch(() => ({}));
       if (g !== gen || !tabs.includes(tab)) return;
       if (!res.ok) {
@@ -662,6 +667,11 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
       const r = await fetchVersion(tab, "", tab.etag);
       if (g !== gen || !tabs.includes(tab) || tab.saving || tab.saveSeq !== seq || !r) return;
       const { data } = r;
+      // A branch that isn't checked out: its files come from a commit.
+      if (!!data.readOnly !== !!tab.readOnly) {
+        tab.readOnly = !!data.readOnly;
+        if (tab.view) { destroyView(tab); tab.host.replaceChildren(); }
+      }
       if (!r.ok) {
         if (tab.dirty) return; // keep the edits; the save will report the problem
         showNote(tab, r.status === 404 ? "This file isn't part of the checkout (or is ignored by git)." : `Couldn't open the file: ${data.error || r.status}`);
@@ -714,7 +724,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     const eol = eolOf(data.text);
     tab.eol = eol || "\n";
     tab.mixedEol = !eol;
-    setInfo(tab, tab.mixedEol ? "Mixed line endings — read-only here, so saving can't rewrite them." : "");
+    setInfo(tab, tab.mixedEol ? "Mixed line endings — read-only here, so saving can't rewrite them."
+      : tab.readOnly ? READ_ONLY_NOTE : "");
     const doc = draft && typeof draft.text === "string" && !tab.mixedEol ? draft.text : text;
     tab.base = { text, hash: data.hash };
     tab.etag = `"${data.hash}"`;
@@ -739,7 +750,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   async function saveTab(tab, baseHash) {
     if (!tab.view || tab.saving || tab.deleted || tab.kind === "commit" || !windowID) return;
     if (!tab.dirty && !tab.conflict) return;
-    if (tab.mixedEol) return;
+    if (tab.mixedEol || tab.readOnly) return;
     const g = gen;
     const key = draftKey(tab); // the window may change while the save is out
     const text = docText(tab);
@@ -797,13 +808,15 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   const rvList = el("div", { class: "review-dialog__list" });
   const rvError = el("div", { class: "review-dialog__error" });
   const rvSend = el("button", { class: "btn btn--primary", type: "button", text: "Send to Claude" });
+  // Copy is for pasting the review elsewhere, e.g. a GitHub PR review.
+  const rvCopy = el("button", { class: "btn", type: "button", text: "Copy" });
   const rvDiscard = el("button", { class: "btn btn--danger", type: "button", text: "Discard all" });
   const rvClose = el("button", { class: "btn", type: "button", text: "Close" });
   const rvDialog = el("dialog", { class: "dialog review-dialog", "aria-label": "Review" }, [
     el("div", { class: "dialog__title", text: "Review for Claude" }),
     el("div", { class: "dialog__text", text: "These comments are sent as one message. Claude sees each file and line, the line's text, and your comment." }),
     rvList, rvError,
-    el("div", { class: "dialog__actions" }, [rvDiscard, el("span", { class: "review-dialog__spacer" }), rvClose, rvSend]),
+    el("div", { class: "dialog__actions" }, [rvDiscard, el("span", { class: "review-dialog__spacer" }), rvClose, rvCopy, rvSend]),
   ]);
   document.body.appendChild(rvDialog);
 
@@ -825,11 +838,20 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
 
   reviewBtn.addEventListener("click", () => {
     rvError.textContent = "";
+    rvSend.hidden = !review.canSend();
     rvSend.disabled = !available;
     renderReviewList();
     rvDialog.showModal();
   });
   rvClose.addEventListener("click", () => rvDialog.close());
+  rvCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(review.preview());
+      rvError.textContent = "Copied.";
+    } catch (e) {
+      rvError.textContent = `Couldn't copy: ${e.message}`;
+    }
+  });
   rvDiscard.addEventListener("click", async () => {
     const ok = await showDialog({ title: "Discard all comments?", text: "This removes every comment in this review.", actions: [{ label: "Cancel" }, { label: "Discard all", value: true, danger: true }] });
     if (ok) { review.clear(); rvDialog.close(); }
@@ -886,7 +908,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     qoDialog.showModal();
     qoInput.focus();
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/tree`);
+      const res = await fetch(`${api}/tree`);
       const data = await res.json();
       qoPaths = data.paths || [];
     } catch (_) {
@@ -953,19 +975,27 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     showOverview,
     // setWindow restores the window's remembered tabs; files load lazily
     // when their tab is shown, and unsaved edits come back from drafts.
+    // setWindow shows a chat window's tabs (files from that session).
     setWindow(id) {
-      if (id === windowID) return;
+      this.setTarget(id ? { key: id, api: `/api/sessions/${encodeURIComponent(id)}` } : { key: null });
+    },
+    // setTarget switches to another target: key names its stored tabs,
+    // drafts and comments, api is its endpoint prefix, and sendTo is the
+    // session window review comments are pasted into (default: key).
+    setTarget({ key: id, api: apiBase = "", sendTo = id }) {
+      if (id === windowID) { review.setSendTo(sendTo); return; }
       flushDrafts();
       gen++;
       for (const t of tabs) { clearTimeout(t.draftTimer); destroyView(t); t.wrap.remove(); }
       tabs = [];
       active = null;
       windowID = id;
+      api = apiBase;
       available = false;
       strip.hidden = !id;
       if (qoDialog.open) qoDialog.close();
       if (rvDialog.open) rvDialog.close();
-      review.setWindow(id);
+      review.setWindow(id, sendTo);
       renderReviewBtn();
       const saved = id ? loadSavedTabs(id) : { tabs: [], active: null };
       for (const t of saved.tabs) tabs.push(newTab(t.kind, t.path, t.hash));

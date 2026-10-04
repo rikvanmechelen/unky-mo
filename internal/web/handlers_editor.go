@@ -35,7 +35,18 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported rev %q", rev))
 		return
 	}
-	root, status, err := s.listedPath(windowID, path)
+	dir, ok := s.sessionPath(windowID)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
+		return
+	}
+	s.serveFile(w, r, dir, path, rev)
+}
+
+// serveFile answers with one file of the checkout containing dir (see
+// handleSessionFile for the path rules and revs).
+func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, dir, path, rev string) {
+	root, status, err := s.listedPath(dir, path)
 	if err != nil {
 		writeError(w, status, err)
 		return
@@ -46,7 +57,6 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 	case "HEAD":
 		c, err = s.deps.Git.ReadHEAD(root, path)
 	case "base":
-		dir, _ := s.sessionPath(windowID)
 		c, err = s.readBase(dir, root, path)
 	default:
 		c, err = s.deps.Git.ReadFile(root, path)
@@ -59,7 +69,18 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
+	writeContent(w, r, c, false)
+}
 
+// fileResponse is one file version for an editor tab. ReadOnly marks a
+// version that can't be saved (a branch that isn't checked out).
+type fileResponse struct {
+	*gitfiles.Content
+	ReadOnly bool `json:"readOnly,omitempty"`
+}
+
+// writeContent answers with a file version, ETag'd by its hash.
+func writeContent(w http.ResponseWriter, r *http.Request, c *gitfiles.Content, readOnly bool) {
 	etag := contentETag(c)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
@@ -67,17 +88,13 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	writeJSON(w, c)
+	writeJSON(w, fileResponse{Content: c, ReadOnly: readOnly})
 }
 
-// listedPath returns the repo root of the live session at windowID if path
-// is one of that checkout's listed files (see handleSessionFile), or the
-// HTTP status and error to answer with.
-func (s *Server) listedPath(windowID, path string) (root string, status int, err error) {
-	dir, ok := s.sessionPath(windowID)
-	if !ok {
-		return "", http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID)
-	}
+// listedPath returns the repo root of the checkout containing dir if path
+// is one of its listed files (see handleSessionFile), or the HTTP status
+// and error to answer with.
+func (s *Server) listedPath(dir, path string) (root string, status int, err error) {
 	v, err := s.treeCache.get(dir, func() (any, error) {
 		root, paths, err := s.deps.Git.Tree(dir)
 		return treeResponse{Repo: true, Root: root, Paths: paths}, err
@@ -135,6 +152,17 @@ const maxSaveBody = 6*gitfiles.MaxContentBytes + 64<<10
 // is what keeps a save from clobbering a concurrent edit.
 func (s *Server) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
+	dir, ok := s.sessionPath(windowID)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
+		return
+	}
+	s.saveFile(w, r, dir)
+}
+
+// saveFile saves an editor tab in the checkout containing dir (see
+// handleSaveFile).
+func (s *Server) saveFile(w http.ResponseWriter, r *http.Request, dir string) {
 	var body struct {
 		Path     string `json:"path"`
 		Text     string `json:"text"`
@@ -153,7 +181,7 @@ func (s *Server) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("path and baseHash are required"))
 		return
 	}
-	root, status, err := s.listedPath(windowID, body.Path)
+	root, status, err := s.listedPath(dir, body.Path)
 	if err != nil {
 		writeError(w, status, err)
 		return

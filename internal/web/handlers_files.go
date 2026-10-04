@@ -52,6 +52,11 @@ func (s *Server) handleSessionTree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
+	s.serveTree(w, dir)
+}
+
+// serveTree answers with the file list of the checkout containing dir.
+func (s *Server) serveTree(w http.ResponseWriter, dir string) {
 	v, err := s.treeCache.get(dir, func() (any, error) {
 		root, paths, err := s.deps.Git.Tree(dir)
 		return treeResponse{Repo: true, Root: root, Paths: paths}, err

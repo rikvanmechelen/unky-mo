@@ -296,8 +296,13 @@ function layoutArchGraph(nodes, edges) {
   return { rows: rows.filter(Boolean), depth };
 }
 
-function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt } = {}) {
-  let windowID = null;
+// createOverview builds the tab in panel. The chat view points it at a
+// session (setWindow); the reviewer view at a branch (setTarget, without a
+// transcript), and learns what the branch resolved to through onTarget.
+function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onTarget } = {}) {
+  let windowID = null; // the target's storage key (a window id, or "branch:…")
+  let api = ""; // its endpoint prefix
+  let withTranscript = true; // false in the reviewer view: no trace, no strip
   let available = false;
   let visible = false;
   let data = null; // the last /overview response
@@ -370,9 +375,9 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const files = data.files || [];
     root.replaceChildren(
       header(),
-      ...(files.length ? [chips(sum), noiseBar(), contracts(), traceBox, body(sum)] : [el("div", { class: "overview__note", text: data.mode === "branch" ? `No changes against ${data.base}.` : "No uncommitted changes." })]),
+      ...(files.length ? [chips(sum), noiseBar(), contracts(), withTranscript ? traceBox : scopeSection(), body(sum)] : [el("div", { class: "overview__note", text: data.mode === "branch" ? `No changes against ${data.base}.` : "No uncommitted changes." })]),
     );
-    if (files.length) { drawTreemap(); renderTrace(); }
+    if (files.length) { drawTreemap(); if (withTranscript) renderTrace(); }
     renderStrip();
   }
 
@@ -380,7 +385,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // change needs attention (an import breaking a layer rule, or a change
   // spread over many areas).
   function renderStrip() {
-    if (!strip) return;
+    if (!strip || !withTranscript) return;
     const parts = [];
     const v = arch?.repo ? arch.violations : 0;
     if (v) parts.push(el("span", { class: "overview-strip__bad", text: v === 1 ? "1 new import breaks a layer rule" : `${v} new imports break a layer rule` }));
@@ -535,15 +540,15 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     if (scopeBusy || !data) return;
     const g = gen, id = windowID, sig = scopeSig(), m = data.mode;
     scopeBusy = true; scopeError = "";
-    renderTrace();
+    if (withTranscript) renderTrace(); else render();
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/scope?base=${m}`, {
+      const res = await fetch(`${api}/scope?base=${m}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket: await ticketFor(ticketKey()), turns: scopeRequest() }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(res.status === 409 ? "A check is already running for this session." : body.error || String(res.status));
-      const saved = { sig, mode: m, at: Date.now(), result: { summary: body.summary, files: body.files || [] }, ticket: body.ticket || null, ticketError: body.ticketError || "" };
+      const saved = { sig, mode: m, at: Date.now(), result: { summary: body.summary, files: body.files || [] }, ticket: body.ticket || null, ticketError: body.ticketError || "", pr: body.pr || null };
       storageSet(SCOPE_KEY + id, saved);
       if (g === gen) scope = saved;
     } catch (err) {
@@ -551,6 +556,15 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     } finally {
       if (g === gen) { scopeBusy = false; render(); }
     }
+  }
+
+  function scopeAgainst() {
+    const parts = [];
+    if (scope.pr) parts.push(`PR #${scope.pr.id} “${scope.pr.title}”`);
+    if (scope.ticket) parts.push(`${scope.ticket.id} “${scope.ticket.title}”`);
+    if (parts.length) return " against " + parts.join(" and ") + (scope.ticketError ? ` (ticket not read: ${scope.ticketError})` : "");
+    if (scope.ticketError) return ` without the ticket (${scope.ticketError})`;
+    return withTranscript ? " against the prompts" : " from the diffs alone";
   }
 
   function splitPrompt(drift) {
@@ -569,7 +583,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const parts = [
       el("div", { class: "overview-scope__head" }, [
         el("b", { text: drift.length ? `${plural(drift.length, "file")} outside the ask` : "Everything fits what was asked" }),
-        el("span", { class: "overview__muted", text: ` · checked ${when}` + (scope.ticket ? ` against ${scope.ticket.id} “${scope.ticket.title}”` : scope.ticketError ? ` without the ticket (${scope.ticketError})` : " against the prompts") }),
+        el("span", { class: "overview__muted", text: ` · checked ${when}` + scopeAgainst() }),
       ]),
       ...(scope.result.summary ? [el("div", { text: scope.result.summary })] : []),
       ...(stale ? [el("div", { class: "overview__muted", text: "The change moved on since this check — run it again for an up-to-date answer." })] : []),
@@ -590,6 +604,19 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     return [el("div", { class: "overview-scope" + (drift.length ? " is-drift" : "") }, parts)];
   }
 
+  // scopeSection holds the scope check in the reviewer view, where there's
+  // no trace to put it in.
+  function scopeSection() {
+    return el("div", { class: "overview-section" }, [
+      el("div", { class: "overview-section__head" }, [
+        el("h3", { text: "Scope" }),
+        el("span", { class: "overview__muted", text: "does every file fit what the branch is for?" }),
+        scopeButton(),
+      ]),
+      ...scopeCard(),
+    ]);
+  }
+
   function jumpTo(n) {
     const t = trace.turns[n - 1];
     if (t?.uuid) revealTurn?.(t.uuid);
@@ -598,7 +625,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // A trace update from the transcript re-renders at most once a second,
   // and only when the trace changed and the tab is showing.
   function scheduleTrace() {
-    if (traceTimer || !visible || !data) return;
+    if (traceTimer || !visible || !data || !withTranscript) return;
     traceTimer = setTimeout(() => {
       traceTimer = 0;
       if (visible && data && trace.version !== traceShown) renderTrace();
@@ -610,8 +637,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // Finished agents are read once, running ones every AGENT_REFRESH_MS.
   async function syncAgents(g) {
     if (!trace.hasAgents()) return;
-    const id = encodeURIComponent(windowID);
-    const res = await fetch(`/api/sessions/${id}/subagents`, { cache: "no-store" }).catch(() => null);
+    const res = await fetch(`${api}/subagents`, { cache: "no-store" }).catch(() => null);
     if (!res?.ok || g !== gen) return;
     const agents = await res.json().catch(() => []);
     for (const a of agents) {
@@ -619,7 +645,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       const read = agentsRead.get(a.id);
       if (turn === undefined || read?.done || (read && Date.now() - read.at < AGENT_REFRESH_MS)) continue;
       agentsRead.set(a.id, { at: Date.now(), done: !a.running });
-      const r = await fetch(`/api/sessions/${id}/subagents/${encodeURIComponent(a.id)}/transcript?once=1`, { cache: "no-store" }).catch(() => null);
+      const r = await fetch(`${api}/subagents/${encodeURIComponent(a.id)}/transcript?once=1`, { cache: "no-store" }).catch(() => null);
       if (!r?.ok || g !== gen) return;
       trace.addAgent(a.id, turn, await r.json().catch(() => []));
     }
@@ -627,7 +653,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   }
 
   function header() {
-    const seg = el("span", { class: "overview-seg", role: "group", "aria-label": "Compare with" });
+    // A branch that isn't checked out has no uncommitted changes to show.
+    const seg = el("span", { class: "overview-seg", role: "group", "aria-label": "Compare with", ...(data.head ? { hidden: "" } : {}) });
     for (const [m, label, title] of [["branch", "Branch", "Everything since this branch split off the default branch"], ["head", "Uncommitted", "Only changes not committed yet"]]) {
       const b = el("button", { class: "overview-seg__btn" + (mode === m ? " is-active" : ""), type: "button", title, text: label, "aria-pressed": String(mode === m) });
       b.addEventListener("click", () => setMode(m));
@@ -636,10 +663,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const what = data.mode === "branch"
       ? [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" vs "), el("span", { class: "mono", text: data.base }), document.createTextNode(" @ "), el("span", { class: "mono", title: data.mergeBase, text: data.mergeBase.slice(0, 7) }), el("span", { class: "overview__muted", text: " (merge base)" })]
       : [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" — uncommitted changes")];
+    if (data.head) what.push(el("span", { class: "overview__muted", text: " · up to " }), el("span", { class: "mono", title: data.head, text: data.head.slice(0, 7) }));
     return el("div", { class: "overview-head" }, [
       el("span", { class: "overview-head__what" }, what),
       seg,
-      ...(mode === "branch" && data.fallback ? [el("span", { class: "overview__muted", text: "On the default branch, or no default branch found: showing uncommitted changes." })] : []),
+      ...(mode === "branch" && data.fallback ? [el("span", { class: "overview__muted", text: data.head ? "Nothing to compare: the branch is already part of its base." : "On the default branch, or no default branch found: showing uncommitted changes." })] : []),
       ...(data.truncated ? [el("span", { class: "overview__muted", text: "File list truncated." })] : []),
     ]);
   }
@@ -932,7 +960,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   // get fetches one endpoint with If-None-Match: null when unchanged.
   async function get(what, tag) {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/${what}?base=${mode}`, {
+    const res = await fetch(`${api}/${what}?base=${mode}`, {
       headers: tag ? { "If-None-Match": tag } : {}, cache: "no-store",
     });
     if (res.status === 304) return null;
@@ -961,6 +989,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
         etag = ov.value.etag;
         if (areaFilter && !(data.files || []).some((f) => f.area === areaFilter)) areaFilter = null;
         changed = true;
+        if (data.target) onTarget?.(data.target);
       }
       // A failed analysis just leaves the sections out; the overview stands.
       if (ar.status === "fulfilled" && ar.value) {
@@ -969,7 +998,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
         changed = true;
       }
       if (changed) render();
-      if (visible) await syncAgents(g);
+      if (visible && withTranscript) await syncAgents(g);
     } finally {
       if (inflight === g) inflight = -1;
     }
@@ -984,8 +1013,15 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   return {
     badge,
     setWindow(id) {
+      this.setTarget(id ? { key: id, api: `/api/sessions/${encodeURIComponent(id)}` } : { key: null });
+    },
+    // setTarget points the tab at key (stored scope checks) served under
+    // api. transcript: false is the reviewer view (no trace, no strip).
+    setTarget({ key: id, api: apiBase = "", transcript = true }) {
       if (id === windowID) return;
       windowID = id;
+      api = apiBase;
+      withTranscript = transcript;
       data = null; etag = null; arch = null; archEtag = null; areaFilter = null; error = ""; gen++;
       scope = id ? storageGet(SCOPE_KEY + id) : null;
       scopeBusy = false; scopeError = "";
@@ -1012,7 +1048,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       visible = v;
       panel.hidden = !v;
       if (v) {
-        if (data) { drawTreemap(); if (trace.version !== traceShown) renderTrace(); }
+        if (data) { drawTreemap(); if (withTranscript && trace.version !== traceShown) renderTrace(); }
         load();
       }
     },

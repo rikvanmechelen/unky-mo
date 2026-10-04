@@ -99,6 +99,7 @@ const reviewPlus = new ReviewPlus();
 // refresh those tabs.
 function createReview({ onChange, onSent }) {
   let windowID = null;
+  let sendTo = null;
   let comments = []; // {id, path, line, text, body}
   let draft = null; // {path, line, id?, body?} — the open comment box
 
@@ -198,9 +199,10 @@ function createReview({ onChange, onSent }) {
       if (!comments.length) return "No comments to send.";
       // Only what was sent is cleared afterwards: comments added meanwhile
       // stay, and a window switch mid-request leaves the new window alone.
+      if (!sendTo) return "No live session to send the review to.";
       const sent = new Set(comments.map((c) => c.id));
       const win = windowID;
-      const res = await fetch(`/api/sessions/${encodeURIComponent(win)}/prompt`, {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sendTo)}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: formatReview(comments) }),
@@ -221,8 +223,14 @@ function createReview({ onChange, onSent }) {
       return null;
     },
     preview: () => formatReview(comments),
-    setWindow(id) {
+    canSend: () => !!sendTo,
+    setSendTo(w) { sendTo = w; },
+    // setWindow switches to the comments stored under id. sendTo is the
+    // session window send() pastes into: the same window in the chat view,
+    // a branch's live session (or none) in the reviewer view.
+    setWindow(id, sendTo_ = id) {
       windowID = id;
+      sendTo = sendTo_;
       draft = null;
       const saved = id ? storageGet(REVIEW_KEY + id) : null;
       comments = Array.isArray(saved) ? saved.filter((c) => c && typeof c.path === "string" && typeof c.body === "string") : [];

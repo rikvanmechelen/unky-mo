@@ -32,10 +32,17 @@ type scopeBody struct {
 	Turns []review.ScopeTurn `json:"turns"`
 }
 
+// scopeContext is what the server adds to a scope check besides the
+// browser's turns: a pull request (the reviewer view) is part of the ask.
+type scopeContext struct {
+	pr *review.ScopeTicket
+}
+
 type scopeResponse struct {
 	*review.ScopeResult
 	Ticket      *review.ScopeTicket `json:"ticket,omitempty"`
 	TicketError string              `json:"ticketError,omitempty"`
+	PR          *review.ScopeTicket `json:"pr,omitempty"`
 }
 
 // handleScope runs the Overview tab's on-demand drift check: POST
@@ -67,17 +74,22 @@ func (s *Server) handleScope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	if _, busy := s.scopeRunning.LoadOrStore(windowID, true); busy {
-		writeError(w, http.StatusConflict, fmt.Errorf("a scope check is already running for this session"))
+	s.runScope(w, r, windowID, o, body, scopeContext{})
+}
+
+// runScope runs one scope check over o's files, one at a time per lockKey.
+func (s *Server) runScope(w http.ResponseWriter, r *http.Request, lockKey string, o *gitfiles.Overview, body scopeBody, extra scopeContext) {
+	if _, busy := s.scopeRunning.LoadOrStore(lockKey, true); busy {
+		writeError(w, http.StatusConflict, fmt.Errorf("a scope check is already running for this branch"))
 		return
 	}
-	defer s.scopeRunning.Delete(windowID)
+	defer s.scopeRunning.Delete(lockKey)
 
 	listed := map[string]bool{}
 	for _, f := range o.Files {
 		listed[f.Path] = true
 	}
-	req := review.ScopeRequest{Turns: []review.ScopeTurn{}, Root: o.Root, Rev: o.Rev}
+	req := review.ScopeRequest{Turns: []review.ScopeTurn{}, Root: o.Root, Rev: o.Rev, Head: o.Head, PR: extra.pr}
 	seen, files := map[string]bool{}, 0
 	// The most recent prompts matter most; the files changed outside the
 	// conversation (turn 0) always go in.
@@ -115,6 +127,9 @@ func (s *Server) handleScope(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := scopeResponse{}
+	if extra.pr != nil {
+		resp.PR = &review.ScopeTicket{ID: extra.pr.ID, Title: extra.pr.Title}
+	}
 	if body.Ticket != nil && ticketIDRe.MatchString(body.Ticket.ID) && s.deps.Tickets != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		d, err := s.deps.Tickets.Detail(ctx, body.Ticket.Provider, body.Ticket.ID)

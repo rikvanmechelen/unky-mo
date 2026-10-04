@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/rvanmech/unky-mo/internal/gitfiles"
 )
 
 // RulesPath is the layer rules file, relative to the repo root. It lives in
@@ -28,23 +27,20 @@ type ruleSet struct {
 	layers []layer
 }
 
-// loadRules reads the rules file of the checkout at root. A missing file
-// means no rules; a broken one is reported in info.Error and ignored.
-func loadRules(root string) *ruleSet {
+// loadRules reads the rules file of the change's new version (the
+// checkout, or the head commit). A missing file means no rules; a broken
+// one is reported in info.Error and ignored.
+func loadRules(r *repo) *ruleSet {
 	rs := &ruleSet{info: Rules{Path: RulesPath}}
-	c, err := gitfiles.ReadFile(root, RulesPath)
-	if err != nil || !c.Exists {
+	text := r.readAfter(RulesPath)
+	if text == nil {
 		return rs
 	}
 	rs.info.Found = true
-	if c.Binary || c.TooLarge {
-		rs.info.Error = "not a text file"
-		return rs
-	}
 	var doc struct {
 		Layer []layer `toml:"layer"`
 	}
-	md, err := toml.Decode(c.Text, &doc)
+	md, err := toml.Decode(*text, &doc)
 	if err != nil {
 		rs.info.Error = err.Error()
 		return rs

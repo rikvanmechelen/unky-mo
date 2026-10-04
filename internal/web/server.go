@@ -29,6 +29,10 @@ type Server struct {
 	logCache      *ttlCache
 	overviewCache *ttlCache
 	archCache     *ttlCache
+	// Reviewer view: a branch's head commit (localCache) or a PR branch's,
+	// fetched from origin at most every few minutes (fetchCache).
+	localRefCache *ttlCache
+	fetchCache    *ttlCache
 	branchCache   *ttlCache
 	shellsCache   *ttlCache
 	agentsCache   *ttlCache
@@ -40,6 +44,9 @@ type Server struct {
 	// scopeRunning holds the windows with a scope check in flight: one at
 	// a time per window, since each runs a claude process.
 	scopeRunning sync.Map
+
+	// fetchMu serializes the reviewer view's git fetches of PR branches.
+	fetchMu sync.Mutex
 
 	// modeMu serializes permission-mode changes; modeSettle is the wait
 	// between footer re-reads after each shift+tab (zero in tests).
@@ -73,6 +80,8 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		logCache:      newTTLCache(2 * time.Second),
 		overviewCache: newTTLCache(2 * time.Second),
 		archCache:     newTTLCache(3 * time.Second),
+		localRefCache: newTTLCache(5 * time.Second),
+		fetchCache:    newTTLCache(5 * time.Minute),
 		branchCache:   newTTLCache(15 * time.Second),
 		shellsCache:   newTTLCache(2 * time.Second),
 		agentsCache:   newTTLCache(time.Second),
@@ -99,6 +108,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/overview", s.handleOverview)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/architecture", s.handleArchitecture)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/scope", s.handleScope)
+	// The reviewer view: a branch, or a pull request (resolved by number).
+	for _, prefix := range []string{"/api/projects/{name}/branches/{branch}", "/api/projects/{name}/pulls/{pr}"} {
+		s.mux.HandleFunc("GET "+prefix+"/overview", s.handleBranchOverview)
+		s.mux.HandleFunc("GET "+prefix+"/architecture", s.handleBranchArchitecture)
+		s.mux.HandleFunc("GET "+prefix+"/file", s.handleBranchFile)
+		s.mux.HandleFunc("PUT "+prefix+"/file", s.handleBranchSaveFile)
+		s.mux.HandleFunc("GET "+prefix+"/tree", s.handleBranchTree)
+		s.mux.HandleFunc("POST "+prefix+"/scope", s.handleBranchScope)
+	}
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}", s.handleCommit)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}/file", s.handleCommitFile)
 	s.mux.HandleFunc("PUT /api/sessions/{windowID}/file", s.handleSaveFile)
@@ -134,6 +152,9 @@ func (s *Server) routes() {
 	if h := embeddedStatic(); h != nil {
 		s.mux.HandleFunc("GET /chat", func(w http.ResponseWriter, r *http.Request) {
 			h.serve(w, r, "chat.html")
+		})
+		s.mux.HandleFunc("GET /branch", func(w http.ResponseWriter, r *http.Request) {
+			h.serve(w, r, "branch.html")
 		})
 		s.mux.Handle("GET /", h)
 	}

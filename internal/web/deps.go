@@ -127,6 +127,15 @@ type GitFiles interface {
 	// ReadAt reads one file as committed in rev, a full commit id
 	// (gitfiles.ErrUnknownCommit otherwise): the base side of a branch diff.
 	ReadAt(root, rev, path string) (*gitfiles.Content, error)
+	// ResolveBranch, ResolvePR, OverviewAt and TreeAt serve the reviewer
+	// view for a branch that isn't checked out: its head commit (origin's
+	// copy, fetched first, when remote), a pull request's head (fetched
+	// from origin's refs/pull/<n>/head), its change from the merge base
+	// with base (default branch when empty) to that commit, and its files.
+	ResolveBranch(root, branch string, remote bool) (string, error)
+	ResolvePR(root string, n int, base string) (string, error)
+	OverviewAt(root, branch, head, base string) (*gitfiles.Overview, error)
+	TreeAt(root, head string) ([]string, error)
 }
 
 // ChangeAnalyzer works out a change's architecture delta (package imports
@@ -468,6 +477,37 @@ func (g realGitFiles) ReadAt(root, rev, path string) (*gitfiles.Content, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.ReadAt(ctx, g.cmd, root, rev, path)
+}
+
+// fetchTimeout bounds the git fetch of a PR branch.
+const fetchTimeout = time.Minute
+
+func (g realGitFiles) ResolveBranch(root, branch string, remote bool) (string, error) {
+	timeout := gitTimeout
+	if remote {
+		timeout = fetchTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return gitfiles.ResolveBranch(ctx, g.cmd, root, branch, remote)
+}
+
+func (g realGitFiles) ResolvePR(root string, n int, base string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+	return gitfiles.ResolvePR(ctx, g.cmd, root, n, base)
+}
+
+func (g realGitFiles) OverviewAt(root, branch, head, base string) (*gitfiles.Overview, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetOverviewAt(ctx, g.cmd, root, branch, head, base)
+}
+
+func (g realGitFiles) TreeAt(root, head string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.TreeAt(ctx, g.cmd, root, head)
 }
 
 func (g realGitFiles) Branch(dir string) string {

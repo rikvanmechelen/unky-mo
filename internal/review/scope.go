@@ -46,9 +46,13 @@ type ScopeTurn struct {
 // says why they changed.
 type ScopeRequest struct {
 	Ticket *ScopeTicket `json:"ticket,omitempty"`
-	Turns  []ScopeTurn  `json:"turns"`
-	Root   string       `json:"-"`
-	Rev    string       `json:"-"`
+	// PR is the pull request under review: its title and description are
+	// part of the ask. ID is its number.
+	PR    *ScopeTicket `json:"pr,omitempty"`
+	Turns []ScopeTurn  `json:"turns"`
+	Root  string       `json:"-"`
+	Rev   string       `json:"-"`
+	Head  string       `json:"-"` // set for a branch that isn't checked out
 	// excerpts maps a file outside the conversation to its diff excerpt.
 	excerpts map[string]string
 }
@@ -62,7 +66,7 @@ const (
 
 // diffExcerpts reads the start of each file's diff against rev (or, for an
 // untracked file, the start of the file), within the bounds above.
-func diffExcerpts(ctx context.Context, cmd moexec.Commander, root, rev string, files []string) map[string]string {
+func diffExcerpts(ctx context.Context, cmd moexec.Commander, root, rev, head string, files []string) map[string]string {
 	out := map[string]string{}
 	total := 0
 	for _, f := range files {
@@ -71,7 +75,11 @@ func diffExcerpts(ctx context.Context, cmd moexec.Commander, root, rev string, f
 		}
 		var text string
 		if rev != "" {
-			if d, _, err := cmd.Output(ctx, root, "git", "diff", "--no-color", "--no-ext-diff", "-U2", rev, "--", f); err == nil {
+			args := []string{"diff", "--no-color", "--no-ext-diff", "-U2", rev}
+			if head != "" {
+				args = append(args, head)
+			}
+			if d, _, err := cmd.Output(ctx, root, "git", append(args, "--", f)...); err == nil {
 				text = string(d)
 				// Skip git's header lines; the hunks are what matter.
 				if i := strings.Index(text, "\n@@"); i >= 0 {
@@ -79,7 +87,7 @@ func diffExcerpts(ctx context.Context, cmd moexec.Commander, root, rev string, f
 				}
 			}
 		}
-		if text == "" {
+		if text == "" && head == "" {
 			if c, err := gitfiles.ReadFile(root, f); err == nil && c.Exists && !c.Binary && !c.TooLarge {
 				text = "(new file)\n" + c.Text
 			}
@@ -137,8 +145,15 @@ func BuildScopePrompt(req ScopeRequest) string {
 			b.WriteString(t.Description)
 			b.WriteString("\n\n")
 		}
-	} else {
+	} else if req.PR == nil {
 		b.WriteString("## Ticket\n\nNo ticket is linked; judge against the prompts.\n\n")
+	}
+	if p := req.PR; p != nil {
+		fmt.Fprintf(&b, "## Pull request #%s: %s\n\n", p.ID, p.Title)
+		if p.Description != "" {
+			b.WriteString(p.Description)
+			b.WriteString("\n\n")
+		}
 	}
 	b.WriteString("## Prompts and the files their edits changed\n\n")
 	for _, t := range req.Turns {
@@ -227,7 +242,7 @@ func CheckScope(ctx context.Context, cmd moexec.Commander, req ScopeRequest) (*S
 	if req.Root != "" {
 		for _, t := range req.Turns {
 			if t.N == 0 {
-				req.excerpts = diffExcerpts(ctx, cmd, req.Root, req.Rev, t.Files)
+				req.excerpts = diffExcerpts(ctx, cmd, req.Root, req.Rev, req.Head, t.Files)
 			}
 		}
 	}

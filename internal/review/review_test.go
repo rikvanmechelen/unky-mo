@@ -371,3 +371,33 @@ func TestDepParsers(t *testing.T) {
 		t.Errorf("go.mod %+v", mod)
 	}
 }
+
+// For a branch that isn't checked out, the analysis reads the branch's
+// head commit: the working tree (here, main with a broken rules file) never
+// leaks in.
+func TestAnalyzeHeadCommit(t *testing.T) {
+	dir := moduleRepo(t)
+	run(t, dir, "add", "-A")
+	run(t, dir, "commit", "-q", "-m", "rest of feat")
+	run(t, dir, "checkout", "-q", "main")
+	write(t, dir, ".unky-mo/architecture.toml", "not = [valid")
+	ctx := context.Background()
+	head := gitOut(t, dir, "rev-parse", "feat")
+	o, err := gitfiles.GetOverviewAt(ctx, moexec.DefaultCommander, dir, "feat", head, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := Analyze(ctx, moexec.DefaultCommander, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := edgeKeys(a.Edges), []string{"+a>c", "+e>a", "-f>b"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("edges %v, want %v", got, want)
+	}
+	if a.Rules.Error != "" || a.Rules.Layers != 2 || a.Violations != 1 {
+		t.Errorf("rules %+v, violations %d", a.Rules, a.Violations)
+	}
+	if got := changeKeys(a.Surface.Env); !reflect.DeepEqual(got, []string{"+NEW_TOKEN"}) {
+		t.Errorf("env %v", got)
+	}
+}

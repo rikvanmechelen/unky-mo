@@ -22,6 +22,7 @@ Mockup and background analysis: https://claude.ai/artifact/2yuBLfDhoN6BFBgZDk2Wd
 | 2 | Contract surface (Go exported decls, routes, config, manifests) + architecture delta (import edges of changed files) + `.unky-mo/architecture.toml` rules | done |
 | 3 | Intent trace (files × turns, files outside the conversation, subagents), jump-to-turn, live strip above the composer | done |
 | 4 | Ticket from branch name, on-demand scope-drift check via `claude -p`, "ask Claude to split it out" | done |
+| 5 | Reviewer view: the Overview for any branch, worktree or PR from the dashboard, no live session needed | done |
 
 ## Phase 1 — detailed plan
 
@@ -265,8 +266,89 @@ The first real runs on this branch drove three fixes:
 
 Also checked: "Ask Claude to split these out" (with an injected drift result) only fills the composer; nothing is sent.
 
+## Phase 5 — reviewer view (detailed plan)
+
+The Overview so far needs a live session's window. A reviewer wants it for a PR, an idle worktree, or a branch nobody has checked out.
+
+### Targets
+
+A page `/branch?project=<name>&branch=<branch>[&pr=<n>]` whose API lives under `/api/projects/{name}/branches/{branch}/…`. The server resolves the branch to one of two targets; the browser never sends a path or a revision:
+
+- **Checkout:** the branch is checked out (main checkout or a worktree, `checkoutPath`). Everything works as in the chat view, uncommitted changes included, and file tabs stay editable. The web is a full stand-in for the TUI.
+- **Ref:** no checkout. The head is a commit:
+  - the local branch `refs/heads/<b>`;
+  - for a PR (`pr=` given), `refs/remotes/origin/<b>`, fetched first: `git fetch origin refs/heads/<b>:refs/remotes/origin/<b>`, at most every 5 minutes per branch.
+  - The branch name must pass `git check-ref-format --branch` and can't start with `-`.
+  - Files are read from the head commit, read-only.
+
+### Backend
+
+- `gitfiles.GetOverviewAt(root, head)`: the ref-mode overview. It runs `git diff <merge-base> <head>` (tree to tree, no untracked files). The generated-file header comes from the head blob (first 300 files). `Overview.Head` is set to the head commit.
+- `gitfiles.TreeAt(root, head)` (`git ls-tree -r`) for quick open.
+- `gitfiles.ResolveBranch(root, branch, remote)`: validates the name, fetches if asked, returns the head commit.
+- `review.Analyze` reads the "after" side from `o.Head` when set: `ReadAt` instead of `ReadFile`, `ls-tree` instead of `ls-files`, `git grep <head>`. Scope excerpts diff `<rev> <head>`.
+- **Endpoints** under the branch prefix:
+  - `overview` and `architecture` (ref targets ignore `base=head`);
+  - `file` (`rev=base`; with no rev, the working copy, or for a ref target the head blob with `readOnly: true`);
+  - `PUT file` (checkout targets only, 405 for refs);
+  - `tree`;
+  - `scope`.
+- Every file read goes through the same listed-path rules.
+- **Scope check without a transcript:** every file goes in as "outside the conversation", with excerpts. With `pr=`, the PR's title and body are fetched server-side (`PRClient.GetPRDetail`) and given to the model as the ask, next to the ticket from the branch name.
+- The branch's live session, if any (a state row whose path is that checkout), is returned by `overview` as `sessionWindow`, so the page can link to its chat and review comments can be sent to it.
+
+### Frontend
+
+- `editor.js` and `overview.js` move from `setWindow(id)` to `setTarget({key, api, …})`. The chat page passes `key = windowID, api = /api/sessions/{id}`. Storage keys are unchanged for sessions; branches use `branch:<project>:<branch>`.
+- **No chat:** `createEditorTabs` without a `chatPanel` has no Chat tab, and Overview is the home tab.
+- `overview.js` with `transcript: false` hides the intent trace and the strip. The scope check sends files only (plus `pr`). The mode toggle is hidden for ref targets.
+- **Review comments:** "Copy" (the formatted review, for pasting into a GitHub review) always; "Send to Claude" only when the branch has a live session.
+- **`branch.html` + `branch.js`:** a header with project, branch, PR number/title/link, a "checked out at …" or "not checked out (read-only)" note, and an "Open chat" link when live.
+- **Dashboard (`app.js`):** an "Overview" link on each checkout row and on each other branch, and a "Review" link on each PR row.
+
+### Tests
+
+- `gitfiles`: `GetOverviewAt` on a branch with no checkout (committed changes, rename, generated header from the blob), `TreeAt`, `ResolveBranch` (refuses bad names; fetches from a bare remote into `origin/<b>`).
+- `review`: `Analyze` in ref mode reads the head commit, not the working tree (a working-tree edit doesn't leak in).
+- **Handlers:**
+  - checkout vs ref resolution from `ListBranches`;
+  - an unknown project or branch → 404;
+  - PUT on a ref → 405;
+  - `rev=base` and head reads in ref mode;
+  - the PR context reaches the scope request.
+- **Manual (scratch `mo web`, Chrome):**
+  - the dashboard links;
+  - a worktree (small-tasks);
+  - a branch with no checkout;
+  - a real PR from a MoMA repo if one is open, otherwise a pushed branch.
+
+### Phase 5 notes
+
+**PRs have their own API prefix.** `/api/projects/{name}/pulls/{n}/…` resolves the branch from the PR (`gh pr view`, cached) instead of `?pr=` next to a branch name. Two reasons:
+- the editor builds URLs as `${api}/file?path=`, so a query on the prefix wouldn't compose;
+- `PRDetail` carries the PR's base branch.
+
+**The head is fetched by number**, from GitHub's `refs/pull/<n>/head`, which also works for PRs from forks.
+
+**The PR's base branch is fetched along with the head.** The first real run (moma-org-rails #341) showed 832 files and +36k lines against GitHub's 19 files and +604/−30. That clone's `origin/main` was six months old, so the merge base was too. A remote branch likewise fetches the default branch. With the base fetched, the numbers match GitHub exactly.
+
+**One known gap:** the chat view and checkout targets still use whatever `origin/main` the clone last fetched. That's normal for local work, but a long-unfetched clone overstates the change.
+
+**Fixed along the way:**
+- The ref overview's cache key now includes the branch name: two branches at one commit shared an overview.
+- Remote resolutions are serialized: the page requests several endpoints at once, and parallel fetches of one ref would fight over its lock.
+
+**Read-only tabs** for a ref target have no revert controls, since a programmatic revert would get past CodeMirror's `readOnly`. Save is disabled, and they keep a "read-only" note.
+
+**Review comments** gained "Copy", for pasting into a GitHub review. "Send to Claude" only appears when the branch has a live session.
+
+**Testing notes:**
+- The scratch server needs `$XDG_CONFIG_HOME/gh` linked to `~/.config/gh`, or `gh` reports "not authenticated".
+- The scope check on #341 ran with the PR as context and found everything on task.
+
 ## Later
 
+- Fetch `origin`'s default branch now and then for checkout targets too, or show how old the merge base is.
 - A session ↔ ticket link that isn't the branch name (e.g. from the TUI's ticket view).
 - Import graphs for JS/TS (relative imports) and Rails (Packwerk, if the MoMA repos use it).
 - The TUI sidebar showing the strip's count.

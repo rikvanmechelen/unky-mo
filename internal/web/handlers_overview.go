@@ -12,11 +12,13 @@ import (
 	"github.com/rvanmech/unky-mo/internal/review"
 )
 
-// overviewResponse is the chat view's Overview tab. Repo is false when the
-// session's cwd isn't inside a git checkout.
+// overviewResponse is the Overview tab. Repo is false when the session's
+// cwd isn't inside a git checkout. Target describes the branch the
+// reviewer view resolved (absent in the chat view).
 type overviewResponse struct {
 	Repo bool `json:"repo"`
 	*gitfiles.Overview
+	Target *targetView `json:"target,omitempty"`
 }
 
 // handleOverview serves a live session's change for the Overview tab:
@@ -39,15 +41,20 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o, err := s.overview(dir, mode)
+	writeOverview(w, r, o, err, nil)
+}
+
+// writeOverview answers with an overview (or why there's none).
+func writeOverview(w http.ResponseWriter, r *http.Request, o *gitfiles.Overview, err error, target *targetView) {
 	if errors.Is(err, gitfiles.ErrNotRepo) {
-		writeJSON(w, overviewResponse{Repo: false})
+		writeJSON(w, overviewResponse{Repo: false, Target: target})
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	body, err := json.Marshal(overviewResponse{Repo: true, Overview: o})
+	body, err := json.Marshal(overviewResponse{Repo: true, Overview: o, Target: target})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -79,8 +86,13 @@ func (s *Server) handleArchitecture(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
-	v, err := s.archCache.get(dir+"\x00"+mode, func() (any, error) {
-		o, err := s.overview(dir, mode)
+	s.serveArchitecture(w, r, dir+"\x00"+mode, func() (*gitfiles.Overview, error) { return s.overview(dir, mode) })
+}
+
+// serveArchitecture analyzes the overview get returns, cached under key.
+func (s *Server) serveArchitecture(w http.ResponseWriter, r *http.Request, key string, get func() (*gitfiles.Overview, error)) {
+	v, err := s.archCache.get(key, func() (any, error) {
+		o, err := get()
 		if err != nil {
 			return nil, err
 		}

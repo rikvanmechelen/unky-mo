@@ -126,12 +126,15 @@ func analyzed(p string) bool {
 	return false
 }
 
-// repo reads the checkout and its base revision for one analysis.
+// repo reads the checkout and its base revision for one analysis. With
+// head set (a branch that isn't checked out), the "after" side is that
+// commit instead of the working tree.
 type repo struct {
 	ctx  context.Context
 	cmd  moexec.Commander
 	root string
 	rev  string
+	head string
 }
 
 func (r *repo) readBefore(p string) *string {
@@ -143,6 +146,10 @@ func (r *repo) readBefore(p string) *string {
 }
 
 func (r *repo) readAfter(p string) *string {
+	if r.head != "" {
+		c, err := gitfiles.ReadAt(r.ctx, r.cmd, r.root, r.head, p)
+		return text(c, err)
+	}
 	c, err := gitfiles.ReadFile(r.root, p)
 	return text(c, err)
 }
@@ -154,8 +161,13 @@ func text(c *gitfiles.Content, err error) *string {
 	return &c.Text
 }
 
-// lsFiles lists the checkout's tracked and untracked (not ignored) files.
+// lsFiles lists the checkout's tracked and untracked (not ignored) files,
+// or the head commit's files.
 func (r *repo) lsFiles() []string {
+	if r.head != "" {
+		paths, _ := gitfiles.TreeAt(r.ctx, r.cmd, r.root, r.head)
+		return paths
+	}
 	out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return nil
@@ -182,6 +194,10 @@ func (r *repo) inBase(literal string) bool {
 }
 
 func (r *repo) inWorktree(literal string) bool {
+	if r.head != "" {
+		_, _, err := r.cmd.Output(r.ctx, r.root, "git", "grep", "-q", "-F", "-e", literal, r.head, "--")
+		return err == nil
+	}
 	_, _, err := r.cmd.Output(r.ctx, r.root, "git", "grep", "-q", "-F", "--untracked", "-e", literal, "--")
 	return err == nil
 }
@@ -190,7 +206,7 @@ func (r *repo) inWorktree(literal string) bool {
 // gitfiles.GetOverview) and works out their architecture delta and
 // contract surface.
 func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Analysis, error) {
-	r := &repo{ctx: ctx, cmd: cmd, root: o.Root, rev: o.Rev}
+	r := &repo{ctx: ctx, cmd: cmd, root: o.Root, rev: o.Rev, head: o.Head}
 	a := &Analysis{Packages: []Package{}, Edges: []Edge{}, Existing: []Edge{}}
 
 	var files []*file
@@ -213,7 +229,7 @@ func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*
 	}
 
 	a.Module = modulePath(r)
-	rules := loadRules(r.root)
+	rules := loadRules(r)
 	a.Rules = rules.info
 	if a.Module != "" {
 		goArchitecture(r, a, files, rules)

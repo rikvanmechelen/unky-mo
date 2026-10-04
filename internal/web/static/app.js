@@ -20,6 +20,14 @@ async function fetchJSON(path) {
 // ── Session actions (dialogs + stop live in actions.js) ───────
 let AGENTS = [];
 
+// branchURL opens the reviewer view for a project's branch, or with pr for
+// a pull request.
+function branchURL(projectName, branch, pr) {
+  const q = new URLSearchParams({ project: projectName });
+  if (pr) q.set("pr", String(pr)); else q.set("branch", branch);
+  return `/branch?${q}`;
+}
+
 function chatURL(windowID, starting) {
   return `/chat?window=${encodeURIComponent(windowID)}` + (starting ? "&new=1" : "");
 }
@@ -288,6 +296,7 @@ function renderCheckouts(projectName, checkouts, reload) {
         el("span", { class: "branch-row__name", text: c.branch }),
         tag,
         el("span", { class: "checkout__spacer" }),
+        el("a", { class: "link-btn", href: branchURL(projectName, c.branch), text: "Overview", title: "The shape of this branch's change" }),
         ...(c.is_main ? [] : [el("button", {
           class: "link-btn link-btn--danger", type: "button", text: "Remove…",
           onClick: () => removeWorktree(projectName, c, reload),
@@ -316,6 +325,7 @@ function renderOtherBranches(projectName, branches, reload) {
       ...(b.RemoteGone ? [el("span", { class: "branch-tag", text: "gone" })] : []),
       el("span", { class: "checkout__spacer" }),
       el("span", { class: "checkout-session__actions" }, [
+        el("a", { class: "link-btn", href: branchURL(projectName, b.Name), text: "Overview" }),
         startBtn,
         el("button", {
           class: "link-btn link-btn--danger", type: "button", text: "Delete",
@@ -344,7 +354,7 @@ function renderWorktreeStarter(projectName, branches) {
   return form;
 }
 
-function renderPRs(prs) {
+function renderPRs(projectName, prs) {
   const list = el("div", { class: "pr-list" });
   if (!prs || prs.length === 0) {
     list.appendChild(el("div", { class: "pr-row" }, [
@@ -362,6 +372,7 @@ function renderPRs(prs) {
       el("span", { class: "pr-row__num", text: `#${pr.number}` }),
       el("span", { class: "pr-row__title", text: pr.title }),
       stateEl,
+      el("a", { class: "link-btn pr-row__review", href: branchURL(projectName, pr.headRefName, pr.number), text: "Review", title: `Overview of #${pr.number} (${pr.headRefName})` }),
     ]));
   }
   return list;
@@ -402,7 +413,7 @@ function renderProjects(projects) {
       ]));
       detail.appendChild(el("div", { class: "project__block" }, [
         el("div", { class: "project__sub-heading", text: "Open pull requests" }),
-        renderPRs(prs),
+        renderPRs(name, prs),
       ]));
     };
 

@@ -110,7 +110,7 @@ func TestCheckScopeArgs(t *testing.T) {
 func TestScopeExcerpts(t *testing.T) {
 	dir := moduleRepo(t)
 	rev := gitOut(t, dir, "rev-parse", "main")
-	ex := diffExcerpts(context.Background(), moexec.DefaultCommander, dir, rev, []string{"d/d.go", "e/e.go", "missing.go"})
+	ex := diffExcerpts(context.Background(), moexec.DefaultCommander, dir, rev, "", []string{"d/d.go", "e/e.go", "missing.go"})
 	if !strings.HasPrefix(ex["d/d.go"], "@@") || !strings.Contains(ex["d/d.go"], "-var X = c.Shared") {
 		t.Errorf("tracked: %q", ex["d/d.go"])
 	}

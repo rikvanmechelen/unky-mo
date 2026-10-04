@@ -3,6 +3,7 @@ package gitfiles
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path"
 	"path/filepath"
@@ -62,7 +63,9 @@ type KindTotal struct {
 // set) when there's no default branch to compare with, or HEAD is on it.
 // Base is the default branch's name and MergeBase the commit compared
 // with, both empty in ModeHead. Rev is the commit compared with in either
-// mode (the merge base, or HEAD), empty without commits.
+// mode (the merge base, or HEAD), empty without commits. Head is set for a
+// branch that isn't checked out (GetOverviewAt): the commit compared to,
+// instead of a working tree.
 type Overview struct {
 	Root      string             `json:"root"`
 	Branch    string             `json:"branch"`
@@ -71,6 +74,7 @@ type Overview struct {
 	Base      string             `json:"base,omitempty"`
 	MergeBase string             `json:"mergeBase,omitempty"`
 	Rev       string             `json:"rev,omitempty"`
+	Head      string             `json:"head,omitempty"`
 	Files     []OverviewFile     `json:"files"`
 	Added     int                `json:"added"`
 	Removed   int                `json:"removed"`
@@ -107,29 +111,9 @@ func GetOverview(ctx context.Context, cmd moexec.Commander, dir, mode string) (*
 	o.Rev = rev
 	var files []OverviewFile
 	if rev != "" {
-		ns, err := git(ctx, cmd, root, "diff", "-z", "--name-status", "-M", rev, "--")
+		files, err = diffFiles(ctx, cmd, root, []string{rev}, func(p, status string) []byte { return readHeader(root, p, status) })
 		if err != nil {
 			return nil, err
-		}
-		counts := map[string]Counts{}
-		if out, err := git(ctx, cmd, root, "diff", "-z", "--numstat", "-M", rev, "--"); err == nil {
-			counts = ParseNumstat(out)
-		}
-		// A file with changes that -w doesn't report changed only whitespace.
-		var ws map[string]Counts
-		if out, err := git(ctx, cmd, root, "diff", "-z", "--numstat", "-M", "-w", rev, "--"); err == nil {
-			ws = ParseNumstat(out)
-		}
-		for _, cf := range ParseNameStatus(ns) {
-			c := counts[cf.Path]
-			f := OverviewFile{Path: cf.Path, OldPath: cf.OldPath, Status: cf.Status, Added: c.Added, Removed: c.Removed, Binary: c.Binary}
-			wsOnly := false
-			if ws != nil && !c.Binary && c.Added+c.Removed > 0 {
-				w, ok := ws[cf.Path]
-				wsOnly = !ok || w.Added+w.Removed == 0
-			}
-			f.Kind = Classify(f.Path, f.Status, f.Added+f.Removed, wsOnly, readHeader(root, f.Path, f.Status))
-			files = append(files, f)
 		}
 	}
 
@@ -150,7 +134,48 @@ func GetOverview(ctx context.Context, cmd moexec.Commander, dir, mode string) (*
 		f.Kind = Classify(p, f.Status, f.Added, false, readHeader(root, p, f.Status))
 		files = append(files, f)
 	}
+	finish(o, files)
+	return o, nil
+}
 
+// diffFiles lists and classifies the files changed between revs[0] and
+// the working tree, or between revs[0] and revs[1]. header reads the start
+// of a file's new version, for spotting a "generated" marker.
+func diffFiles(ctx context.Context, cmd moexec.Commander, root string, revs []string, header func(path, status string) []byte) ([]OverviewFile, error) {
+	diff := func(extra ...string) ([]byte, error) {
+		args := append([]string{"diff", "-z", "-M"}, extra...)
+		return git(ctx, cmd, root, append(append(args, revs...), "--")...)
+	}
+	ns, err := diff("--name-status")
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]Counts{}
+	if out, err := diff("--numstat"); err == nil {
+		counts = ParseNumstat(out)
+	}
+	// A file with changes that -w doesn't report changed only whitespace.
+	var ws map[string]Counts
+	if out, err := diff("--numstat", "-w"); err == nil {
+		ws = ParseNumstat(out)
+	}
+	var files []OverviewFile
+	for _, cf := range ParseNameStatus(ns) {
+		c := counts[cf.Path]
+		f := OverviewFile{Path: cf.Path, OldPath: cf.OldPath, Status: cf.Status, Added: c.Added, Removed: c.Removed, Binary: c.Binary}
+		wsOnly := false
+		if ws != nil && !c.Binary && c.Added+c.Removed > 0 {
+			w, ok := ws[cf.Path]
+			wsOnly = !ok || w.Added+w.Removed == 0
+		}
+		f.Kind = Classify(f.Path, f.Status, f.Added+f.Removed, wsOnly, header(f.Path, f.Status))
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// finish sorts the files and fills in areas, totals and kinds.
+func finish(o *Overview, files []OverviewFile) {
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	areas := map[string]bool{}
 	for _, f := range files {
@@ -172,7 +197,153 @@ func GetOverview(ctx context.Context, cmd moexec.Commander, dir, mode string) (*
 		}
 	}
 	sort.Strings(o.Areas)
+}
+
+// maxBlobHeaders caps the head-commit blobs read for "generated" markers
+// in a ref-mode overview (one git call each).
+const maxBlobHeaders = 300
+
+// GetOverviewAt reads the change of a branch that isn't checked out: from
+// its merge base with base to head, a full commit id (from ResolveBranch or
+// ResolvePR). base is a branch name such as a PR's "origin/develop"; empty,
+// or a ref that doesn't exist, means the default branch. Nothing is read
+// from a working tree. Head is set; with no base, or head on it, the
+// overview is empty and Fallback set.
+func GetOverviewAt(ctx context.Context, cmd moexec.Commander, root, branch, head, base string) (*Overview, error) {
+	if !hashRe.MatchString(head) || gitLine(ctx, cmd, root, "cat-file", "-t", head) != "commit" {
+		return nil, ErrUnknownCommit
+	}
+	o := &Overview{Root: root, Branch: branch, Mode: ModeBranch, Head: head, Files: []OverviewFile{}, Kinds: map[Kind]KindTotal{}, Areas: []string{}}
+	if base == "" || strings.HasPrefix(base, "-") || gitLine(ctx, cmd, root, "rev-parse", "--verify", "-q", base+"^{commit}") == "" {
+		base = defaultBranch(ctx, cmd, root)
+	}
+	mb := ""
+	if base != "" {
+		mb = gitLine(ctx, cmd, root, "merge-base", head, base)
+	}
+	if mb == "" || mb == head {
+		o.Fallback = true
+		return o, nil
+	}
+	o.Base, o.MergeBase, o.Rev = base, mb, mb
+	read := 0
+	files, err := diffFiles(ctx, cmd, root, []string{mb, head}, func(p, status string) []byte {
+		if status == "D" || read == maxBlobHeaders {
+			return nil
+		}
+		read++
+		c, err := readBlob(ctx, cmd, root, head+":"+p, p)
+		if err != nil || c.Binary || c.TooLarge {
+			return nil
+		}
+		if len(c.Text) > headerBytes {
+			return []byte(c.Text[:headerBytes])
+		}
+		return []byte(c.Text)
+	})
+	if err != nil {
+		return nil, err
+	}
+	finish(o, files)
 	return o, nil
+}
+
+// TreeAt lists every file in commit head (a full commit id), sorted.
+func TreeAt(ctx context.Context, cmd moexec.Commander, root, head string) ([]string, error) {
+	if !hashRe.MatchString(head) {
+		return nil, ErrUnknownCommit
+	}
+	out, err := git(ctx, cmd, root, "ls-tree", "-r", "-z", "--name-only", "--full-tree", head)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// baseSpec is the refspec that updates origin's copy of base (a branch
+// name; empty means the default branch, if it's origin's), or none for a
+// base that isn't a valid branch name or isn't on origin.
+func baseSpec(ctx context.Context, cmd moexec.Commander, root, base string) []string {
+	if base == "" {
+		base = strings.TrimPrefix(defaultBranch(ctx, cmd, root), "origin/")
+		if base == "" || gitLine(ctx, cmd, root, "rev-parse", "--verify", "-q", "refs/remotes/origin/"+base) == "" {
+			return nil
+		}
+	}
+	if strings.HasPrefix(base, "-") {
+		return nil
+	}
+	if _, _, err := cmd.Output(ctx, root, "git", "check-ref-format", "--branch", base); err != nil {
+		return nil
+	}
+	return []string{"+refs/heads/" + base + ":refs/remotes/origin/" + base}
+}
+
+// ErrBadBranch is returned for a name that isn't a valid branch name.
+var ErrBadBranch = errors.New("not a valid branch name")
+
+// ErrNoBranch is returned when a branch doesn't exist (locally, or on
+// origin for a remote lookup).
+var ErrNoBranch = errors.New("no such branch")
+
+// ResolveBranch returns the commit branch points at in the repo at root:
+// the local branch, or with remote, origin's copy, fetched first (only
+// that branch, into refs/remotes/origin/<branch>). The name is checked
+// with git check-ref-format before git sees it as a ref.
+func ResolveBranch(ctx context.Context, cmd moexec.Commander, root, branch string, remote bool) (string, error) {
+	if branch == "" || strings.HasPrefix(branch, "-") {
+		return "", ErrBadBranch
+	}
+	if _, _, err := cmd.Output(ctx, root, "git", "check-ref-format", "--branch", branch); err != nil {
+		return "", ErrBadBranch
+	}
+	ref := "refs/heads/" + branch
+	if remote {
+		ref = "refs/remotes/origin/" + branch
+		// The default branch comes along: a stale one would put a stale
+		// merge base under the overview.
+		specs := append([]string{"+refs/heads/" + branch + ":" + ref}, baseSpec(ctx, cmd, root, "")...)
+		if _, stderr, err := cmd.Output(ctx, root, "git", append([]string{"fetch", "--quiet", "--no-tags", "origin"}, specs...)...); err != nil {
+			// Offline or gone upstream: fall back to what was fetched before.
+			if gitLine(ctx, cmd, root, "rev-parse", "--verify", "-q", ref+"^{commit}") == "" {
+				return "", fmt.Errorf("%w: git fetch: %s", ErrNoBranch, strings.TrimSpace(string(stderr)))
+			}
+		}
+	}
+	head := gitLine(ctx, cmd, root, "rev-parse", "--verify", "-q", ref+"^{commit}")
+	if head == "" {
+		return "", ErrNoBranch
+	}
+	return head, nil
+}
+
+// ResolvePR fetches pull request n's head from origin (GitHub's
+// refs/pull/<n>/head, which also covers PRs from forks) into
+// refs/remotes/origin/pr/<n>, together with its base branch (so the merge
+// base is current), and returns the head commit. If the fetch fails
+// (offline), an earlier fetch is used.
+func ResolvePR(ctx context.Context, cmd moexec.Commander, root string, n int, base string) (string, error) {
+	if n < 1 {
+		return "", ErrNoBranch
+	}
+	ref := fmt.Sprintf("refs/remotes/origin/pr/%d", n)
+	specs := append([]string{fmt.Sprintf("+refs/pull/%d/head:%s", n, ref)}, baseSpec(ctx, cmd, root, base)...)
+	_, stderr, err := cmd.Output(ctx, root, "git", append([]string{"fetch", "--quiet", "--no-tags", "origin"}, specs...)...)
+	head := gitLine(ctx, cmd, root, "rev-parse", "--verify", "-q", ref+"^{commit}")
+	if head == "" {
+		if err != nil {
+			return "", fmt.Errorf("%w: git fetch: %s", ErrNoBranch, strings.TrimSpace(string(stderr)))
+		}
+		return "", ErrNoBranch
+	}
+	return head, nil
 }
 
 // isBranch reports whether the local branch name is the default branch
