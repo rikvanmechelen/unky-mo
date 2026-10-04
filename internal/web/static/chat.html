@@ -28,6 +28,9 @@
       <span class="status-badge" id="status-badge"></span>
     </div>
 
+    <div class="editor-tabs" id="editor-tabs" hidden></div>
+
+    <div class="chat-panel" id="chat-panel">
     <div class="chat-transcript" id="transcript-scroll">
       <div class="chat-transcript__inner" id="transcript"></div>
     </div>
@@ -47,6 +50,9 @@
     </footer>
 
     <section class="term-drawer" id="term-drawer" aria-label="Terminals" hidden></section>
+    </div>
+
+    <div class="editor-panel" id="editor-panel" hidden></div>
   </main>
 
   <aside class="files-pane" id="files-pane" hidden>
@@ -62,6 +68,7 @@
   </aside>
 
 </div>
+<script src="/vendor/codemirror.js"></script>
 <script src="/common.js"></script>
 <script src="/markdown.js"></script>
 <script src="/actions.js"></script>
@@ -70,6 +77,7 @@
 <script src="/spinner.js"></script>
 <script src="/mode.js"></script>
 <script src="/subagents.js"></script>
+<script src="/editor.js"></script>
 <script src="/chat.js"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 
-.PHONY: build install clean test test-race test-expectfail test-integration mocks mocks-check
+.PHONY: build install clean test test-race test-expectfail test-integration mocks mocks-check codemirror
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/mo
@@ -59,3 +59,9 @@ mocks:
 # CI check: mocks are up-to-date.
 mocks-check: mocks
 	@git diff --exit-code -- '*mock_*.go' || { echo "mocks are stale — run 'make mocks' and commit the result"; exit 1; }
+
+# Rebuild the vendored CodeMirror bundle (internal/web/static/vendor/codemirror.js)
+# from tools/codemirror. Needs Node; only for bumping versions or exports —
+# the bundle is committed, so build/install never need Node.
+codemirror:
+	cd tools/codemirror && npm ci --no-audit --no-fund && npm run build

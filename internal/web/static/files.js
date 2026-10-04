@@ -3,7 +3,8 @@
 // line counts; "All files" is a collapsible tree of every tracked and
 // untracked file; the footer shows totals and the upstream sync state.
 // Data comes from /api/sessions/{windowID}/files and /tree (gitfiles).
-// Uses el() from common.js.
+// Files in the tree, and the diff dialog's "Open file", call onOpen(path)
+// (the chat view opens an editor tab). Uses el() from common.js.
 
 const FILE_MARK_CLASS = { M: "is-mod", R: "is-mod", A: "is-add", "?": "is-add", D: "is-del", U: "is-del" };
 const FILES_POLL_MS = 3000;
@@ -72,7 +73,7 @@ function buildTree(paths) {
   return root;
 }
 
-function createFilesPane(pane) {
+function createFilesPane(pane, { onOpen } = {}) {
   const tabs = pane.querySelectorAll(".files-tab");
   const countEl = pane.querySelector("#files-count");
   const list = pane.querySelector("#files-list");
@@ -186,13 +187,14 @@ function createFilesPane(pane) {
       }
       for (const f of node.files) {
         const c = byPath.get(f.path);
-        // Changed files open their diff; unchanged ones are plain rows.
-        const row = el(c ? "button" : "div", { class: "file-row", title: c ? `${f.path} — show diff` : f.path, ...(c ? { type: "button" } : {}) }, [
+        // The tree browses files: every row opens the file in a tab (the
+        // Changed tab is where diffs open).
+        const row = el("button", { class: "file-row", type: "button", title: `${f.path} — open` }, [
           el("span", { class: "file-row__mark " + (c ? FILE_MARK_CLASS[c.status] || "" : ""), text: c ? c.status : "" }),
           el("span", { class: "file-row__name", text: f.name }),
           el("span", { class: "file-row__counts" }, c ? fileCounts(c) : []),
         ]);
-        if (c) row.addEventListener("click", () => openDiff(f.path));
+        row.addEventListener("click", () => onOpen?.(f.path));
         row.style.paddingLeft = indent(depth);
         rows.push(row);
       }
@@ -207,12 +209,17 @@ function createFilesPane(pane) {
   const diffCounts = el("span", { class: "diff-dialog__counts" });
   const diffBody = el("div", { class: "diff-dialog__body" });
   const diffClose = el("button", { class: "diff-dialog__close", type: "button", text: "Close" });
+  const diffOpen = el("button", { class: "diff-dialog__close", type: "button", text: "Open file" });
   const diffDialog = el("dialog", { class: "diff-dialog", "aria-label": "File diff" }, [
-    el("div", { class: "diff-dialog__head" }, [diffTitle, diffCounts, el("span", { class: "diff-dialog__spacer" }), diffClose]),
+    el("div", { class: "diff-dialog__head" }, [diffTitle, diffCounts, el("span", { class: "diff-dialog__spacer" }), ...(onOpen ? [diffOpen] : []), diffClose]),
     diffBody,
   ]);
   document.body.appendChild(diffDialog);
   diffClose.addEventListener("click", () => diffDialog.close());
+  diffOpen.addEventListener("click", () => {
+    diffDialog.close();
+    onOpen(diffTitle.textContent);
+  });
   diffDialog.addEventListener("click", (e) => { if (e.target === diffDialog) diffDialog.close(); }); // backdrop
 
   async function openDiff(path) {
@@ -291,6 +298,11 @@ function createFilesPane(pane) {
   setInterval(() => refresh(false), FILES_POLL_MS);
 
   return {
+    // root is the checkout's repo root, once the first /files poll is in
+    // (the editor's paths are relative to it).
+    root() {
+      return changes?.root || null;
+    },
     // setAvailable is driven by the chat view's state poll: the panel only
     // polls git while the window has a live session, and otherwise shows
     // note (e.g. "Starting…", "Session ended.").

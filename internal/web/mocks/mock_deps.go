@@ -607,6 +607,36 @@ func (mr *MockGitFilesMockRecorder) Diff(root, path, untracked any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Diff", reflect.TypeOf((*MockGitFiles)(nil).Diff), root, path, untracked)
 }
 
+// ReadFile mocks base method.
+func (m *MockGitFiles) ReadFile(root, path string) (*gitfiles.Content, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReadFile", root, path)
+	ret0, _ := ret[0].(*gitfiles.Content)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReadFile indicates an expected call of ReadFile.
+func (mr *MockGitFilesMockRecorder) ReadFile(root, path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockGitFiles)(nil).ReadFile), root, path)
+}
+
+// ReadHEAD mocks base method.
+func (m *MockGitFiles) ReadHEAD(root, path string) (*gitfiles.Content, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReadHEAD", root, path)
+	ret0, _ := ret[0].(*gitfiles.Content)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReadHEAD indicates an expected call of ReadHEAD.
+func (mr *MockGitFilesMockRecorder) ReadHEAD(root, path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadHEAD", reflect.TypeOf((*MockGitFiles)(nil).ReadHEAD), root, path)
+}
+
 // Tree mocks base method.
 func (m *MockGitFiles) Tree(dir string) (string, []string, error) {
 	m.ctrl.T.Helper()

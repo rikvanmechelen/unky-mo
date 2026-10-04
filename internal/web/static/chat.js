@@ -230,7 +230,9 @@ function isAgentTool(name) {
 // following the conversation tree's active branch. scrollEl is the
 // element that scrolls. opts.userLabel names who wrote user turns
 // ("You" by default); opts.onToolCard(entry, block) is called for every
-// tool card it creates, so the caller can decorate it.
+// tool card it creates, so the caller can decorate it. With
+// opts.onOpenFile(absPath), file tools (Read/Edit/Write/…) get an "Open"
+// button that calls it.
 function createTranscriptView(container, scrollEl, opts = {}) {
   const transcript = container;
   const transcriptScroll = scrollEl;
@@ -323,20 +325,25 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     body.style.display = "none";
     const action = el("span", { class: "tool-card__action", text: "Show" });
 
-    const card = el("div", { class: "tool-card" }, [
-      el("button", { class: "tool-card__toggle", type: "button" }, [
-        el("span", { class: "tool-card__sq" }),
-        el("span", { class: "tool-card__name", text: block.name }),
-        ...(detail ? [el("span", { class: "tool-card__detail" + (detail.mono ? " is-mono" : ""), text: detail.text })] : []),
-        action,
-      ]),
-      body,
+    const toggle = el("button", { class: "tool-card__toggle", type: "button" }, [
+      el("span", { class: "tool-card__sq" }),
+      el("span", { class: "tool-card__name", text: block.name }),
+      ...(detail ? [el("span", { class: "tool-card__detail" + (detail.mono ? " is-mono" : ""), text: detail.text })] : []),
+      action,
     ]);
+    const filePath = typeof block.input?.file_path === "string" ? block.input.file_path : null;
+    let head = toggle;
+    if (filePath && opts.onOpenFile) {
+      const open = el("button", { class: "tool-card__open", type: "button", title: `Open ${filePath}`, text: "Open" });
+      open.addEventListener("click", () => opts.onOpenFile(filePath));
+      head = el("div", { class: "tool-card__head" }, [toggle, open]);
+    }
+    const card = el("div", { class: "tool-card" }, [head, body]);
     const entry = {
       card, body, action, name: block.name,
       input: el("pre", { text: JSON.stringify(block.input, null, 2) }),
     };
-    card.querySelector(".tool-card__toggle").addEventListener("click", () => {
+    toggle.addEventListener("click", () => {
       withPin(() => {
         // A click takes the card out of preview mode for good, so the next
         // preview doesn't collapse a card you chose to look at.
@@ -513,13 +520,27 @@ function main() {
   const usageBox = document.getElementById("usage");
   const shell = document.getElementById("chat-shell");
   const filesEl = document.getElementById("files-pane");
-  const filesPane = createFilesPane(filesEl);
+  const editor = createEditorTabs({
+    strip: document.getElementById("editor-tabs"),
+    chatPanel: document.getElementById("chat-panel"),
+    editorPanel: document.getElementById("editor-panel"),
+  });
+  const filesPane = createFilesPane(filesEl, { onOpen: (path) => editor.open(path) });
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
   const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
     (msg) => { sendError.textContent = msg; });
   const subagents = createSubagents(document.getElementById("agent-strip"));
-  const view = createTranscriptView(transcript, transcriptScroll, { onToolCard: subagents.decorateCard });
+  const view = createTranscriptView(transcript, transcriptScroll, {
+    onToolCard: subagents.decorateCard,
+    // Paths in tool cards are absolute; editor tabs take them relative to
+    // the repo root. Outside the checkout (or before the first files poll)
+    // the path is passed as-is and the tab explains it can't be opened.
+    onOpenFile: (absPath) => {
+      const root = filesPane.root();
+      editor.open(root && absPath.startsWith(root + "/") ? absPath.slice(root.length + 1) : absPath);
+    },
+  });
 
   // Per-session state — reset by resetSession when the nav switches to
   // another window in place.
@@ -663,6 +684,7 @@ function main() {
     filesPane.setAvailable(false, "Session ended.");
     drawer.setAvailable(false);
     subagents.setAvailable(false);
+    editor.setAvailable(false);
   }
 
   // resetSession points the view at another window (initial load, a nav
@@ -692,6 +714,7 @@ function main() {
     spinner.setWindow(id);
     modeChip.setWindow(id);
     subagents.setWindow(id);
+    editor.setWindow(id);
     pollStatus();
   }
 
@@ -803,6 +826,7 @@ function main() {
       filesPane.setAvailable(!!p, waitingToStart ? "Starting…" : "No live session.");
       drawer.setAvailable(!!row);
       subagents.setAvailable(!!p);
+      editor.setAvailable(!!p);
 
       if (row) {
         chatTitle.textContent = row.name || windowID;

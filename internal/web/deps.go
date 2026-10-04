@@ -100,6 +100,11 @@ type GitFiles interface {
 	// Diff diffs one changed file; root and path come from a Changes
 	// result, never straight from the browser.
 	Diff(root, path string, untracked bool) (diff string, truncated bool, err error)
+	// ReadFile and ReadHEAD read one file's working-tree and committed
+	// versions for the editor tabs. root comes from Tree/Changes and path
+	// is one they listed; both re-check that path stays inside root.
+	ReadFile(root, path string) (*gitfiles.Content, error)
+	ReadHEAD(root, path string) (*gitfiles.Content, error)
 }
 
 // Terminals reads and drives a window's drawer terminals for the chat
@@ -318,6 +323,16 @@ func (g realGitFiles) Diff(root, path string, untracked bool) (string, bool, err
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.Diff(ctx, g.cmd, root, path, untracked)
+}
+
+func (g realGitFiles) ReadFile(root, path string) (*gitfiles.Content, error) {
+	return gitfiles.ReadFile(root, path)
+}
+
+func (g realGitFiles) ReadHEAD(root, path string) (*gitfiles.Content, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.ReadHEAD(ctx, g.cmd, root, path)
 }
 
 func (g realGitFiles) Branch(dir string) string {

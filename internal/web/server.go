@@ -2,7 +2,6 @@ package web
 
 import (
 	"encoding/json"
-	"io/fs"
 	"net/http"
 	"sync"
 	"time"
@@ -79,6 +78,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/files", s.handleSessionFiles)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/diff", s.handleSessionDiff)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/file", s.handleSessionFile)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/spinner", s.handleSpinner)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/mode", s.handleMode)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/mode", s.handleSetMode)
@@ -103,12 +103,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/projects/{name}/cleanup", s.handleCleanup)
 	s.mux.HandleFunc("POST /api/projects/{name}/lift", s.handleLift)
 
-	static, err := fs.Sub(staticFiles, "static")
-	if err == nil {
+	if h := embeddedStatic(); h != nil {
 		s.mux.HandleFunc("GET /chat", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFileFS(w, r, static, "chat.html")
+			h.serve(w, r, "chat.html")
 		})
-		s.mux.Handle("/", http.FileServerFS(static))
+		s.mux.Handle("GET /", h)
 	}
 }
 
