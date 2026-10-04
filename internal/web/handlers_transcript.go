@@ -18,7 +18,13 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backlog, ch, unsubscribe, err := s.transcripts.subscribe(sessionID, jsonlPath)
+	s.streamTranscript(w, r, sessionID, jsonlPath)
+}
+
+// streamTranscript subscribes to the JSONL file at path (under hub key
+// key) and streams it as "transcript" events until the client goes away.
+func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, key, path string) {
+	backlog, ch, unsubscribe, err := s.transcripts.subscribe(key, path)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

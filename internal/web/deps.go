@@ -29,7 +29,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane,Subagents
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -131,6 +131,13 @@ type ClaudePane interface {
 	CycleMode(target string) error
 }
 
+// Subagents lists the agents a session spawned with the Agent tool (see
+// claude.SubagentReader). path and sessionID always come from the state
+// file's row for the requested window.
+type Subagents interface {
+	List(path, sessionID string) ([]claude.Subagent, error)
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -147,6 +154,7 @@ type Deps struct {
 	// ClaudePane reads Claude's own pane (spinner line, permission mode)
 	// and cycles its permission mode.
 	ClaudePane ClaudePane
+	Subagents  Subagents
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.

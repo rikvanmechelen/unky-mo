@@ -219,33 +219,22 @@ function navGroups(projects) {
   return groups;
 }
 
-function main() {
-  const transcript = document.getElementById("transcript");
-  const transcriptScroll = document.getElementById("transcript-scroll");
-  const chatTitle = document.getElementById("chat-title");
-  const chatMeta = document.getElementById("chat-meta");
-  const statusBadge = document.getElementById("status-badge");
-  const composer = document.getElementById("composer");
-  const promptInput = document.getElementById("prompt-input");
-  const sendBtn = document.getElementById("send-btn");
-  const sendError = document.getElementById("send-error");
-  const permissionBanner = document.getElementById("permission-banner");
-  const questionBanner = document.getElementById("question-banner");
-  const chatNotice = document.getElementById("chat-notice");
-  const stopBtn = document.getElementById("stop-btn");
-  const sessionNav = document.getElementById("session-nav");
-  const usageBox = document.getElementById("usage");
-  const shell = document.getElementById("chat-shell");
-  const filesEl = document.getElementById("files-pane");
-  const filesPane = createFilesPane(filesEl);
-  const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
-  const spinner = createSpinner(document.getElementById("spinner"));
-  const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
-    (msg) => { sendError.textContent = msg; });
+// isAgentTool is true for the tool that spawns a subagent (named "Task"
+// in older Claude Code versions).
+function isAgentTool(name) {
+  return name === "Agent" || name === "Task";
+}
 
-  // Per-session state — reset by resetSession when the nav switches to
-  // another window in place.
-  let windowID = null;
+// createTranscriptView renders a session's JSONL lines (as streamed by
+// /api/transcript or a subagent's transcript stream) into container,
+// following the conversation tree's active branch. scrollEl is the
+// element that scrolls. opts.userLabel names who wrote user turns
+// ("You" by default); opts.onToolCard(entry, block) is called for every
+// tool card it creates, so the caller can decorate it.
+function createTranscriptView(container, scrollEl, opts = {}) {
+  const transcript = container;
+  const transcriptScroll = scrollEl;
+  const userLabel = opts.userLabel || "You";
   // The conversation is a tree (parentUuid links): an edited or resubmitted
   // prompt leaves the old branch in the file. Only the active branch — the
   // chain from the newest line back to the root — is shown, like Claude
@@ -257,27 +246,6 @@ function main() {
   let leaf = null;
   const toolCards = new Map(); // tool_use_id -> {card, body, ...} — persists across messages
   let previewed = null; // the toolCards entry currently auto-opened by previewToolCard
-
-  // The SSE stream is bound server-side to whichever Claude session ID the
-  // window had when it connected. /clear (or /new) starts a fresh session —
-  // new ID, new JSONL file — in the same window, so the status poll below
-  // watches session_id and, on a change, wipes the log and reconnects.
-  let es = null;
-  let streamSessionID = null;
-
-  // A message typed while a just-launched session is still starting is
-  // queued, then sent the first time the session reads idle (pollStatus).
-  let queued = null;
-
-  // Lifecycle around launches from the dashboard (?new=1): the window exists
-  // before the main TUI has attributed a Claude session to it, so for a few
-  // seconds there's no state row yet. Once one has been seen, its
-  // disappearance means the session ended (stopped here, /exit, or killed).
-  const STARTUP_GRACE_MS = 20000;
-  let starting = false;
-  let openedAt = 0;
-  let everSeen = false;
-  let ended = false;
 
   // Auto-scroll only follows new content if the viewport was already pinned
   // to the bottom — if you've scrolled up to read something, new messages
@@ -304,7 +272,7 @@ function main() {
     }
     if (kind === "user") {
       transcript.appendChild(el("div", { class: "msg-user" }, [
-        el("span", { class: "msg-user__label", text: "You" }),
+        el("span", { class: "msg-user__label", text: userLabel }),
         el("span", { class: "msg-user__text", text }),
       ]));
       return;
@@ -379,6 +347,7 @@ function main() {
 
     toolCards.set(block.id, entry);
     transcript.appendChild(card);
+    if (opts.onToolCard) opts.onToolCard(entry, block);
   }
 
   function setCardOpen(entry, open, preview = false) {
@@ -415,9 +384,13 @@ function main() {
 
     const text = typeof toolUseResult === "string"
       ? toolUseResult
-      : typeof block.content === "string"
-        ? block.content
-        : JSON.stringify(block.content);
+      : toolUseResult?.status === "async_launched"
+        ? "Running in the background."
+        : typeof block.content === "string"
+          ? block.content
+          : isAgentTool(entry.name) && Array.isArray(block.content)
+            ? block.content.filter((b) => b.type === "text").map((b) => b.text).join("\n\n")
+            : JSON.stringify(block.content);
 
     body.appendChild(el("div", { class: "tool-card__field" }, [
       el("span", { class: "tool-card__field-label", text: "Input" }),
@@ -460,28 +433,6 @@ function main() {
         }
       }
     }
-  }
-
-  function clearTranscript() {
-    if (es) { es.close(); es = null; }
-    streamSessionID = null;
-    nodes.clear();
-    messages = [];
-    leaf = null;
-    toolCards.clear();
-    previewed = null;
-    transcript.replaceChildren();
-  }
-
-  function connectTranscript(sessionID) {
-    clearTranscript();
-    streamSessionID = sessionID;
-    const stream = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
-    es = stream;
-    stream.addEventListener("transcript", (e) => {
-      if (es !== stream) return; // a late event from a stream we've since replaced
-      onLine(JSON.parse(e.data));
-    });
   }
 
   // parentOf follows a compaction boundary (a new root) back to the
@@ -530,6 +481,86 @@ function main() {
     for (const m of messages) {
       if (chain.has(m.uuid) || (isToolResultOnly(m) && chain.has(parentOf(m)))) renderMessage(m);
     }
+  }
+
+  function clear() {
+    nodes.clear();
+    messages = [];
+    leaf = null;
+    toolCards.clear();
+    previewed = null;
+    transcript.replaceChildren();
+  }
+
+  return { onLine, clear, withPin, scrollToBottom, toolCards };
+}
+
+function main() {
+  const transcript = document.getElementById("transcript");
+  const transcriptScroll = document.getElementById("transcript-scroll");
+  const chatTitle = document.getElementById("chat-title");
+  const chatMeta = document.getElementById("chat-meta");
+  const statusBadge = document.getElementById("status-badge");
+  const composer = document.getElementById("composer");
+  const promptInput = document.getElementById("prompt-input");
+  const sendBtn = document.getElementById("send-btn");
+  const sendError = document.getElementById("send-error");
+  const permissionBanner = document.getElementById("permission-banner");
+  const questionBanner = document.getElementById("question-banner");
+  const chatNotice = document.getElementById("chat-notice");
+  const stopBtn = document.getElementById("stop-btn");
+  const sessionNav = document.getElementById("session-nav");
+  const usageBox = document.getElementById("usage");
+  const shell = document.getElementById("chat-shell");
+  const filesEl = document.getElementById("files-pane");
+  const filesPane = createFilesPane(filesEl);
+  const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
+  const spinner = createSpinner(document.getElementById("spinner"));
+  const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
+    (msg) => { sendError.textContent = msg; });
+  const subagents = createSubagents(document.getElementById("agent-strip"));
+  const view = createTranscriptView(transcript, transcriptScroll, { onToolCard: subagents.decorateCard });
+
+  // Per-session state — reset by resetSession when the nav switches to
+  // another window in place.
+  let windowID = null;
+
+  // The SSE stream is bound server-side to whichever Claude session ID the
+  // window had when it connected. /clear (or /new) starts a fresh session —
+  // new ID, new JSONL file — in the same window, so the status poll below
+  // watches session_id and, on a change, wipes the log and reconnects.
+  let es = null;
+  let streamSessionID = null;
+
+  // A message typed while a just-launched session is still starting is
+  // queued, then sent the first time the session reads idle (pollStatus).
+  let queued = null;
+
+  // Lifecycle around launches from the dashboard (?new=1): the window exists
+  // before the main TUI has attributed a Claude session to it, so for a few
+  // seconds there's no state row yet. Once one has been seen, its
+  // disappearance means the session ended (stopped here, /exit, or killed).
+  const STARTUP_GRACE_MS = 20000;
+  let starting = false;
+  let openedAt = 0;
+  let everSeen = false;
+  let ended = false;
+
+  function clearTranscript() {
+    if (es) { es.close(); es = null; }
+    streamSessionID = null;
+    view.clear();
+  }
+
+  function connectTranscript(sessionID) {
+    clearTranscript();
+    streamSessionID = sessionID;
+    const stream = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
+    es = stream;
+    stream.addEventListener("transcript", (e) => {
+      if (es !== stream) return; // a late event from a stream we've since replaced
+      view.onLine(JSON.parse(e.data));
+    });
   }
 
   async function sendPrompt(text) {
@@ -631,6 +662,7 @@ function main() {
     lockSend("Session ended");
     filesPane.setAvailable(false, "Session ended.");
     drawer.setAvailable(false);
+    subagents.setAvailable(false);
   }
 
   // resetSession points the view at another window (initial load, a nav
@@ -659,6 +691,7 @@ function main() {
     drawer.setWindow(id);
     spinner.setWindow(id);
     modeChip.setWindow(id);
+    subagents.setWindow(id);
     pollStatus();
   }
 
@@ -769,6 +802,7 @@ function main() {
       setBadge(p ? status : waitingToStart ? "starting" : "none");
       filesPane.setAvailable(!!p, waitingToStart ? "Starting…" : "No live session.");
       drawer.setAvailable(!!row);
+      subagents.setAvailable(!!p);
 
       if (row) {
         chatTitle.textContent = row.name || windowID;

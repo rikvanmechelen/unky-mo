@@ -626,6 +626,46 @@ button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 
 .diff-dialog__body { overflow: auto; padding: 12px 20px 20px; }
 .diff-dialog__body .tool-card__diff { border: 0; padding: 0; }
 
+/* ── Subagents: strip above the composer, Agent card status, dialog ── */
+.agent-strip { display: flex; flex-direction: column; gap: 4px; max-width: 820px; }
+.agent-strip[hidden] { display: none; }
+.agent-strip__row {
+  all: unset; cursor: pointer; box-sizing: border-box; max-width: 100%;
+  display: flex; align-items: baseline; gap: 8px; font-size: 13px; line-height: 1.3;
+}
+.agent-strip__row:hover .agent-strip__desc { border-bottom-color: currentColor; }
+.agent-strip__row:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.agent-strip__sq, .agent-line__sq { flex: none; width: 7px; height: 7px; background: var(--gray-767); align-self: center; }
+.agent-strip__sq, .agent-line.is-running .agent-line__sq { background: var(--claude); animation: agent-pulse 1.4s ease-in-out infinite; }
+.agent-strip__desc { flex: none; max-width: 50%; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid transparent; }
+.agent-strip__type { flex: none; color: var(--gray-666); }
+.agent-strip__state { flex: none; color: var(--claude); }
+.agent-strip__state:empty { display: none; }
+.agent-strip__progress, .agent-line__progress {
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-mono); font-size: 12px; color: var(--gray-666); font-variant-numeric: tabular-nums;
+}
+@keyframes agent-pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .agent-strip__sq, .agent-line.is-running .agent-line__sq { animation: none; }
+}
+
+.agent-line { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 0 16px; font-size: 12px; line-height: 1.3; color: var(--gray-444); }
+.agent-line[hidden] { display: none; }
+.agent-line__state { flex: none; font-weight: 700; }
+.agent-line.is-running .agent-line__state { color: var(--claude); }
+.agent-line.is-stopped .agent-line__state, .agent-line.is-stopped .agent-line__sq { color: var(--red); background: var(--red); }
+.agent-line.is-stopped .agent-line__state { background: none; }
+.agent-line__open { all: unset; flex: none; cursor: pointer; color: var(--gray-767); border-bottom: 1px solid var(--gray-ddd); }
+.agent-line__open:hover { color: var(--black); border-bottom-color: currentColor; }
+.agent-line__open:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.agent-dialog { height: calc(100vh - 64px); }
+.agent-dialog__heading { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.agent-dialog__title { font-size: 15px; font-weight: 700; letter-spacing: var(--tracking-bold); overflow-wrap: anywhere; }
+.agent-dialog__meta { font-family: var(--font-mono); font-size: 12px; color: var(--gray-666); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-dialog__body { flex: 1; min-height: 0; padding: 20px 24px 24px; }
+
 /* ── Narrow widths: drop the files aside, then the nav ───────── */
 @media (max-width: 1100px) {
   .chat-shell.has-files { grid-template-columns: 260px minmax(0, 1fr); }

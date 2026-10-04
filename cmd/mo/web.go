@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
 	"github.com/rvanmech/unky-mo/internal/github"
@@ -49,6 +50,7 @@ func webCmd() *cobra.Command {
 				Terminals:  web.NewTerminals(tmuxClient),
 				ClaudePane: web.NewClaudePane(tmuxClient),
 				Shells:     web.NewShells(),
+				Subagents:  claude.NewSubagentReader(),
 				Agents:     cfg.Agents,
 			}
 
