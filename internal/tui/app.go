@@ -194,6 +194,8 @@ type Model struct {
 	statusSub      <-chan status.StatusChange // subscription to status changes
 	statusMsg      string
 	startupNotice  string // emitted once as a statusMsgEvent from Init
+	startupSticky  bool   // startupNotice stays up until a keypress (e.g. web CA not trusted)
+	statusSticky   bool   // statusMsg came from a stickyStatusMsgEvent
 	activeSessions     int
 	attentionCount     int
 	gitStatuses    map[string]project.GitStatus // project path → git status
@@ -496,7 +498,11 @@ func (m Model) Init() tea.Cmd {
 	}
 	if m.startupNotice != "" {
 		notice := m.startupNotice
-		cmds = append(cmds, func() tea.Msg { return statusMsgEvent(notice) })
+		if m.startupSticky {
+			cmds = append(cmds, func() tea.Msg { return stickyStatusMsgEvent(notice) })
+		} else {
+			cmds = append(cmds, func() tea.Msg { return statusMsgEvent(notice) })
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -545,11 +551,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		// Clear sticky error messages on any keypress
-		if m.statusMsg != "" {
-			lower := strings.ToLower(m.statusMsg)
-			if strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "err:") {
-				m.statusMsg = ""
-			}
+		if m.statusMsg != "" && (m.statusSticky || isErrorStatus(m.statusMsg)) {
+			m.statusMsg = ""
+			m.statusSticky = false
 		}
 
 		// Don't intercept keys when filtering
@@ -1436,13 +1440,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}),
 		)
 
+	case stickyStatusMsgEvent:
+		// Rendered as its own block (dashboardView), not in the list's
+		// half-width status line.
+		m.statusMsg = string(msg)
+		m.statusSticky = true
+		m.list.NewStatusMessage("")
+		return m, nil
+
 	case statusMsgEvent:
 		m.statusMsg = string(msg)
+		m.statusSticky = false
 		m.list.NewStatusMessage(m.statusMsg)
 		// Auto-clear success messages after 4s; errors stay until user presses a key
-		lower := strings.ToLower(m.statusMsg)
-		isError := strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "err:")
-		if !isError {
+		if !isErrorStatus(m.statusMsg) {
 			return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
 				return clearStatusMsg{}
 			})
@@ -1450,6 +1461,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case clearStatusMsg:
+		if m.statusSticky {
+			return m, nil // an earlier message's timer; the sticky one waits for a key
+		}
 		m.statusMsg = ""
 		return m, nil
 
@@ -1971,8 +1985,19 @@ func (m Model) dashboardView() string {
 		}
 	}
 
+	// A sticky notice (e.g. the web CA isn't trusted, with the command that
+	// fixes it) gets its own full-width block: the list's status line only
+	// spans the left panel and would cut the instructions off.
+	stickyNotice := ""
+	if m.statusSticky && m.statusMsg != "" {
+		stickyNotice = notifBadgeStyle.Width(totalWidth).Render(m.statusMsg)
+	}
+
 	// Resize list to fit the left panel
 	footerHeight := 6
+	if stickyNotice != "" {
+		footerHeight += lipgloss.Height(stickyNotice)
+	}
 	m.list.SetSize(leftWidth, m.height-footerHeight)
 
 	// === Left panel: project list ===
@@ -2137,11 +2162,12 @@ func (m Model) dashboardView() string {
 		})
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		body,
-		usageStrip,
-		footer,
-	)
+	parts := []string{body}
+	if stickyNotice != "" {
+		parts = append(parts, stickyNotice)
+	}
+	parts = append(parts, usageStrip, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // renderUsageStrip renders the dashboard footer line showing 5h + weekly
@@ -3897,6 +3923,17 @@ func installHomeRespawnHooks(tc *ttmux.Client) {
 }
 
 type statusMsgEvent string
+
+// isErrorStatus reports whether a status message reads as an error, which
+// keeps it up until a keypress instead of auto-clearing.
+func isErrorStatus(msg string) bool {
+	lower := strings.ToLower(msg)
+	return strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "err:")
+}
+
+// stickyStatusMsgEvent is a status message that stays until a keypress
+// even though it isn't an error.
+type stickyStatusMsgEvent string
 type clearStatusMsg struct{}
 
 // worktreeExistsMsg signals that a worktree for the requested branch already
@@ -5019,8 +5056,9 @@ func (m Model) attachSession() tea.Cmd {
 }
 
 // startupNotice, if non-empty, is shown in the status bar on first paint
-// (e.g. results of the CLI's pre-TUI installation checks).
-func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project, startupNotice string) error {
+// (e.g. results of the CLI's pre-TUI installation checks); startupSticky
+// keeps it there until a keypress instead of the usual 4s.
+func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project, startupNotice string, startupSticky bool) error {
 	var tc *ttmux.Client
 	if ttmux.IsInsideTmux() {
 		// Use the actual current session — the user may be in a session
@@ -5051,6 +5089,7 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 
 	m := NewModel(projects, tc, ns, stateFilePath, ticketsCfg, agents, workspaceDirs, manualProjects)
 	m.startupNotice = startupNotice
+	m.startupSticky = startupSticky
 	p := tea.NewProgram(m)
 	final, err := p.Run()
 

@@ -93,8 +93,14 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading projects: %w", err)
 	}
-	notice := strings.Join(startupChecks(cfg), " · ")
-	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents, cfg.WorkspaceDirs, cfg.Projects, notice)
+	notices, warning := startupChecks(cfg)
+	notice := strings.Join(notices, " · ")
+	sticky := warning != ""
+	if sticky {
+		// The warning is several lines; the other notices go below it.
+		notice = strings.TrimSuffix(warning+"\n"+notice, "\n")
+	}
+	return tui.Run(projects, cfg.TmuxSession, cfg.SocketPath, cfg.StateFilePath, cfg.Tickets, cfg.Agents, cfg.WorkspaceDirs, cfg.Projects, notice, sticky)
 }
 
 func listCmd() *cobra.Command {

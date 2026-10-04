@@ -411,7 +411,7 @@ Multiple `[[tickets.jira]]` blocks are supported for people with more than one A
 ## Web Dashboard
 
 ```bash
-mo web                  # serve on http://127.0.0.1:7890
+mo web                  # serve on https://127.0.0.1:7890
 mo web --addr :8080     # custom address
 ```
 
@@ -421,7 +421,35 @@ You usually don't need to run it yourself: the TUI starts it on launch in a deta
 [web]
 addr = ":7890"      # default
 disabled = false    # true = don't start it with the TUI
+# disable_tls = true                  # serve plain HTTP instead of HTTPS
+# cert_file = "/path/to/cert.pem"     # use your own cert (e.g. mkcert, `tailscale cert`)
+# key_file  = "/path/to/key.pem"      #   instead of the generated one; set both
 ```
+
+### HTTPS
+
+`mo web` serves HTTPS by default, so your login, transcripts and prompts aren't readable by anyone else on the network. On first start it creates a **local certificate authority** in `~/.config/unky-mo/tls/` and uses it to sign the server's certificate (the same approach as [mkcert](https://github.com/FiloSottile/mkcert)). It uses only Go's standard library, so it works the same on macOS and Linux.
+
+- **The CA is created once and kept.** Later starts reuse it, so a browser or phone you set up stays set up. Only `mo web tls regen --ca` replaces it.
+- **The server certificate renews itself.** It's re-signed automatically when it's close to expiring, or when the machine gets a name or IPv4 address it doesn't cover yet (a new DHCP lease, a VPN). It covers `localhost`, `127.0.0.1`, `::1`, your hostname (plain and `.local`) and every IPv4 address of your network interfaces.
+- **Old `http://` links still work:** plain HTTP on the same port is redirected to `https://`.
+
+**Trusting the CA.** Browsers show a "Not secure" warning until the CA is trusted. On every start the TUI checks whether this machine trusts it. If it doesn't, the bottom of the dashboard shows the exact commands to run until you press a key:
+
+- On macOS it checks the system keychain, which Safari and Chrome use.
+- On Linux it checks the system trust store, plus Chrome's own certificate database (`~/.pki/nssdb`), because Chrome on Linux ignores the system store.
+
+After running the commands, press `ctrl+alt+r` to re-check. **Fully restart Chrome via `chrome://restart`.** Closing its windows isn't enough, because Chrome keeps running in the background and only picks up new CAs when it starts.
+
+For Firefox, phones and other computers, run:
+
+```bash
+mo web tls trust        # step-by-step instructions for this machine, Firefox, iPhone/iPad, Android, other OSes
+mo web tls status       # CA fingerprint, names the cert covers, expiry, whether this machine trusts it
+mo web tls regen        # re-issue the server cert (--ca: also a new CA; every device must trust it again)
+```
+
+When installing the CA on another device, check that its SHA-256 fingerprint matches the one `mo web tls trust` prints.
 
 A dashboard — sessions, usage, projects, worktrees/branches, pull requests, and Jira tickets — viewable in a browser. It's a separate process from the TUI: it doesn't need to run inside tmux, and it reads the same shared state file the sidebars use rather than talking to tmux directly, so it's safe to leave running alongside (or instead of) the TUI.
 
@@ -464,7 +492,9 @@ mo jira fetch                   # Run one Jira fetch and print result (diagnosti
 mo jira issue <KEY>             # Print one issue's metadata + description (diagnostic)
 mo jira show-token              # Print current Jira API token
 mo debug <project>              # Dump session/worktree debug info
-mo web [--addr host:port]       # Serve the web dashboard + chat view
+mo web [--addr host:port]       # Serve the web dashboard + chat view (HTTPS)
+mo web auth set|status|clear    # Manage the web dashboard login
+mo web tls status|trust|regen   # Inspect / trust / re-issue the web dashboard's certificate
 mo version                      # Print version
 ```
 

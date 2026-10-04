@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
@@ -40,11 +41,12 @@ func installStatusHooks() (script string, changed bool, err error) {
 }
 
 // startupChecks brings the installation up to date before the TUI starts
-// (hooks, background web server) and returns notices for the status bar.
-// Runs on every TUI start, including ctrl+alt+r, so it must be idempotent
-// and cheap when nothing changed. Failures are reported, never fatal.
-func startupChecks(cfg *config.Config) []string {
-	var notices []string
+// (hooks, web certificate, background web server) and returns notices for
+// the status bar, plus a warning that should stay up until a keypress
+// (the web CA isn't trusted yet). Runs on every TUI start, including
+// ctrl+alt+r, so it must be idempotent and cheap when nothing changed.
+// Failures are reported, never fatal.
+func startupChecks(cfg *config.Config) (notices []string, warning string) {
 
 	if _, changed, err := installStatusHooks(); err != nil {
 		notices = append(notices, "hook setup failed: "+err.Error())
@@ -56,21 +58,32 @@ func startupChecks(cfg *config.Config) []string {
 		creds, err := web.LoadCredentials(webCredentialsPath())
 		if err != nil {
 			notices = append(notices, "web failed: "+err.Error())
-			return notices
+			return notices, ""
 		}
 		addr, lanBlocked := webStartupAddr(cfg.Web.ListenAddr(), creds != nil)
+		scheme := "http"
+		if !cfg.Web.DisableTLS {
+			scheme = "https"
+			// Made here rather than only in `mo web` so the trust check
+			// below sees the cert the server is about to serve.
+			if _, res, err := loadWebTLS(cfg.Web, addr); err != nil {
+				notices = append(notices, "web TLS failed: "+err.Error())
+			} else if res != nil {
+				warning = trustWarning(checkWebTrust(res), runtime.GOOS, res.Files.CA, web.CommandExists)
+			}
+		}
 		ctx := ops.NewContext(tmux.NewClient(cfg.TmuxSession))
 		if err := ops.EnsureWebServer(ctx, addr); err != nil {
 			notices = append(notices, "web failed: "+err.Error())
 		} else {
-			note := "web: " + strings.Join(webURLs(addr, lanIPv4()), " · ")
+			note := "web: " + strings.Join(webURLs(scheme, addr, lanIPv4()), " · ")
 			if lanBlocked {
 				note += " (localhost only — run 'mo web auth set' for LAN access)"
 			}
 			notices = append(notices, note)
 		}
 	}
-	return notices
+	return notices, warning
 }
 
 // webStartupAddr narrows a non-loopback addr to 127.0.0.1 on the same port
@@ -90,22 +103,23 @@ func webStartupAddr(addr string, haveCreds bool) (string, bool) {
 // webURLs lists the URLs a listen address is reachable at: localhost for
 // loopback or wildcard binds, plus lanIP for wildcard binds; an explicit
 // host is shown as-is.
-func webURLs(addr, lanIP string) []string {
+func webURLs(scheme, addr, lanIP string) []string {
+	prefix := scheme + "://"
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return []string{"http://" + addr}
+		return []string{prefix + addr}
 	}
 	switch {
 	case host == "" || host == "0.0.0.0" || host == "::":
-		urls := []string{"http://localhost:" + port}
+		urls := []string{prefix + "localhost:" + port}
 		if lanIP != "" {
-			urls = append(urls, "http://"+net.JoinHostPort(lanIP, port))
+			urls = append(urls, prefix+net.JoinHostPort(lanIP, port))
 		}
 		return urls
 	case web.IsLoopbackAddr(addr):
-		return []string{"http://localhost:" + port}
+		return []string{prefix + "localhost:" + port}
 	default:
-		return []string{"http://" + net.JoinHostPort(host, port)}
+		return []string{prefix + net.JoinHostPort(host, port)}
 	}
 }
 

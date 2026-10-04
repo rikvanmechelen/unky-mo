@@ -36,6 +36,13 @@ const defaultWebAddr = ":7890"
 type WebConfig struct {
 	Disabled bool   `toml:"disabled"`
 	Addr     string `toml:"addr"` // default ":7890" — all interfaces (localhost + LAN)
+	// mo web serves HTTPS by default, with a cert signed by a local CA it
+	// creates in <config dir>/tls. DisableTLS serves plain HTTP instead.
+	DisableTLS bool `toml:"disable_tls"`
+	// CertFile/KeyFile use your own cert (e.g. from mkcert or `tailscale
+	// cert`) instead of the generated one. Set both or neither.
+	CertFile string `toml:"cert_file"`
+	KeyFile  string `toml:"key_file"`
 }
 
 // ListenAddr returns Addr, or the default when unset. A method rather than a

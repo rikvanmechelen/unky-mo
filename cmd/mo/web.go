@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -71,13 +73,40 @@ func webCmd() *cobra.Command {
 				authNote = "basic auth as " + creds.Username
 			}
 
-			fmt.Printf("mo web listening on http://%s (%s)\n", addr, authNote)
-			return http.ListenAndServe(addr, handler)
+			if cfg.Web.DisableTLS {
+				fmt.Printf("mo web listening on http://%s (%s, TLS disabled)\n", addr, authNote)
+				return http.ListenAndServe(addr, handler)
+			}
+
+			cert, res, err := loadWebTLS(cfg.Web, addr)
+			if err != nil {
+				return fmt.Errorf("tls: %w", err)
+			}
+			srv := &http.Server{
+				Handler:           handler,
+				TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+				ReadHeaderTimeout: 10 * time.Second,
+			}
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("mo web listening on https://%s (%s)\n", addr, authNote)
+			if res != nil {
+				if res.NewCA {
+					fmt.Printf("created a local CA: %s — run 'mo web tls trust' to trust it\n", res.Files.CA)
+				}
+				fmt.Printf("CA sha256 %s\n", web.Fingerprint(res.CA))
+			}
+			return web.ServeTLSOrRedirect(ln, srv, func(host string) bool {
+				return cert.Leaf != nil && cert.Leaf.VerifyHostname(host) == nil
+			})
 		},
 	}
 
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:7890", "address to listen on")
 	cmd.AddCommand(webAuthCmd())
+	cmd.AddCommand(webTLSCmd())
 	return cmd
 }
 
