@@ -82,6 +82,7 @@ function createTerminalDrawer(root) {
           open = true;
           lastOutput = null;
           render();
+          focusInput();
           refreshOutput();
         });
         return tab;
@@ -95,6 +96,14 @@ function createTerminalDrawer(root) {
     body.hidden = !open || !any;
     form.hidden = !selected || isShell(selected); // shells are read-only
     closeBtn.hidden = !selected || isShell(selected);
+  }
+
+  // focusInput puts the caret in the command line once the drawer opens on
+  // a writable terminal, so typing works without another click. Not on touch
+  // devices, where focusing would pop the on-screen keyboard over the output.
+  function focusInput() {
+    if (form.hidden || body.hidden || window.matchMedia("(pointer: coarse)").matches) return;
+    input.focus({ preventScroll: true });
   }
 
   async function call(method, path, payload) {
@@ -189,6 +198,7 @@ function createTerminalDrawer(root) {
       open = true;
       lastOutput = null;
       await refreshList();
+      focusInput();
       setTimeout(refreshOutput, 300); // give the shell a moment to print its prompt
     } catch (err) {
       setError(err.message);
@@ -223,7 +233,7 @@ function createTerminalDrawer(root) {
   toggleBtn.addEventListener("click", () => {
     open = !open;
     render();
-    if (open) refreshOutput();
+    if (open) { focusInput(); refreshOutput(); }
   });
 
   document.addEventListener("visibilitychange", () => { refreshList(); refreshOutput(); });
