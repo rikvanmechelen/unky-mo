@@ -379,10 +379,11 @@ h1, h2 {
 .chat-panel[hidden], .editor-panel[hidden] { display: none; }
 .editor-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .editor-pane[hidden] { display: none; }
-.editor-pane__bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 6px 20px; border-bottom: 1px solid var(--gray-eee); font-size: 12px; min-width: 0; }
-.editor-pane__path { font-family: var(--font-mono); color: var(--gray-444); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.editor-pane__bar { flex: none; display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; padding: 6px 20px; border-bottom: 1px solid var(--gray-eee); font-size: 12px; min-width: 0; }
+.editor-pane__actions { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.editor-pane__path { flex: 0 1 auto; font-family: var(--font-mono); color: var(--gray-444); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .editor-pane__status { flex: none; color: var(--gray-767); }
-.editor-pane__spacer { flex: 1; }
+.editor-pane__kind { flex: none; padding: 1px 6px; background: var(--gray-eee); color: var(--gray-444); font-size: 11px; }
 .editor-pane__btn { all: unset; cursor: pointer; flex: none; color: var(--gray-444); border-bottom: 1px solid var(--gray-ddd); }
 .editor-pane__btn:hover { color: var(--black); border-bottom-color: currentColor; }
 .editor-pane__btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
@@ -394,6 +395,25 @@ h1, h2 {
 .editor-pane__banner .editor-pane__btn { color: var(--black); border-bottom-color: currentColor; }
 .editor-pane__banner-text { flex: 1 1 260px; }
 .editor-pane__host { flex: 1; min-height: 0; }
+/* Diff tabs: a side-by-side MergeView scrolls as a whole; an inline
+ * (unified) diff is a single editor that scrolls itself. */
+.editor-pane__host.is-diff .cm-mergeView { height: 100%; overflow-y: auto; }
+.editor-pane__host.is-diff .cm-mergeView .cm-editor { height: auto !important; }
+.editor-pane__host .cm-changedLine, .editor-pane__host .cm-inlineChangedLine { background: #e6f4ea !important; }
+.editor-pane__host .cm-changedText { background: #b8e0c4 !important; }
+.editor-pane__host .cm-deletedChunk, .editor-pane__host .cm-mergeView .cm-merge-a .cm-changedLine { background: #fde8ea !important; }
+.editor-pane__host .cm-deletedChunk .cm-deletedText, .editor-pane__host .cm-merge-a .cm-changedText { background: #f7c1c8 !important; }
+.editor-pane__host .cm-collapsedLines { background: var(--gray-f6); color: var(--gray-666); font-family: var(--font-sans); font-size: 12px; }
+.cm-mo-revert {
+  all: unset; cursor: pointer; padding: 0 8px; font-family: var(--font-sans); font-size: 12px; line-height: 1.6;
+  color: var(--white); background: var(--gray-444);
+}
+.cm-mo-revert:hover { background: var(--black); }
+.cm-merge-revert .cm-mo-revert { padding: 0 4px; background: transparent; color: var(--gray-444); font-size: 14px; }
+.cm-merge-revert .cm-mo-revert:hover { color: var(--black); background: var(--gray-eee); }
+.editor-pane__info { flex: none; padding: 6px 20px; font-size: 13px; color: var(--gray-444); background: var(--gray-f6); border-bottom: 1px solid var(--gray-eee); }
+.editor-pane__info[hidden] { display: none; }
+
 .editor-pane__note { padding: 24px 32px; font-size: 14px; color: var(--gray-666); font-style: italic; }
 
 .quick-open {
@@ -831,7 +851,7 @@ button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 
   .chat-nav { display: none; }
   .chat-bar__back { display: inline; }
   .chat-main { border-left: 0; }
-  .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar, .editor-pane__banner { padding-left: 16px; padding-right: 16px; }
+  .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar, .editor-pane__banner, .editor-pane__info { padding-left: 16px; padding-right: 16px; }
   .editor-tabs { padding-left: 4px; padding-right: 16px; }
   .composer__send { min-width: 0; }
 }
