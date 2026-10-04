@@ -248,6 +248,41 @@ const pasteSettle = 150 * time.Millisecond
 // of submitting at the first newline, which typing the text would do. The
 // text goes through a uniquely named buffer that the paste deletes.
 func (c *Client) SendPastedText(target, text string) error {
+	if err := c.paste(target, text); err != nil {
+		return err
+	}
+	time.Sleep(pasteSettle)
+	return c.runTmux("send-keys", "-t", target, "Enter")
+}
+
+// SendPrompt submits a prompt with image attachments: each image path goes
+// in as its own bracketed paste, which Claude Code turns into an
+// "[Image #N]" attachment (the same as a file dropped on the terminal),
+// then the text is pasted after them and the whole prompt is submitted with
+// one Enter. Claude Code adds no space after an image tag, so the text is
+// pasted with a leading one.
+func (c *Client) SendPrompt(target, text string, imagePaths []string) error {
+	for _, p := range imagePaths {
+		if err := c.paste(target, p); err != nil {
+			return err
+		}
+		time.Sleep(pasteSettle)
+	}
+	if text != "" {
+		if len(imagePaths) > 0 {
+			text = " " + text
+		}
+		if err := c.paste(target, text); err != nil {
+			return err
+		}
+		time.Sleep(pasteSettle)
+	}
+	return c.runTmux("send-keys", "-t", target, "Enter")
+}
+
+// paste delivers text to target as one bracketed paste (paste-buffer -p),
+// through a uniquely named buffer that the paste deletes.
+func (c *Client) paste(target, text string) error {
 	buf := fmt.Sprintf("mo-paste-%d", time.Now().UnixNano())
 	if err := c.runTmux("set-buffer", "-b", buf, "--", text); err != nil {
 		return err
@@ -256,8 +291,7 @@ func (c *Client) SendPastedText(target, text string) error {
 		_ = c.runTmux("delete-buffer", "-b", buf)
 		return err
 	}
-	time.Sleep(pasteSettle)
-	return c.runTmux("send-keys", "-t", target, "Enter")
+	return nil
 }
 
 // SwitchToWindow switches the client to the specified window.

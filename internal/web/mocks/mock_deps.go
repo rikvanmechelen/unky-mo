@@ -300,6 +300,20 @@ func (mr *MockPromptSenderMockRecorder) SendPastedText(target, text any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendPastedText", reflect.TypeOf((*MockPromptSender)(nil).SendPastedText), target, text)
 }
 
+// SendPrompt mocks base method.
+func (m *MockPromptSender) SendPrompt(target, text string, imagePaths []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SendPrompt", target, text, imagePaths)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SendPrompt indicates an expected call of SendPrompt.
+func (mr *MockPromptSenderMockRecorder) SendPrompt(target, text, imagePaths any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendPrompt", reflect.TypeOf((*MockPromptSender)(nil).SendPrompt), target, text, imagePaths)
+}
+
 // MockSessionHistory is a mock of SessionHistory interface.
 type MockSessionHistory struct {
 	ctrl     *gomock.Controller

@@ -356,3 +356,36 @@ func TestIntegrationSendPastedTextBracketsThePaste(t *testing.T) {
 		t.Errorf("paste buffer left behind: %s", bufs)
 	}
 }
+
+// TestIntegrationSendPromptPastesPathsThenText checks that SendPrompt pastes
+// each image path on its own (Claude Code only turns a paste that is a lone
+// image path into an attachment), then the text with a leading space, then
+// a single Enter.
+func TestIntegrationSendPromptPastesPathsThenText(t *testing.T) {
+	c := newTestClient(t)
+	out := filepath.Join(t.TempDir(), "pasted")
+	script := `printf '\033[?2004h'; exec cat -v > ` + out
+	pane, err := c.tmuxCmd("new-window", "-d", "-t", c.SessionName, "-P", "-F", "#{pane_id}", "sh", "-c", script).Output()
+	if err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+	target := strings.TrimSpace(string(pane))
+	time.Sleep(300 * time.Millisecond) // let printf switch the mode on
+
+	if err := c.SendPrompt(target, "what is\nthis", []string{"/tmp/a.png", "/tmp/b.png"}); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "^[[200~/tmp/a.png^[[201~^[[200~/tmp/b.png^[[201~^[[200~ what is\nthis^[[201~\n"
+	if string(got) != want {
+		t.Errorf("pane received %q, want %q", got, want)
+	}
+	if bufs, _ := c.tmuxCmd("list-buffers").Output(); strings.Contains(string(bufs), "mo-paste-") {
+		t.Errorf("paste buffer left behind: %s", bufs)
+	}
+}

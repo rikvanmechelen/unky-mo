@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rvanmech/unky-mo/internal/state"
 	mock_web "github.com/rvanmech/unky-mo/internal/web/mocks"
@@ -179,5 +180,77 @@ func TestHandlePromptStripsControlCharacters(t *testing.T) {
 	rec := postPrompt(t, srv, "@5", `{"text":"> line \u001b[201~ rest\n\tindented\u0007"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Attachments are ids; the handler resolves them to the stored files and
+// hands those paths, in order, to SendPrompt.
+func TestHandlePromptWithAttachmentsSendsResolvedPaths(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	a, _ := store.Save("@5", strings.NewReader(pngHeader))
+	b, _ := store.Save("@5", strings.NewReader("GIF89a"))
+	pa, _ := store.Path("@5", a)
+	pb, _ := store.Path("@5", b)
+
+	ctrl := gomock.NewController(t)
+	mockPrompts := mock_web.NewMockPromptSender(ctrl)
+	mockPrompts.EXPECT().SendPrompt("test:@5.0", "what is\nthis", []string{pb, pa}).Return(nil)
+
+	srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+	rec := postPrompt(t, srv, "@5", `{"text":"what is\nthis","attachments":["`+b+`","`+a+`"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlePromptImageOnly(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	a, _ := store.Save("@5", strings.NewReader(pngHeader))
+	pa, _ := store.Path("@5", a)
+
+	mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
+	mockPrompts.EXPECT().SendPrompt("test:@5.0", "", []string{pa}).Return(nil)
+
+	srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+	rec := postPrompt(t, srv, "@5", `{"text":"  ","attachments":["`+a+`"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// An id that isn't in this window's store (another window's, expired, or a
+// path) is refused before anything reaches the pane.
+func TestHandlePrompt400OnUnknownAttachment(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	other, _ := store.Save("@6", strings.NewReader(pngHeader))
+
+	for _, id := range []string{other, "../../etc/passwd", "/etc/passwd"} {
+		// No PromptSender expectations: any send fails the test.
+		mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
+		srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+		rec := postPrompt(t, srv, "@5", `{"text":"hi","attachments":["`+id+`"]}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("attachment %q: want 400, got %d", id, rec.Code)
+		}
+	}
+}
+
+func TestHandlePrompt409WithAttachmentsWhenBusy(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	a, _ := store.Save("@5", strings.NewReader(pngHeader))
+
+	srv := NewServer(Deps{State: liveState(t, "@5", "active"), Attachments: store}, 0, "test")
+	rec := postPrompt(t, srv, "@5", `{"text":"hi","attachments":["`+a+`"]}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: want 409, got %d", rec.Code)
+	}
+}
+
+func TestHandlePrompt400OnTooManyAttachments(t *testing.T) {
+	ids := strings.Repeat(`"x",`, maxPromptAttachments) + `"x"`
+	srv := NewServer(Deps{}, 0, "test")
+	rec := postPrompt(t, srv, "@5", `{"text":"hi","attachments":[`+ids+`]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: want 400, got %d", rec.Code)
 	}
 }

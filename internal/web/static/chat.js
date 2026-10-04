@@ -63,6 +63,7 @@ function describeUserString(msg, text) {
     return clean ? { kind: "meta", text: clean } : { kind: "skip" };
   }
   if (isMetaContent(text)) return { kind: "meta", text };
+  if (/^\[Request interrupted[^\]]*\]$/.test(text.trim())) return { kind: "meta", text: text.trim().slice(1, -1) };
   return { kind: "user", text };
 }
 
@@ -264,7 +265,9 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     if (pinned) scrollToBottom();
   }
 
-  function appendBubble(kind, text) {
+  // appendBubble adds one transcript row. images (user rows only) are data:
+  // URLs shown as thumbnails under the text.
+  function appendBubble(kind, text, images = []) {
     if (kind === "meta") {
       transcript.appendChild(el("div", { class: "msg-system" }, [
         el("span", { class: "msg-system__text", text }),
@@ -273,9 +276,15 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       return;
     }
     if (kind === "user") {
+      const thumbs = images.map((src) => {
+        const btn = el("button", { type: "button", class: "msg-user__image", "aria-label": "View image" }, [el("img", { src, alt: "" })]);
+        btn.addEventListener("click", () => openImageViewer(src));
+        return btn;
+      });
       transcript.appendChild(el("div", { class: "msg-user" }, [
         el("span", { class: "msg-user__label", text: userLabel }),
-        el("span", { class: "msg-user__text", text }),
+        ...(text ? [el("span", { class: "msg-user__text", text })] : []),
+        ...(thumbs.length ? [el("div", { class: "msg-user__images" }, thumbs)] : []),
       ]));
       return;
     }
@@ -439,7 +448,23 @@ function createTranscriptView(container, scrollEl, opts = {}) {
           fillToolResult(block, msg.toolUseResult);
         }
       }
+      // A prompt with pasted images is an array of text + image blocks.
+      const text = (content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      const images = (content || []).map(imageSrc).filter(Boolean);
+      if (!text && !images.length) return;
+      const d = describeUserString(msg, text);
+      if (d.kind === "user") appendBubble("user", d.text, images);
+      else if (d.kind === "meta") appendBubble("meta", d.text);
     }
+  }
+
+  // imageSrc turns an image block into a data: URL, for the image types
+  // Claude Code attaches only (an SVG data: URL could carry script).
+  function imageSrc(block) {
+    const src = block.type === "image" && block.source;
+    if (!src || src.type !== "base64" || !ATTACHABLE_TYPES.includes(src.media_type)) return null;
+    if (typeof src.data !== "string" || !/^[A-Za-z0-9+/=]+$/.test(src.data)) return null;
+    return `data:${src.media_type};base64,${src.data}`;
   }
 
   // parentOf follows a compaction boundary (a new root) back to the
@@ -512,6 +537,15 @@ function main() {
   const promptInput = document.getElementById("prompt-input");
   const sendBtn = document.getElementById("send-btn");
   const sendError = document.getElementById("send-error");
+  const attachments = createAttachments({
+    strip: document.getElementById("attachments"),
+    button: document.getElementById("attach-btn"),
+    pasteTarget: promptInput,
+    dropTarget: composer.closest(".chat-footer"),
+    getWindowID: () => windowID,
+    onChange: () => {},
+    onError: (msg) => { sendError.textContent = msg; },
+  });
   const permissionBanner = document.getElementById("permission-banner");
   const questionBanner = document.getElementById("question-banner");
   const chatNotice = document.getElementById("chat-notice");
@@ -587,13 +621,13 @@ function main() {
     });
   }
 
-  async function sendPrompt(text) {
+  async function sendPrompt(text, attachmentIDs = []) {
     sendError.textContent = "";
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, attachments: attachmentIDs }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -607,12 +641,33 @@ function main() {
     }
   }
 
-  // shift+tab in the message box cycles the permission mode, as it does in
-  // Claude Code.
+  // The message box grows with its text, up to a cap set in CSS.
+  function autosize() {
+    promptInput.style.height = "auto";
+    promptInput.style.height = `${promptInput.scrollHeight + promptInput.offsetHeight - promptInput.clientHeight}px`;
+  }
+  promptInput.addEventListener("input", autosize);
+
+  function setPrompt(text) {
+    promptInput.value = text;
+    autosize();
+  }
+
+  // Phone keyboards have no shift+enter, so there Enter adds a line and only
+  // the Send button sends.
+  const enterAddsLine = window.matchMedia("(pointer: coarse)").matches;
+
   promptInput.addEventListener("keydown", (e) => {
+    // shift+tab cycles the permission mode, as it does in Claude Code.
     if (e.key === "Tab" && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       modeChip.cycle();
+      return;
+    }
+    // Enter sends; shift+enter or alt+enter adds a line, as in Claude Code.
+    if (e.key === "Enter" && !e.isComposing && !e.shiftKey && !e.altKey && !enterAddsLine) {
+      e.preventDefault();
+      if (!sendBtn.disabled) composer.requestSubmit();
     }
   });
 
@@ -620,15 +675,27 @@ function main() {
     e.preventDefault();
     if (!windowID) return;
     const text = promptInput.value.trim();
-    if (!text) return;
+    if (attachments.pending()) {
+      sendError.textContent = "Still uploading images…";
+      return;
+    }
+    if (attachments.failed()) {
+      sendError.textContent = "Remove the images that failed to upload first.";
+      return;
+    }
+    const ids = attachments.ids();
+    if (!text && !ids.length) return;
     if (starting && !everSeen) {
       queued = text;
-      promptInput.value = "";
+      setPrompt("");
       sendError.textContent = "";
       pollStatus();
       return;
     }
-    if (await sendPrompt(text)) promptInput.value = "";
+    if (await sendPrompt(text, ids)) {
+      setPrompt("");
+      attachments.clear();
+    }
   });
 
   function setNotice(text) {
@@ -700,7 +767,8 @@ function main() {
     openedAt = Date.now();
     everSeen = false;
     ended = false;
-    promptInput.value = "";
+    setPrompt("");
+    attachments.clear();
     sendError.textContent = "";
     setNotice(id ? "" : "Pick a session on the left.");
     hideBanners();
@@ -862,7 +930,8 @@ function main() {
       if (queued && status === "idle") {
         const text = queued;
         queued = null;
-        if (!(await sendPrompt(text))) promptInput.value = text; // give it back to retry
+        if (await sendPrompt(text, attachments.ids())) attachments.clear();
+        else setPrompt(text); // give it back to retry
       }
       if (queued) setNotice(`Starting session… your message will be sent when it's ready: “${queued}”`);
 

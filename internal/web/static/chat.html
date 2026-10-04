@@ -41,8 +41,12 @@
       <div class="question-banner" id="question-banner" style="display:none;"></div>
       <div class="agent-strip" id="agent-strip" hidden></div>
       <div class="chat-spinner" id="spinner" hidden></div>
+      <div class="composer-attachments" id="attachments" hidden></div>
       <form class="composer" id="composer">
-        <input class="composer__input" id="prompt-input" type="text" placeholder="Message this session" autocomplete="off">
+        <button class="composer__attach" id="attach-btn" type="button" title="Attach images (or paste / drop them here)" aria-label="Attach images">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <textarea class="composer__input" id="prompt-input" rows="1" placeholder="Message this session" autocomplete="off"></textarea>
         <button class="composer__send" id="send-btn" type="submit">Send</button>
       </form>
       <div class="composer-mode" id="mode-chip" hidden></div>
@@ -79,6 +83,7 @@
 <script src="/subagents.js"></script>
 <script src="/review.js"></script>
 <script src="/editor.js"></script>
+<script src="/attachments.js"></script>
 <script src="/chat.js"></script>
 </body>
 </html>

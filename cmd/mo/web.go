@@ -55,6 +55,9 @@ func webCmd() *cobra.Command {
 				Subagents:  claude.NewSubagentReader(),
 				Agents:     cfg.Agents,
 			}
+			if deps.Attachments, err = web.NewAttachmentStore(); err != nil {
+				return err
+			}
 
 			credsPath := webCredentialsPath()
 			creds, err := web.LoadCredentials(credsPath)

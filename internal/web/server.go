@@ -96,6 +96,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/tickets/{id}", s.handleTicketDetail)
 	s.mux.HandleFunc("GET /api/transcript/{windowID}", s.handleTranscript)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/prompt", s.handlePrompt)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/attachments", s.handleUploadAttachment)
+	s.mux.HandleFunc("DELETE /api/sessions/{windowID}/attachments/{id}", s.handleDeleteAttachment)
 	s.mux.HandleFunc("DELETE /api/sessions/{windowID}", s.handleStopSession)
 	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
 	s.mux.HandleFunc("GET /api/projects/{name}/sessions", s.handleProjectSessions)

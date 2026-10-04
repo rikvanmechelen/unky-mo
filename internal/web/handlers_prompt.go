@@ -11,6 +11,9 @@ import (
 // argument.
 const maxPromptBytes = 64 << 10
 
+// maxPromptAttachments bounds the images sent with one prompt.
+const maxPromptAttachments = 10
+
 // handlePrompt injects a prompt into a live session's tmux pane, gated on
 // the session currently being idle or blocked on an interactive question
 // (status "question" — e.g. AskUserQuestion) — answering is exactly what's
@@ -20,23 +23,30 @@ const maxPromptBytes = 64 << 10
 // actual response is not in this response body — it streams back over the
 // session's already-open /api/transcript/{windowID} SSE connection.
 // Multi-line text goes in as one bracketed paste (SendPastedText).
+// Attachments are ids from /attachments (never paths); their files are
+// pasted ahead of the text and become "[Image #N]" (SendPrompt).
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 
 	var body struct {
-		Text string `json:"text"`
+		Text        string   `json:"text"`
+		Attachments []string `json:"attachments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 	text := strings.TrimSpace(stripControl(strings.ReplaceAll(body.Text, "\r\n", "\n")))
-	if text == "" {
+	if text == "" && len(body.Attachments) == 0 {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("empty prompt"))
 		return
 	}
 	if len(text) > maxPromptBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("prompt is longer than %d bytes", maxPromptBytes))
+		return
+	}
+	if len(body.Attachments) > maxPromptAttachments {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("at most %d images per prompt", maxPromptAttachments))
 		return
 	}
 
@@ -50,14 +60,29 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	paths := make([]string, 0, len(body.Attachments))
+	for _, id := range body.Attachments {
+		p, ok := s.deps.Attachments.Path(windowID, id)
+		if !ok {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("unknown attachment %q (expired? attach it again)", id))
+			return
+		}
+		paths = append(paths, p)
+	}
+
 	target := s.tmuxSession + ":" + windowID + ".0"
-	send := s.deps.Prompts.SendLiteralText
-	if strings.ContainsAny(text, "\r\n") {
+	var err error
+	switch {
+	case len(paths) > 0:
+		err = s.deps.Prompts.SendPrompt(target, text, paths)
+	case strings.ContainsAny(text, "\r\n"):
 		// Typed newlines would submit at the first line; a bracketed
 		// paste arrives as one block (e.g. a review from the editor tabs).
-		send = s.deps.Prompts.SendPastedText
+		err = s.deps.Prompts.SendPastedText(target, text)
+	default:
+		err = s.deps.Prompts.SendLiteralText(target, text)
 	}
-	if err := send(target, text); err != nil {
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to deliver prompt: %w", err))
 		return
 	}

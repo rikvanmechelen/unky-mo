@@ -59,10 +59,12 @@ type TicketSource interface {
 }
 
 // PromptSender injects a prompt into a live session's tmux pane: one line
-// typed literally, or multi-line text as a single bracketed paste.
+// typed literally, multi-line text as a single bracketed paste, or a prompt
+// with image attachments (each image path pasted on its own, then the text).
 type PromptSender interface {
 	SendLiteralText(target, text string) error
 	SendPastedText(target, text string) error
+	SendPrompt(target, text string, imagePaths []string) error
 }
 
 // SessionHistory reads a checkout's past Claude sessions from its JSONL
@@ -162,6 +164,9 @@ type Deps struct {
 	// and cycles its permission mode.
 	ClaudePane ClaudePane
 	Subagents  Subagents
+	// Attachments holds images uploaded from the composer until the prompt
+	// that references them is sent.
+	Attachments *AttachmentStore
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.
@@ -241,6 +246,10 @@ func (r realPromptSender) SendLiteralText(target, text string) error {
 
 func (r realPromptSender) SendPastedText(target, text string) error {
 	return r.client.SendPastedText(target, text)
+}
+
+func (r realPromptSender) SendPrompt(target, text string, imagePaths []string) error {
+	return r.client.SendPrompt(target, text, imagePaths)
 }
 
 // realSessionHistory wraps internal/claude's transcript readers.
