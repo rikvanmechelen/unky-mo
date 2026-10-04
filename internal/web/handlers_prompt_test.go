@@ -162,3 +162,22 @@ type sendFailedError string
 func (e sendFailedError) Error() string { return string(e) }
 
 const errSendFailed = sendFailedError("tmux send-keys failed")
+
+// Escape sequences can't ride along into Claude's terminal (e.g. one that
+// ends a bracketed paste early): control characters other than newline and
+// tab are dropped before sending.
+func TestHandlePromptStripsControlCharacters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	mockState.EXPECT().Read().Return(&state.StateFile{
+		Projects: []state.ProjectState{{WindowID: "@5", SessionID: "s1", Status: "idle"}},
+	}, nil)
+	mockPrompts := mock_web.NewMockPromptSender(ctrl)
+	mockPrompts.EXPECT().SendPastedText("test:@5.0", "> line [201~ rest\n\tindented").Return(nil)
+
+	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	rec := postPrompt(t, srv, "@5", `{"text":"> line \u001b[201~ rest\n\tindented\u0007"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,18 +36,41 @@ func TestResolveRejectsEscapes(t *testing.T) {
 	}
 }
 
+// Symlinks are refused even when they point inside the checkout: they can
+// reach ignored files (.env) or .git, which the editor must never touch.
+func TestResolveRejectsInsideSymlinks(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "sub/a.txt", "x")
+	write(t, root, ".env", "SECRET=1")
+	write(t, root, ".git/hooks/pre-commit", "#!/bin/sh")
+	for link, target := range map[string]string{
+		"alias.txt": "sub/a.txt",
+		"env-link":  ".env",
+		"hook-link": ".git/hooks/pre-commit",
+		"subdir":    "sub",
+	} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{"alias.txt", "env-link", "hook-link", "subdir/a.txt", "subdir/new.txt"} {
+		if _, err := Resolve(root, rel); !errors.Is(err, ErrOutsideRoot) {
+			t.Errorf("Resolve(%q): want ErrOutsideRoot, got %v", rel, err)
+		}
+	}
+	if _, err := WriteFile(root, "hook-link", "evil", "x"); !errors.Is(err, ErrOutsideRoot) {
+		t.Errorf("WriteFile through a symlink into .git: want ErrOutsideRoot, got %v", err)
+	}
+}
+
 func TestResolveAllowsInsidePaths(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "sub/a.txt", "x")
-	if err := os.Symlink("sub/a.txt", filepath.Join(root, "alias.txt")); err != nil {
-		t.Fatal(err)
-	}
 	realRoot, _ := filepath.EvalSymlinks(root)
 
 	cases := map[string]string{
 		"sub/a.txt":        "sub/a.txt",
-		"alias.txt":        "sub/a.txt", // symlink inside the checkout resolves
-		"gone.txt":         "gone.txt",  // deleted file
+		"gone.txt":         "gone.txt", // deleted file
 		"deleted/dir/x.go": "deleted/dir/x.go",
 	}
 	for rel, want := range cases {
@@ -117,6 +141,33 @@ func TestReadHEADRealGit(t *testing.T) {
 	}
 	if _, err := ReadHEAD(ctx, moexec.DefaultCommander, dir, "../x"); !errors.Is(err, ErrOutsideRoot) {
 		t.Errorf("../x: want ErrOutsideRoot, got %v", err)
+	}
+}
+
+// A git failure is an error, not "the file isn't in HEAD" (which would show
+// the whole file as added).
+func TestReadHEADGitFailure(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir() // not a repository
+	write(t, dir, "a.txt", "x")
+	if c, err := ReadHEAD(context.Background(), moexec.DefaultCommander, dir, "a.txt"); err == nil {
+		t.Errorf("outside a repo: want an error, got %+v", c)
+	}
+}
+
+func TestReadHEADNoCommitsYet(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	write(t, dir, "a.txt", "x")
+	if c, err := ReadHEAD(context.Background(), moexec.DefaultCommander, dir, "a.txt"); err != nil || c.Exists {
+		t.Errorf("no commits: want !Exists, got %+v, %v", c, err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
@@ -21,8 +22,8 @@ import (
 const MaxContentBytes = 2 << 20
 
 // ErrOutsideRoot is returned for a path that isn't a plain relative path
-// inside the checkout, or that resolves (through a symlink) outside it.
-var ErrOutsideRoot = errors.New("path is outside the checkout")
+// inside the checkout, or that goes through a symlink.
+var ErrOutsideRoot = errors.New("path is outside the checkout or goes through a symlink")
 
 // Content is one version of a file, for the web editor. Text is only set
 // for a file that exists, is valid UTF-8 without NUL bytes (Binary
@@ -40,11 +41,14 @@ type Content struct {
 
 // Resolve joins a browser-supplied path onto root, refusing anything that
 // isn't a clean relative path (absolute, "..", "./", backslashes) and any
-// path whose symlinks resolve outside root. The returned path is the
-// resolved one. A missing file resolves under its deepest existing
-// ancestor, as long as that ancestor stays inside root.
+// path that goes through a symlink — the file itself or a directory on the
+// way. A symlink, even one pointing inside the checkout, can reach an
+// ignored file like .env or a file under .git (a hook, the config), which
+// the editor must never read or write; and Claude can create symlinks.
+// root itself may be a symlink. A missing file resolves as long as its
+// deepest existing ancestor is a real directory inside root.
 func Resolve(root, rel string) (string, error) {
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, `\`) || filepath.Clean(rel) != rel ||
+	if rel == "" || rel == "." || filepath.IsAbs(rel) || strings.Contains(rel, `\`) || filepath.Clean(rel) != rel ||
 		rel == ".." || strings.HasPrefix(rel, "../") {
 		return "", ErrOutsideRoot
 	}
@@ -53,37 +57,26 @@ func Resolve(root, rel string) (string, error) {
 		return "", err
 	}
 	full := filepath.Join(realRoot, rel)
-	resolved, err := filepath.EvalSymlinks(full)
-	if errors.Is(err, os.ErrNotExist) {
-		// Deleted in the working tree (maybe with its directories): the
-		// deepest ancestor that still exists must resolve inside root.
-		dir, rest := filepath.Dir(full), filepath.Base(full)
-		for {
-			resolvedDir, derr := filepath.EvalSymlinks(dir)
-			if derr == nil {
-				if resolvedDir != realRoot && !within(realRoot, resolvedDir) {
-					return "", ErrOutsideRoot
-				}
-				return filepath.Join(resolvedDir, rest), nil
+	// Walk up from the file to the deepest path that exists (normally the
+	// file itself): it must resolve to itself, i.e. contain no symlink.
+	for p := full; ; p = filepath.Dir(p) {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			if resolved != p {
+				return "", ErrOutsideRoot
 			}
-			if !errors.Is(derr, os.ErrNotExist) || dir == realRoot {
-				return "", derr
-			}
-			dir, rest = filepath.Dir(dir), filepath.Join(filepath.Base(dir), rest)
+			return full, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) || p == realRoot {
+			return "", err
 		}
 	}
-	if err != nil {
-		return "", err
-	}
-	if !within(realRoot, resolved) {
-		return "", ErrOutsideRoot
-	}
-	return resolved, nil
 }
 
-func within(root, path string) bool {
-	r, err := filepath.Rel(root, path)
-	return err == nil && r != "." && r != ".." && !strings.HasPrefix(r, "../")
+// openNoFollow opens path for reading, refusing a symlink that replaced
+// the file since Resolve checked it.
+func openNoFollow(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 }
 
 // ReadFile reads the working-tree version of rel in the checkout at root.
@@ -93,7 +86,7 @@ func ReadFile(root, rel string) (*Content, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(path)
+	f, err := openNoFollow(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &Content{Path: rel}, nil
 	}
@@ -127,9 +120,12 @@ func ReadHEAD(ctx context.Context, cmd moexec.Commander, root, rel string) (*Con
 	}
 	// cat-file -s first so a huge blob is never read into memory.
 	spec := "HEAD:" + rel
-	out, _, err := cmd.Output(ctx, root, "git", "cat-file", "-s", spec)
+	out, stderr, err := cmd.Output(ctx, root, "git", "cat-file", "-s", spec)
 	if err != nil {
-		return &Content{Path: rel}, nil
+		if notInHEAD(string(stderr)) {
+			return &Content{Path: rel}, nil
+		}
+		return nil, fmt.Errorf("git cat-file -s %s: %v: %s", spec, err, strings.TrimSpace(string(stderr)))
 	}
 	var size int64
 	if _, err := fmt.Sscan(string(out), &size); err != nil {
@@ -143,6 +139,19 @@ func ReadHEAD(ctx context.Context, cmd moexec.Commander, root, rel string) (*Con
 		return nil, err
 	}
 	return newContent(rel, data, size), nil
+}
+
+// notInHEAD reports whether git cat-file's stderr says the path isn't in
+// HEAD (a new file) or there is no HEAD yet (no commits), as opposed to
+// git failing.
+func notInHEAD(stderr string) bool {
+	msg := strings.ToLower(stderr)
+	for _, s := range []string{"does not exist in 'head'", "but not in 'head'", "invalid object name", "not a valid object name"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func newContent(rel string, data []byte, size int64) *Content {
@@ -229,12 +238,26 @@ func WriteFile(root, rel, text, baseHash string) (*Content, error) {
 // checkBase returns a *ConflictError unless the file at path hashes to
 // baseHash.
 func checkBase(path, rel, baseHash string) error {
-	data, err := os.ReadFile(path)
+	f, err := openNoFollow(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &ConflictError{Current: &Content{Path: rel}}
 	}
 	if err != nil {
 		return err
+	}
+	defer f.Close()
+	// A file that grew past the cap can't be the (capped) base version.
+	data, err := io.ReadAll(io.LimitReader(f, MaxContentBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > MaxContentBytes {
+		info, _ := f.Stat()
+		size := int64(len(data))
+		if info != nil {
+			size = info.Size()
+		}
+		return &ConflictError{Current: &Content{Path: rel, Exists: true, TooLarge: true, Size: size}}
 	}
 	cur := newContent(rel, data, int64(len(data)))
 	if cur.Hash != baseHash {

@@ -79,6 +79,20 @@ function editorExtensions(path, { onSave, onChange }) {
   ];
 }
 
+// CodeMirror keeps lines joined with "\n", so a CRLF file is edited as LF
+// and converted back on save. eolOf reports a file's line ending: "\r\n"
+// when every break is CRLF, "\n" when there's no CR at all, and null for
+// mixed endings or lone CRs — those open read-only, since saving would
+// rewrite every line ending.
+function eolOf(text) {
+  const cr = (text.match(/\r/g) || []).length;
+  if (!cr) return "\n";
+  const crlf = (text.match(/\r\n/g) || []).length;
+  const lf = (text.match(/\n/g) || []).length;
+  return cr === crlf && lf === crlf ? "\r\n" : null;
+}
+const toLF = (text) => text.replace(/\r\n/g, "\n");
+
 // readOnlyExtensions is the HEAD side of a side-by-side diff: highlighting
 // and search, no editing.
 function readOnlyExtensions(path) {
@@ -238,6 +252,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       view: null, merge: null, layout: null, base: null, etag: null, conflict: null,
       dirty: false, loading: false, saving: false, draftTimer: 0, draftFailed: false,
       original: null, origEtag: null, deleted: false, pendingLine: 0,
+      eol: "\n", mixedEol: false, saveSeq: 0,
     };
     tab.status = el("span", { class: "editor-pane__status" });
     tab.saveBtn = barButton("Save", () => saveTab(tab), "is-primary");
@@ -347,7 +362,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     }
     tab.saveBtn.disabled = !tab.view || tab.deleted || tab.saving || (!dirty && !tab.conflict);
     if (tab.view && !tab.deleted) review.sync(tab.view, tab.path);
-    if (tab.kind === "diff" && tab.view && !tab.deleted) {
+    if (tab.kind === "diff" && tab.view && !tab.deleted && !tab.mixedEol) {
       const c = CM.getChunks(tab.view.state);
       setInfo(tab, c && !c.chunks.length ? "No changes against HEAD." : "");
     }
@@ -388,17 +403,19 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       tab.banner.replaceChildren();
       return;
     }
-    const reload = barButton(current.exists ? "Reload from disk" : "Close tab", () => {
-      if (!current.exists) { tab.dirty = false; closeTab(tab); return; }
+    // A binary or too-large version has no text to reload into the editor.
+    const usable = current.exists && !current.binary && !current.tooLarge;
+    const reload = barButton(usable ? "Reload from disk" : "Close tab", () => {
+      if (!usable) { tab.dirty = false; closeTab(tab); return; }
       applyDisk(tab, current, true);
     });
     const overwrite = barButton("Keep mine and save", () => saveTab(tab, current.hash));
     tab.banner.replaceChildren(
       el("span", { class: "editor-pane__banner-text", text: current.exists
-        ? "This file changed on disk while you were editing it (Claude may have edited it)."
+        ? usable ? "This file changed on disk while you were editing it (Claude may have edited it)." : "This file was replaced on disk by a binary or very large file."
         : "This file was deleted on disk while you were editing it." }),
       reload,
-      ...(current.exists && !current.binary && !current.tooLarge ? [overwrite] : []),
+      ...(usable ? [overwrite] : []),
     );
     tab.banner.hidden = false;
   }
@@ -406,12 +423,14 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   // applyDisk makes a disk version the tab's base and content, discarding
   // any unsaved edits when force is set.
   function applyDisk(tab, data, force) {
-    tab.base = { text: data.text, hash: data.hash };
+    const text = toLF(data.text);
+    tab.eol = eolOf(data.text) || tab.eol;
+    tab.base = { text, hash: data.hash };
     tab.etag = `"${data.hash}"`;
     setConflict(tab, null);
     const old = docText(tab);
-    if (old !== data.text) tab.view.dispatch({ changes: minimalChange(old, data.text) });
-    updateState(tab, force ? "Reloaded " + clockTime() : old !== data.text ? "Updated " + clockTime() : undefined);
+    if (old !== text) tab.view.dispatch({ changes: minimalChange(old, text) });
+    updateState(tab, force ? "Reloaded " + clockTime() : old !== text ? "Updated " + clockTime() : undefined);
   }
 
   // ── Diff views ────────────────────────────────────────────────
@@ -487,7 +506,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
 
   function tabExtensions(tab) {
     const exts = editorExtensions(tab.path, { onSave: () => saveTab(tab), onChange: () => updateState(tab) });
-    return tab.deleted ? [...exts, CM.EditorState.readOnly.of(true)] : [...exts, ...review.extension(tab.path)];
+    if (tab.deleted) return [...exts, CM.EditorState.readOnly.of(true)];
+    return [...exts, ...review.extension(tab.path), ...(tab.mixedEol ? [CM.EditorState.readOnly.of(true)] : [])];
   }
 
   // viewReady runs once a tab has a (new) editor: show its comments and
@@ -520,16 +540,18 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   async function loadOriginal(tab) {
     const r = await fetchVersion(tab, "HEAD", tab.origEtag);
     if (!r) return true;
-    if (!r.ok) {
-      showNote(tab, r.status === 404 ? "This file isn't part of the checkout (or is ignored by git)." : `Couldn't read HEAD: ${r.data.error || r.status}`);
-      return false;
-    }
-    if (r.data.binary || r.data.tooLarge) {
-      showNote(tab, r.data.binary ? "Binary file — no text diff." : "Too large to diff here.");
+    let problem = null;
+    if (!r.ok) problem = r.status === 404 ? "This file isn't part of the checkout (or is ignored by git)." : `Couldn't read HEAD: ${r.data.error || r.status}`;
+    else if (r.data.binary || r.data.tooLarge) problem = r.data.binary ? "Binary file — no text diff." : "Too large to diff here.";
+    if (problem) {
+      // An open editor keeps its (possibly unsaved) text; only say why the
+      // diff can't update.
+      if (tab.view) { setInfo(tab, problem); return true; }
+      showNote(tab, problem);
       return false;
     }
     tab.origEtag = r.etag;
-    setOriginal(tab, r.data.exists ? r.data.text : ""); // a new file diffs against nothing
+    setOriginal(tab, r.data.exists ? toLF(r.data.text) : ""); // a new file diffs against nothing
     return true;
   }
 
@@ -540,12 +562,13 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       return;
     }
     const g = gen;
+    const seq = tab.saveSeq; // a save since this poll started makes its answer stale
     tab.loading = true;
     try {
       if (tab.kind === "diff" && !(await loadOriginal(tab))) return;
       if (g !== gen || !tabs.includes(tab)) return;
       const r = await fetchVersion(tab, "", tab.etag);
-      if (g !== gen || !tabs.includes(tab) || tab.saving || !r) return;
+      if (g !== gen || !tabs.includes(tab) || tab.saving || tab.saveSeq !== seq || !r) return;
       const { data } = r;
       if (!r.ok) {
         if (tab.dirty) return; // keep the edits; the save will report the problem
@@ -595,8 +618,13 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   // saved draft on top of it when there is one.
   function createView(tab, data) {
     const draft = storageGet(draftKey(tab));
-    const doc = draft && typeof draft.text === "string" ? draft.text : data.text;
-    tab.base = { text: data.text, hash: data.hash };
+    const text = toLF(data.text);
+    const eol = eolOf(data.text);
+    tab.eol = eol || "\n";
+    tab.mixedEol = !eol;
+    setInfo(tab, tab.mixedEol ? "Mixed line endings — read-only here, so saving can't rewrite them." : "");
+    const doc = draft && typeof draft.text === "string" && !tab.mixedEol ? draft.text : text;
+    tab.base = { text, hash: data.hash };
     tab.etag = `"${data.hash}"`;
     tab.host.replaceChildren();
     if (tab.kind === "diff") {
@@ -619,19 +647,26 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   async function saveTab(tab, baseHash) {
     if (!tab.view || tab.saving || tab.deleted || !windowID) return;
     if (!tab.dirty && !tab.conflict) return;
+    if (tab.mixedEol) return;
     const g = gen;
+    const key = draftKey(tab); // the window may change while the save is out
     const text = docText(tab);
     tab.saving = true;
+    tab.saveSeq++;
     updateState(tab, "Saving…");
     try {
       const res = await fetch(fileURL(), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: tab.path, text, baseHash: baseHash || tab.base.hash }),
+        body: JSON.stringify({ path: tab.path, text: tab.eol === "\r\n" ? text.replace(/\n/g, "\r\n") : text, baseHash: baseHash || tab.base.hash }),
       });
       const data = await res.json().catch(() => ({}));
-      if (g !== gen || !tabs.includes(tab)) return;
+      if (g !== gen || !tabs.includes(tab)) {
+        if (res.ok) storageSet(key, null); // saved: its draft is done with
+        return;
+      }
       tab.saving = false;
+      tab.saveSeq++;
       if (res.status === 409) {
         tab.etag = data.current?.exists ? `"${data.current.hash}"` : null;
         setConflict(tab, data.current || { exists: false });
@@ -649,6 +684,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       writeDraft(tab);
     } catch (err) {
       tab.saving = false;
+      tab.saveSeq++;
       updateState(tab, `Save failed: ${err.message}`);
     }
   }

@@ -30,7 +30,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
-	text := strings.TrimSpace(strings.ReplaceAll(body.Text, "\r\n", "\n"))
+	text := strings.TrimSpace(stripControl(strings.ReplaceAll(body.Text, "\r\n", "\n")))
 	if text == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("empty prompt"))
 		return
@@ -62,4 +62,17 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{})
+}
+
+// stripControl drops control characters other than newline and tab. The
+// text is typed or pasted into Claude Code's terminal UI, where an escape
+// sequence (e.g. one ending a bracketed paste early, quoted from a file in
+// a review) would act as keystrokes instead of text.
+func stripControl(text string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || (r >= 0x20 && r != 0x7f && !(r >= 0x80 && r < 0xa0)) {
+			return r
+		}
+		return -1
+	}, text)
 }

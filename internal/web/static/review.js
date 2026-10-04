@@ -196,7 +196,11 @@ function createReview({ onChange, onSent }) {
     // message, or null when it was delivered (and the comments cleared).
     async send() {
       if (!comments.length) return "No comments to send.";
-      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/prompt`, {
+      // Only what was sent is cleared afterwards: comments added meanwhile
+      // stay, and a window switch mid-request leaves the new window alone.
+      const sent = new Set(comments.map((c) => c.id));
+      const win = windowID;
+      const res = await fetch(`/api/sessions/${encodeURIComponent(win)}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: formatReview(comments) }),
@@ -205,7 +209,14 @@ function createReview({ onChange, onSent }) {
         const data = await res.json().catch(() => ({}));
         return res.status === 409 ? "Claude is busy — send the review once the session is idle." : data.error || `request failed (${res.status})`;
       }
-      this.clear();
+      if (win !== windowID) {
+        const left = (storageGet(REVIEW_KEY + win) || []).filter((c) => !sent.has(c.id));
+        storageSet(REVIEW_KEY + win, left.length ? left : null);
+        return null;
+      }
+      const paths = comments.filter((c) => sent.has(c.id)).map((c) => c.path);
+      comments = comments.filter((c) => !sent.has(c.id));
+      changed(...paths);
       onSent();
       return null;
     },
