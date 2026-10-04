@@ -130,3 +130,64 @@ func TestReadHEADTooLargeSkipsBlob(t *testing.T) {
 		t.Errorf("big.txt: want TooLarge, got exists=%v tooLarge=%v size=%d err=%v", c.Exists, c.TooLarge, c.Size, err)
 	}
 }
+
+func TestWriteFile(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "a.sh", "echo one\n")
+	if err := os.Chmod(filepath.Join(root, "a.sh"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := ReadFile(root, "a.sh")
+
+	got, err := WriteFile(root, "a.sh", "echo two\n", orig.Hash)
+	if err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	disk, _ := os.ReadFile(filepath.Join(root, "a.sh"))
+	if string(disk) != "echo two\n" || got.Text != "echo two\n" || got.Hash == orig.Hash {
+		t.Errorf("after write: disk %q, got %+v", disk, got)
+	}
+	if info, _ := os.Stat(filepath.Join(root, "a.sh")); info.Mode().Perm() != 0o750 {
+		t.Errorf("mode: want 0750, got %v", info.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 1 {
+		t.Errorf("temp file left behind: %v", entries)
+	}
+
+	// The stale base hash now conflicts, and the conflict carries the
+	// current version; the file is untouched.
+	_, err = WriteFile(root, "a.sh", "echo three\n", orig.Hash)
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) || conflict.Current.Text != "echo two\n" {
+		t.Fatalf("stale base: want ConflictError with current text, got %v", err)
+	}
+	if disk, _ := os.ReadFile(filepath.Join(root, "a.sh")); string(disk) != "echo two\n" {
+		t.Errorf("conflicting write changed the file: %q", disk)
+	}
+}
+
+func TestWriteFileRefusals(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	write(t, outside, "secret.txt", "s")
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteFile(root, "link.txt", "x", ""); !errors.Is(err, ErrOutsideRoot) {
+		t.Errorf("symlink out: want ErrOutsideRoot, got %v", err)
+	}
+	if disk, _ := os.ReadFile(filepath.Join(outside, "secret.txt")); string(disk) != "s" {
+		t.Errorf("file outside the checkout was changed: %q", disk)
+	}
+	var conflict *ConflictError
+	if _, err := WriteFile(root, "new.txt", "x", ""); !errors.As(err, &conflict) || conflict.Current.Exists {
+		t.Errorf("missing file: want ConflictError (not created), got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); err == nil {
+		t.Error("WriteFile created a new file")
+	}
+	write(t, root, "big.txt", "x")
+	if _, err := WriteFile(root, "big.txt", strings.Repeat("x", MaxContentBytes+1), ""); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("too large: want ErrTooLarge, got %v", err)
+	}
+}

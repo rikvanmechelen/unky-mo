@@ -160,3 +160,85 @@ func newContent(rel string, data []byte, size int64) *Content {
 	c.Text = string(data)
 	return c
 }
+
+// ConflictError is returned by WriteFile when the file on disk no longer
+// has the hash the edit was based on (Claude, or another tab, changed it).
+// Current is what's on disk now.
+type ConflictError struct{ Current *Content }
+
+func (e *ConflictError) Error() string { return "file changed on disk since it was loaded" }
+
+// ErrTooLarge is returned by WriteFile for text over MaxContentBytes.
+var ErrTooLarge = errors.New("file is too large to save")
+
+// WriteFile replaces the working-tree file rel with text, but only if it
+// still has baseHash (the hash of the version the edit started from) —
+// otherwise it returns a *ConflictError carrying the current version. Only
+// existing regular files are written (creating and deleting files is out
+// of scope). The write is atomic: a temp file in the same directory, with
+// the original's permissions, renamed over it.
+func WriteFile(root, rel, text, baseHash string) (*Content, error) {
+	if len(text) > MaxContentBytes {
+		return nil, ErrTooLarge
+	}
+	path, err := Resolve(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, &ConflictError{Current: &Content{Path: rel}}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", rel)
+	}
+	if err := checkBase(path, rel, baseHash); err != nil {
+		return nil, err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".mo-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name()) // no-op once renamed
+	if _, err := tmp.WriteString(text); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	// Check again right before the swap: Claude may have written the file
+	// while the temp file was being written.
+	if err := checkBase(path, rel, baseHash); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return nil, err
+	}
+	return newContent(rel, []byte(text), int64(len(text))), nil
+}
+
+// checkBase returns a *ConflictError unless the file at path hashes to
+// baseHash.
+func checkBase(path, rel, baseHash string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return &ConflictError{Current: &Content{Path: rel}}
+	}
+	if err != nil {
+		return err
+	}
+	cur := newContent(rel, data, int64(len(data)))
+	if cur.Hash != baseHash {
+		return &ConflictError{Current: cur}
+	}
+	return nil
+}

@@ -105,6 +105,9 @@ type GitFiles interface {
 	// is one they listed; both re-check that path stays inside root.
 	ReadFile(root, path string) (*gitfiles.Content, error)
 	ReadHEAD(root, path string) (*gitfiles.Content, error)
+	// WriteFile saves an editor tab, only if the file still hashes to
+	// baseHash (a *gitfiles.ConflictError otherwise). Same root/path rules.
+	WriteFile(root, path, text, baseHash string) (*gitfiles.Content, error)
 }
 
 // Terminals reads and drives a window's drawer terminals for the chat
@@ -327,6 +330,10 @@ func (g realGitFiles) Diff(root, path string, untracked bool) (string, bool, err
 
 func (g realGitFiles) ReadFile(root, path string) (*gitfiles.Content, error) {
 	return gitfiles.ReadFile(root, path)
+}
+
+func (g realGitFiles) WriteFile(root, path, text, baseHash string) (*gitfiles.Content, error) {
+	return gitfiles.WriteFile(root, path, text, baseHash)
 }
 
 func (g realGitFiles) ReadHEAD(root, path string) (*gitfiles.Content, error) {

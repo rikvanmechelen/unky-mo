@@ -653,6 +653,21 @@ func (mr *MockGitFilesMockRecorder) Tree(dir any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Tree", reflect.TypeOf((*MockGitFiles)(nil).Tree), dir)
 }
 
+// WriteFile mocks base method.
+func (m *MockGitFiles) WriteFile(root, path, text, baseHash string) (*gitfiles.Content, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WriteFile", root, path, text, baseHash)
+	ret0, _ := ret[0].(*gitfiles.Content)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WriteFile indicates an expected call of WriteFile.
+func (mr *MockGitFilesMockRecorder) WriteFile(root, path, text, baseHash any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockGitFiles)(nil).WriteFile), root, path, text, baseHash)
+}
+
 // MockTerminals is a mock of Terminals interface.
 type MockTerminals struct {
 	ctrl     *gomock.Controller

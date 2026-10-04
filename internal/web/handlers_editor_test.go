@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/rvanmech/unky-mo/internal/gitfiles"
@@ -98,5 +99,71 @@ func TestSessionFileNotModified(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("stale ETag: want 200, got %d", rec.Code)
+	}
+}
+
+func put(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, path, strings.NewReader(body)))
+	return rec
+}
+
+func TestSaveFile(t *testing.T) {
+	srv, git := filesFixture(t)
+	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go"}, nil)
+	git.EXPECT().WriteFile("/ws/foo", "a.go", "new\n", "base").Return(&gitfiles.Content{Path: "a.go", Exists: true, Hash: "h2", Text: "new\n"}, nil)
+
+	rec := put(t, srv, "/api/sessions/@5/file", `{"path":"a.go","text":"new\n","baseHash":"base"}`)
+	if rec.Code != http.StatusOK || rec.Header().Get("ETag") != `"h2"` {
+		t.Fatalf("want 200 with ETag \"h2\", got %d %q: %s", rec.Code, rec.Header().Get("ETag"), rec.Body)
+	}
+}
+
+// A save based on a stale version answers 409 with what's on disk now.
+func TestSaveFileConflict(t *testing.T) {
+	srv, git := filesFixture(t)
+	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go"}, nil)
+	git.EXPECT().WriteFile("/ws/foo", "a.go", "mine\n", "old").
+		Return(nil, &gitfiles.ConflictError{Current: &gitfiles.Content{Path: "a.go", Exists: true, Hash: "theirs", Text: "claude's\n"}})
+
+	rec := put(t, srv, "/api/sessions/@5/file", `{"path":"a.go","text":"mine\n","baseHash":"old"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", rec.Code)
+	}
+	var got struct{ Current gitfiles.Content }
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Current.Text != "claude's\n" || got.Current.Hash != "theirs" {
+		t.Errorf("409 body should carry the current version: %s (%v)", rec.Body, err)
+	}
+}
+
+// Saves follow the read's path rules: unlisted paths never reach a write.
+func TestSaveFileRejects(t *testing.T) {
+	srv, git := filesFixture(t)
+	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go", "link"}, nil).AnyTimes()
+	git.EXPECT().Changes("/ws/foo/sub").Return(&gitfiles.Changes{Root: "/ws/foo"}, nil).AnyTimes()
+	git.EXPECT().WriteFile("/ws/foo", "link", "x", "b").Return(nil, gitfiles.ErrOutsideRoot)
+
+	cases := []struct {
+		body string
+		want int
+	}{
+		{`{"path":".env","text":"x","baseHash":"b"}`, http.StatusNotFound},
+		{`{"path":"../../etc/passwd","text":"x","baseHash":"b"}`, http.StatusNotFound},
+		{`{"path":"a.go","text":"x"}`, http.StatusBadRequest},
+		{`not json`, http.StatusBadRequest},
+		{`{"path":"link","text":"x","baseHash":"b"}`, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		if rec := put(t, srv, "/api/sessions/@5/file", c.body); rec.Code != c.want {
+			t.Errorf("%s: want %d, got %d", c.body, c.want, rec.Code)
+		}
+	}
+	if rec := put(t, srv, "/api/sessions/@6/file", `{"path":"a.go","text":"x","baseHash":"b"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("ended window: want 404, got %d", rec.Code)
+	}
+	big := `{"path":"a.go","baseHash":"b","text":"` + strings.Repeat("x", maxSaveBody) + `"}`
+	if rec := put(t, srv, "/api/sessions/@5/file", big); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized body: want 413, got %d", rec.Code)
 	}
 }

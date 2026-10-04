@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -109,4 +110,63 @@ func contentETag(c *gitfiles.Content) string {
 	default:
 		return `"` + c.Hash + `"`
 	}
+}
+
+// maxSaveBody bounds a save request: the file's text JSON-escaped (up to 6
+// bytes per byte for control characters) plus the small envelope.
+const maxSaveBody = 6*gitfiles.MaxContentBytes + 64<<10
+
+// handleSaveFile saves an editor tab: PUT {path, text, baseHash}. The path
+// rules are the read's (listedPath, then gitfiles.Resolve), and the write
+// only happens if the file still has baseHash — the hash of the version
+// the edit started from. Otherwise it's a 409 carrying the current
+// version, so the browser can show what changed instead of overwriting
+// Claude's edit. Saving doesn't depend on session status: the hash check
+// is what keeps a save from clobbering a concurrent edit.
+func (s *Server) handleSaveFile(w http.ResponseWriter, r *http.Request) {
+	windowID := r.PathValue("windowID")
+	var body struct {
+		Path     string `json:"path"`
+		Text     string `json:"text"`
+		BaseHash string `json:"baseHash"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSaveBody)).Decode(&body); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, gitfiles.ErrTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	if body.Path == "" || body.BaseHash == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("path and baseHash are required"))
+		return
+	}
+	root, status, err := s.listedPath(windowID, body.Path)
+	if err != nil {
+		writeError(w, status, err)
+		return
+	}
+
+	c, err := s.deps.Git.WriteFile(root, body.Path, body.Text, body.BaseHash)
+	var conflict *gitfiles.ConflictError
+	switch {
+	case errors.As(err, &conflict):
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "current": conflict.Current})
+		return
+	case errors.Is(err, gitfiles.ErrOutsideRoot):
+		writeError(w, http.StatusForbidden, err)
+		return
+	case errors.Is(err, gitfiles.ErrTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, err)
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	w.Header().Set("ETag", contentETag(c))
+	writeJSON(w, c)
 }

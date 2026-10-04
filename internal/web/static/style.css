@@ -365,6 +365,12 @@ h1, h2 {
 .editor-tab__label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .editor-tab__close { color: var(--gray-767); font-family: var(--font-sans); font-size: 15px; line-height: 1; padding: 2px; font-weight: 400; }
 .editor-tab__close:hover { color: var(--black); background: var(--gray-eee); }
+/* An unsaved tab shows a dot where its close button is, until hovered. */
+.editor-tab__dot { display: none; font-size: 10px; }
+.editor-tab.is-dirty .editor-tab__x { display: none; }
+.editor-tab.is-dirty .editor-tab__dot { display: inline; }
+.editor-tab.is-dirty .editor-tab__close:hover .editor-tab__x { display: inline; }
+.editor-tab.is-dirty .editor-tab__close:hover .editor-tab__dot { display: none; }
 .editor-tabs__open { margin-left: auto; flex: none; padding-right: 0; }
 .editor-tabs__open:disabled { cursor: default; opacity: 0.5; }
 .editor-tab:focus-visible, .editor-tabs__open:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
@@ -380,6 +386,13 @@ h1, h2 {
 .editor-pane__btn { all: unset; cursor: pointer; flex: none; color: var(--gray-444); border-bottom: 1px solid var(--gray-ddd); }
 .editor-pane__btn:hover { color: var(--black); border-bottom-color: currentColor; }
 .editor-pane__btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.editor-pane__btn:disabled { cursor: default; color: var(--gray-767); border-bottom-color: transparent; }
+.editor-pane__btn.is-primary:not(:disabled) { color: var(--white); background: var(--black); border-bottom: 0; padding: 3px 10px; font-weight: 700; }
+.editor-pane__btn.is-primary:disabled { padding: 3px 10px; }
+.editor-pane__banner { flex: none; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 8px 20px; background: var(--yellow); font-size: 13px; line-height: 1.25; }
+.editor-pane__banner[hidden] { display: none; }
+.editor-pane__banner .editor-pane__btn { color: var(--black); border-bottom-color: currentColor; }
+.editor-pane__banner-text { flex: 1 1 260px; }
 .editor-pane__host { flex: 1; min-height: 0; }
 .editor-pane__note { padding: 24px 32px; font-size: 14px; color: var(--gray-666); font-style: italic; }
 
@@ -731,7 +744,7 @@ button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 
   .chat-nav { display: none; }
   .chat-bar__back { display: inline; }
   .chat-main { border-left: 0; }
-  .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar { padding-left: 16px; padding-right: 16px; }
+  .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar, .editor-pane__banner { padding-left: 16px; padding-right: 16px; }
   .editor-tabs { padding-left: 4px; padding-right: 16px; }
   .composer__send { min-width: 0; }
 }
