@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // MoTermsSession is the dedicated tmux session that holds the sidebar
@@ -228,15 +229,34 @@ func (c *Client) SendRawKeys(target, keys string) error {
 // key-name interpretation (unlike SendKeys/SendRawKeys) — safe for arbitrary
 // user input, including text that would otherwise collide with a tmux key
 // name such as "Up" or "Escape". Submits with a trailing Enter. text must
-// not contain embedded newlines; callers are responsible for rejecting
-// multi-line input before calling this (tmux's literal mode sends a raw
-// newline byte, not an Enter keypress — untested against Claude Code's
-// actual multi-line-prompt keybinding, so this method intentionally does not
-// attempt to support it).
+// not contain embedded newlines (each would submit early in Claude Code);
+// multi-line text goes through SendPastedText instead.
 func (c *Client) SendLiteralText(target, text string) error {
 	if err := c.runTmux("send-keys", "-l", "-t", target, "--", text); err != nil {
 		return err
 	}
+	return c.runTmux("send-keys", "-t", target, "Enter")
+}
+
+// pasteSettle is how long SendPastedText waits between the paste and the
+// Enter that submits it, so the app has finished taking in the paste.
+const pasteSettle = 150 * time.Millisecond
+
+// SendPastedText delivers multi-line text to target as one bracketed paste
+// (tmux paste-buffer -p), then submits it with Enter. Claude Code treats a
+// bracketed paste as a single block ("[Pasted text #1 +N lines]") instead
+// of submitting at the first newline, which typing the text would do. The
+// text goes through a uniquely named buffer that the paste deletes.
+func (c *Client) SendPastedText(target, text string) error {
+	buf := fmt.Sprintf("mo-paste-%d", time.Now().UnixNano())
+	if err := c.runTmux("set-buffer", "-b", buf, "--", text); err != nil {
+		return err
+	}
+	if err := c.runTmux("paste-buffer", "-p", "-d", "-b", buf, "-t", target); err != nil {
+		_ = c.runTmux("delete-buffer", "-b", buf)
+		return err
+	}
+	time.Sleep(pasteSettle)
 	return c.runTmux("send-keys", "-t", target, "Enter")
 }
 

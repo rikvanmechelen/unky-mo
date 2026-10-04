@@ -7,7 +7,9 @@
 package tmux
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -319,5 +321,38 @@ func TestIntegrationCreateWindowKeepsCurrentWindow(t *testing.T) {
 	}
 	if got := activeID(); !strings.HasSuffix(target, ":"+got) {
 		t.Fatalf("SwitchToWindow: current window %s, want %s", got, target)
+	}
+}
+
+// TestIntegrationSendPastedTextBracketsThePaste verifies that SendPastedText
+// delivers multi-line text as one bracketed paste (ESC[200~ … ESC[201~) to an
+// app that enabled bracketed-paste mode — as Claude Code does — followed by
+// Enter, rather than as typed lines.
+func TestIntegrationSendPastedTextBracketsThePaste(t *testing.T) {
+	c := newTestClient(t)
+	out := filepath.Join(t.TempDir(), "pasted")
+	script := `printf '\033[?2004h'; exec cat -v > ` + out
+	pane, err := c.tmuxCmd("new-window", "-d", "-t", c.SessionName, "-P", "-F", "#{pane_id}", "sh", "-c", script).Output()
+	if err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+	target := strings.TrimSpace(string(pane))
+	time.Sleep(300 * time.Millisecond) // let printf switch the mode on
+
+	if err := c.SendPastedText(target, "-first line\nsecond line"); err != nil {
+		t.Fatalf("SendPastedText: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "^[[200~-first line\nsecond line^[[201~\n"
+	if string(got) != want {
+		t.Errorf("pane received %q, want %q", got, want)
+	}
+	if bufs, _ := c.tmuxCmd("list-buffers").Output(); strings.Contains(string(bufs), "mo-paste-") {
+		t.Errorf("paste buffer left behind: %s", bufs)
 	}
 }

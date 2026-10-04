@@ -1,7 +1,8 @@
 // Editor tabs for the chat view: the middle column becomes tabbed, with the
 // chat (transcript + composer + terminal drawer) as a pinned first tab and
 // one CodeMirror tab per opened file or diff (the file's changes against
-// HEAD, with a per-change "Revert"). Tabs are remembered per window in
+// HEAD, with a per-change "Revert"). Line comments for Claude live in
+// review.js. Tabs are remembered per window in
 // localStorage. Files come from /api/sessions/{windowID}/file, which only
 // serves paths the Files panel lists; the active tab re-polls it with
 // If-None-Match so a file Claude edits updates in place.
@@ -14,7 +15,7 @@
 //
 // CodeMirror is the vendored bundle's window.CM (vendor/codemirror.js,
 // rebuilt with `make codemirror`); el() comes from common.js, showDialog
-// from actions.js.
+// from actions.js, createReview from review.js.
 
 const EDITOR_POLL_MS = 3000;
 const EDITOR_TABS_KEY = "mo.editorTabs.";
@@ -162,8 +163,23 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   let gen = 0; // bumped on window switch; stale responses are dropped
 
   const stripTabs = el("div", { class: "editor-tabs__list", role: "tablist" });
+  const reviewBtn = el("button", { class: "editor-tabs__review", type: "button", title: "Your comments for Claude", hidden: "" });
   const openBtn = el("button", { class: "editor-tabs__open", type: "button", title: "Open a file (Ctrl+P)", text: "Open file…" });
-  strip.replaceChildren(stripTabs, openBtn);
+  strip.replaceChildren(stripTabs, reviewBtn, openBtn);
+
+  const review = createReview({
+    onChange(paths) {
+      for (const t of tabs) if (t.view && !t.deleted && paths.has(t.path)) review.apply(t.view, t.path);
+      renderReviewBtn();
+    },
+    onSent: () => activate(null), // show the chat, where Claude answers
+  });
+
+  function renderReviewBtn() {
+    const n = review.count();
+    reviewBtn.hidden = !n;
+    reviewBtn.textContent = `Review (${n})`;
+  }
 
   const fileURL = () => `/api/sessions/${encodeURIComponent(windowID)}/file`;
   const draftKey = (tab) => EDITOR_DRAFT_KEY + windowID + "\u0000" + tab.key;
@@ -221,7 +237,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       kind, path, key: kind + ":" + path,
       view: null, merge: null, layout: null, base: null, etag: null, conflict: null,
       dirty: false, loading: false, saving: false, draftTimer: 0, draftFailed: false,
-      original: null, origEtag: null, deleted: false,
+      original: null, origEtag: null, deleted: false, pendingLine: 0,
     };
     tab.status = el("span", { class: "editor-pane__status" });
     tab.saveBtn = barButton("Save", () => saveTab(tab), "is-primary");
@@ -330,6 +346,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       renderStrip();
     }
     tab.saveBtn.disabled = !tab.view || tab.deleted || tab.saving || (!dirty && !tab.conflict);
+    if (tab.view && !tab.deleted) review.sync(tab.view, tab.path);
     if (tab.kind === "diff" && tab.view && !tab.deleted) {
       const c = CM.getChunks(tab.view.state);
       setInfo(tab, c && !c.chunks.length ? "No changes against HEAD." : "");
@@ -465,11 +482,24 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     destroyView(tab);
     tab.host.replaceChildren();
     buildDiff(tab, doc, tabExtensions(tab));
+    viewReady(tab);
   }
 
   function tabExtensions(tab) {
     const exts = editorExtensions(tab.path, { onSave: () => saveTab(tab), onChange: () => updateState(tab) });
-    return tab.deleted ? [...exts, CM.EditorState.readOnly.of(true)] : exts;
+    return tab.deleted ? [...exts, CM.EditorState.readOnly.of(true)] : [...exts, ...review.extension(tab.path)];
+  }
+
+  // viewReady runs once a tab has a (new) editor: show its comments and
+  // honour a pending reveal.
+  function viewReady(tab) {
+    if (!tab.view) return;
+    if (!tab.deleted) review.apply(tab.view, tab.path);
+    if (tab.pendingLine) {
+      const line = tab.view.state.doc.line(Math.min(Math.max(1, tab.pendingLine), tab.view.state.doc.lines));
+      tab.pendingLine = 0;
+      tab.view.dispatch({ selection: { anchor: line.from }, effects: CM.EditorView.scrollIntoView(line.from, { y: "center" }) });
+    }
   }
 
   // ── Loading and saving ────────────────────────────────────────
@@ -531,6 +561,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
           tab.base = { text: "", hash: null };
           tab.etag = r.etag;
           buildDiff(tab, "", tabExtensions(tab));
+          viewReady(tab);
           setInfo(tab, "Deleted in the working tree — showing what HEAD had.");
           updateState(tab, "");
         }
@@ -579,6 +610,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       setConflict(tab, data);
     }
     updateState(tab, draft ? "Restored unsaved changes" : "");
+    viewReady(tab);
   }
 
   // saveTab writes the tab's text. baseHash defaults to the version the
@@ -620,6 +652,73 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       updateState(tab, `Save failed: ${err.message}`);
     }
   }
+
+  // reveal opens path's file tab scrolled to line (e.g. from the review
+  // list).
+  function reveal(path, line) {
+    const key = "file:" + path;
+    const existing = tabs.find((t) => t.key === key);
+    if (existing) existing.pendingLine = line;
+    open(path, "file");
+    const tab = tabs.find((t) => t.key === key);
+    if (!existing) tab.pendingLine = line;
+    if (tab.view) viewReady(tab);
+  }
+
+  // ── Review list ───────────────────────────────────────────────
+  const rvList = el("div", { class: "review-dialog__list" });
+  const rvError = el("div", { class: "review-dialog__error" });
+  const rvSend = el("button", { class: "btn btn--primary", type: "button", text: "Send to Claude" });
+  const rvDiscard = el("button", { class: "btn btn--danger", type: "button", text: "Discard all" });
+  const rvClose = el("button", { class: "btn", type: "button", text: "Close" });
+  const rvDialog = el("dialog", { class: "dialog review-dialog", "aria-label": "Review" }, [
+    el("div", { class: "dialog__title", text: "Review for Claude" }),
+    el("div", { class: "dialog__text", text: "These comments are sent as one message. Claude sees each file and line, the line's text, and your comment." }),
+    rvList, rvError,
+    el("div", { class: "dialog__actions" }, [rvDiscard, el("span", { class: "review-dialog__spacer" }), rvClose, rvSend]),
+  ]);
+  document.body.appendChild(rvDialog);
+
+  function renderReviewList() {
+    const items = review.list();
+    if (!items.length) { rvDialog.close(); return; }
+    rvList.replaceChildren(...items.map((c) => {
+      const go = el("button", { class: "review-dialog__loc", type: "button", text: `${c.path}:${c.line}` });
+      go.addEventListener("click", () => { rvDialog.close(); reveal(c.path, c.line); });
+      const del = el("button", { class: "review-dialog__del", type: "button", title: "Delete comment", text: "Delete" });
+      del.addEventListener("click", () => { review.remove(c.id); renderReviewList(); });
+      return el("div", { class: "review-dialog__item" }, [
+        el("div", { class: "review-dialog__head" }, [go, del]),
+        ...(c.text.trim() ? [el("pre", { class: "review-dialog__quote", text: c.text.trim() })] : []),
+        el("div", { class: "review-dialog__body", text: c.body }),
+      ]);
+    }));
+  }
+
+  reviewBtn.addEventListener("click", () => {
+    rvError.textContent = "";
+    rvSend.disabled = !available;
+    renderReviewList();
+    rvDialog.showModal();
+  });
+  rvClose.addEventListener("click", () => rvDialog.close());
+  rvDiscard.addEventListener("click", async () => {
+    const ok = await showDialog({ title: "Discard all comments?", text: "This removes every comment in this review.", actions: [{ label: "Cancel" }, { label: "Discard all", value: true, danger: true }] });
+    if (ok) { review.clear(); rvDialog.close(); }
+  });
+  rvSend.addEventListener("click", async () => {
+    rvSend.disabled = true;
+    rvError.textContent = "";
+    try {
+      const err = await review.send();
+      if (err) rvError.textContent = err;
+      else rvDialog.close();
+    } catch (e) {
+      rvError.textContent = e.message;
+    } finally {
+      rvSend.disabled = !available;
+    }
+  });
 
   // ── Quick open ────────────────────────────────────────────────
   const qoInput = el("input", { class: "quick-open__input", type: "text", placeholder: "Search files by path", autocomplete: "off", spellcheck: "false" });
@@ -735,6 +834,9 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       available = false;
       strip.hidden = !id;
       if (qoDialog.open) qoDialog.close();
+      if (rvDialog.open) rvDialog.close();
+      review.setWindow(id);
+      renderReviewBtn();
       const saved = id ? loadSavedTabs(id) : { tabs: [], active: null };
       for (const t of saved.tabs) tabs.push(newTab(t.kind, t.path));
       activate(tabs.find((t) => t.key === saved.active) || null);

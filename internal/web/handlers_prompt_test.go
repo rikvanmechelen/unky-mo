@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rvanmech/unky-mo/internal/state"
@@ -27,11 +28,30 @@ func TestHandlePrompt400OnEmptyText(t *testing.T) {
 	}
 }
 
-func TestHandlePrompt400OnMultilineText(t *testing.T) {
+// Multi-line text (e.g. a review from the editor tabs) goes in as one
+// bracketed paste instead of being typed, which would submit at the first
+// newline.
+func TestHandlePromptMultilineUsesPaste(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	mockState.EXPECT().Read().Return(&state.StateFile{
+		Projects: []state.ProjectState{{WindowID: "@5", SessionID: "s1", Status: "idle"}},
+	}, nil)
+	mockPrompts := mock_web.NewMockPromptSender(ctrl)
+	mockPrompts.EXPECT().SendPastedText("test:@5.0", "line one\nline two").Return(nil)
+
+	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	rec := postPrompt(t, srv, "@5", `{"text":"line one\r\nline two\n"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlePrompt413OnHugeText(t *testing.T) {
 	srv := NewServer(Deps{}, 0, "test")
-	rec := postPrompt(t, srv, "@1", `{"text":"line one\nline two"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status: want 400, got %d", rec.Code)
+	rec := postPrompt(t, srv, "@1", `{"text":"`+strings.Repeat("x", maxPromptBytes+1)+`"}`)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status: want 413, got %d", rec.Code)
 	}
 }
 

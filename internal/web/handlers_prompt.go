@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// maxPromptBytes bounds one prompt; tmux takes the text as a command-line
+// argument.
+const maxPromptBytes = 64 << 10
+
 // handlePrompt injects a prompt into a live session's tmux pane, gated on
 // the session currently being idle or blocked on an interactive question
 // (status "question" — e.g. AskUserQuestion) — answering is exactly what's
@@ -15,6 +19,7 @@ import (
 // so there's nothing to safely render or confirm the user is answering. The
 // actual response is not in this response body — it streams back over the
 // session's already-open /api/transcript/{windowID} SSE connection.
+// Multi-line text goes in as one bracketed paste (SendPastedText).
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 
@@ -25,13 +30,13 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
-	text := strings.TrimSpace(body.Text)
+	text := strings.TrimSpace(strings.ReplaceAll(body.Text, "\r\n", "\n"))
 	if text == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("empty prompt"))
 		return
 	}
-	if strings.ContainsAny(text, "\r\n") {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("multi-line prompts are not supported yet"))
+	if len(text) > maxPromptBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("prompt is longer than %d bytes", maxPromptBytes))
 		return
 	}
 
@@ -46,7 +51,13 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	target := s.tmuxSession + ":" + windowID + ".0"
-	if err := s.deps.Prompts.SendLiteralText(target, text); err != nil {
+	send := s.deps.Prompts.SendLiteralText
+	if strings.ContainsAny(text, "\r\n") {
+		// Typed newlines would submit at the first line; a bracketed
+		// paste arrives as one block (e.g. a review from the editor tabs).
+		send = s.deps.Prompts.SendPastedText
+	}
+	if err := send(target, text); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to deliver prompt: %w", err))
 		return
 	}

@@ -286,6 +286,20 @@ func (mr *MockPromptSenderMockRecorder) SendLiteralText(target, text any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendLiteralText", reflect.TypeOf((*MockPromptSender)(nil).SendLiteralText), target, text)
 }
 
+// SendPastedText mocks base method.
+func (m *MockPromptSender) SendPastedText(target, text string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SendPastedText", target, text)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SendPastedText indicates an expected call of SendPastedText.
+func (mr *MockPromptSenderMockRecorder) SendPastedText(target, text any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendPastedText", reflect.TypeOf((*MockPromptSender)(nil).SendPastedText), target, text)
+}
+
 // MockSessionHistory is a mock of SessionHistory interface.
 type MockSessionHistory struct {
 	ctrl     *gomock.Controller

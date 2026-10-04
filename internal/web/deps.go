@@ -58,9 +58,11 @@ type TicketSource interface {
 	Detail(ctx context.Context, providerName, id string) (*tickets.TicketDetail, error)
 }
 
-// PromptSender injects a prompt into a live session's tmux pane.
+// PromptSender injects a prompt into a live session's tmux pane: one line
+// typed literally, or multi-line text as a single bracketed paste.
 type PromptSender interface {
 	SendLiteralText(target, text string) error
+	SendPastedText(target, text string) error
 }
 
 // SessionHistory reads a checkout's past Claude sessions from its JSONL
@@ -235,6 +237,10 @@ func NewPromptSender(client *tmux.Client) PromptSender { return realPromptSender
 
 func (r realPromptSender) SendLiteralText(target, text string) error {
 	return r.client.SendLiteralText(target, text)
+}
+
+func (r realPromptSender) SendPastedText(target, text string) error {
+	return r.client.SendPastedText(target, text)
 }
 
 // realSessionHistory wraps internal/claude's transcript readers.
