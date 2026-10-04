@@ -287,36 +287,3 @@ func CurrentBranch(ctx context.Context, cmd moexec.Commander, dir string) string
 	}
 	return ""
 }
-
-// maxDiffBytes caps a single file's diff sent to the browser.
-const maxDiffBytes = 512 << 10
-
-// Diff returns the unified diff of one changed file against HEAD, without
-// colour or external diff drivers. path is relative to root. An untracked
-// file is diffed against /dev/null (git exits 1 for "differences found",
-// which isn't an error here). truncated reports that the diff was cut at
-// maxDiffBytes.
-func Diff(ctx context.Context, cmd moexec.Commander, root, path string, untracked bool) (diff string, truncated bool, err error) {
-	var out []byte
-	if untracked {
-		out, _, err = cmd.Output(ctx, root, "git", "diff", "--no-index", "--no-color", "--no-ext-diff", "--", "/dev/null", path)
-		var exitErr interface{ ExitCode() int }
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			err = nil
-		}
-	} else {
-		out, _, err = cmd.Output(ctx, root, "git", "diff", "HEAD", "--no-color", "--no-ext-diff", "--", path)
-	}
-	if err != nil {
-		return "", false, err
-	}
-	if len(out) > maxDiffBytes {
-		// Cut at a line boundary so the browser never sees half a line.
-		cut := bytes.LastIndexByte(out[:maxDiffBytes], '\n')
-		if cut < 0 {
-			cut = maxDiffBytes
-		}
-		return string(out[:cut]), true, nil
-	}
-	return string(out), false, nil
-}

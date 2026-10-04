@@ -28,8 +28,8 @@ Browse, quickly edit, and review Claude's changes from `mo web`, on desktop and 
 | 3 | Tab strip (Chat + file tabs), per-window persistence | 1 | done |
 | 4 | Read-only file tabs: open from tree / diff dialog / tool cards / quick open (Ctrl+P), find, go to line, live reload | 1 | done |
 | 5 | Editing: `PUT /file` `{path, text, baseHash}` → 409 on mismatch, size cap (`MaxBytesReader`), atomic write keeping the mode; dirty marker, Ctrl+S, conflict banner (reload / view diff / overwrite), unsaved edits kept as localStorage drafts (restored on session switch / reload), confirm on closing a dirty tab | 2 | done |
-| 6 | Diff tabs replacing the diff dialog: `MergeView` (wide) / `unifiedMergeView` (narrow), HEAD vs working tree, editable right side, collapse unchanged | 3 | |
-| 7 | Per-hunk revert via `rejectChunk`, saved through phase 5's hash-checked save | 3 | |
+| 6 | Diff tabs replacing the diff dialog: `MergeView` (wide) / `unifiedMergeView` (narrow), HEAD vs working tree, editable right side, collapse unchanged (the `/diff` endpoint and dialog are removed) | 3 | done |
+| 7 | Per-hunk revert (MergeView revert arrows / unified "Revert" buttons), saved through phase 5's hash-checked save | 3 | done |
 | 8 | Line comments → Claude: gutter "+", comment widgets, drafts per session, "Send review" batches `path:line` + snippet + comment into one prompt (idle/question only) | 4 | |
 
 Later, maybe: project-wide search (ripgrep endpoint).

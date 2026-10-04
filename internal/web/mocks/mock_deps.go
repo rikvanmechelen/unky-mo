@@ -591,22 +591,6 @@ func (mr *MockGitFilesMockRecorder) Changes(dir any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Changes", reflect.TypeOf((*MockGitFiles)(nil).Changes), dir)
 }
 
-// Diff mocks base method.
-func (m *MockGitFiles) Diff(root, path string, untracked bool) (string, bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Diff", root, path, untracked)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// Diff indicates an expected call of Diff.
-func (mr *MockGitFilesMockRecorder) Diff(root, path, untracked any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Diff", reflect.TypeOf((*MockGitFiles)(nil).Diff), root, path, untracked)
-}
-
 // ReadFile mocks base method.
 func (m *MockGitFiles) ReadFile(root, path string) (*gitfiles.Content, error) {
 	m.ctrl.T.Helper()

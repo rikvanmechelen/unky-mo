@@ -5,7 +5,7 @@
 // Everything is bundled once (no CDN, no importmap): CodeMirror breaks when two
 // copies of @codemirror/state are loaded, and the dashboard must work offline.
 
-export { EditorState, StateField, StateEffect, Compartment, RangeSetBuilder } from "@codemirror/state";
+export { EditorState, StateField, StateEffect, Compartment, RangeSetBuilder, ChangeSet, Text } from "@codemirror/state";
 export {
   EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
   highlightSpecialChars, drawSelection, rectangularSelection, crosshairCursor,
@@ -23,7 +23,7 @@ export {
 export { tags } from "@lezer/highlight";
 export {
   MergeView, unifiedMergeView, getChunks, acceptChunk, rejectChunk,
-  goToNextChunk, goToPreviousChunk, getOriginalDoc,
+  goToNextChunk, goToPreviousChunk, getOriginalDoc, originalDocChangeEffect, updateOriginalDoc,
 } from "@codemirror/merge";
 
 import { StreamLanguage } from "@codemirror/language";

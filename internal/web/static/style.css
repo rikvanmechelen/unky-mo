@@ -676,6 +676,8 @@ button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 
 .files-pane__foot:empty { display: none; }
 .files-pane__total { font-weight: 700; color: var(--black); }
 
+/* The modal dialog shell, used by the subagent transcript dialog
+ * (subagents.js); file diffs open as editor tabs instead. */
 .diff-dialog {
   width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
   padding: 0; border: 0; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25);

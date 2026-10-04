@@ -97,9 +97,6 @@ type GitFiles interface {
 	Changes(dir string) (*gitfiles.Changes, error)
 	Tree(dir string) (root string, paths []string, err error)
 	Branch(dir string) string
-	// Diff diffs one changed file; root and path come from a Changes
-	// result, never straight from the browser.
-	Diff(root, path string, untracked bool) (diff string, truncated bool, err error)
 	// ReadFile and ReadHEAD read one file's working-tree and committed
 	// versions for the editor tabs. root comes from Tree/Changes and path
 	// is one they listed; both re-check that path stays inside root.
@@ -320,12 +317,6 @@ func (g realGitFiles) Tree(dir string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.Tree(ctx, g.cmd, dir)
-}
-
-func (g realGitFiles) Diff(root, path string, untracked bool) (string, bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-	defer cancel()
-	return gitfiles.Diff(ctx, g.cmd, root, path, untracked)
 }
 
 func (g realGitFiles) ReadFile(root, path string) (*gitfiles.Content, error) {

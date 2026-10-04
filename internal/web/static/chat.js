@@ -525,7 +525,10 @@ function main() {
     chatPanel: document.getElementById("chat-panel"),
     editorPanel: document.getElementById("editor-panel"),
   });
-  const filesPane = createFilesPane(filesEl, { onOpen: (path) => editor.open(path) });
+  const filesPane = createFilesPane(filesEl, {
+    onOpen: (path) => editor.open(path, "file"),
+    onOpenDiff: (path) => editor.open(path, "diff"),
+  });
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
   const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
