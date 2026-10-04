@@ -478,6 +478,7 @@ async function pollState() {
     const state = await fetchJSON("/api/state");
     renderUsage(document.getElementById("usage"), state.usage);
     renderSessions(state.projects);
+    setFavicon(state.projects);
   } catch (e) {
     console.error(e);
   }

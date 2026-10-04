@@ -925,6 +925,7 @@ function main() {
       const res = await fetch("/api/state");
       const data = await res.json();
       renderSessionNav(data.projects);
+      setFavicon(data.projects);
       const own = windowID && (data.projects || []).find((pr) => pr.window_id === windowID);
       renderUsage(usageBox, data.usage, { compact: true, tokens: own && own.session_id ? own.tokens : 0 });
       if (!windowID || ended) return;
