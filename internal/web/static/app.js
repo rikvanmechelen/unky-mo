@@ -4,9 +4,9 @@
 
 const BUCKET = {
   in_progress: { label: "In Progress", sq: "#00B140", ring: 0 },
-  blocked:     { label: "Blocked",     sq: "#E4002B", ring: 0 },
-  review:      { label: "Review",      sq: "#0057B8", ring: 0 },
-  todo:        { label: "To Do",       sq: "#fff",    ring: 1 },
+  blocked:     { label: "Blocked",     sq: "var(--red)",   ring: 0 },
+  review:      { label: "Review",      sq: "var(--blue)",  ring: 0 },
+  todo:        { label: "To Do",       sq: "var(--paper)", ring: 1 },
 };
 
 const PRIORITY_LABEL = { 0: "—", 1: "Lowest", 2: "Low", 3: "Medium", 4: "High", 5: "Highest" };
@@ -357,7 +357,7 @@ function renderPRs(prs) {
   for (const pr of prs) {
     const state = (pr.state || "").toUpperCase();
     const stateEl = el("span", { class: "pr-row__state", text: pr.state });
-    stateEl.style.color = state === "OPEN" ? "#000" : "#666";
+    stateEl.style.color = state === "OPEN" ? "var(--ink)" : "var(--ink-3)";
     list.appendChild(el("div", { class: "pr-row" }, [
       el("span", { class: "pr-row__num", text: `#${pr.number}` }),
       el("span", { class: "pr-row__title", text: pr.title }),
@@ -443,9 +443,9 @@ function renderTickets(tickets) {
   for (const t of tickets || []) {
     const bucketMeta = BUCKET[t.Bucket];
     const bucketLabel = bucketMeta ? bucketMeta.label : `[${t.RawStatus || t.Bucket}]`;
-    const sq = statusSquare(bucketMeta ? bucketMeta.sq : "#fff", bucketMeta ? bucketMeta.ring : 1);
+    const sq = statusSquare(bucketMeta ? bucketMeta.sq : "var(--paper)", bucketMeta ? bucketMeta.ring : 1);
     const bucketEl = el("span", { class: "ticket-row__bucket" }, [sq, document.createTextNode(bucketLabel)]);
-    if (!bucketMeta) bucketEl.style.color = "#E4002B";
+    if (!bucketMeta) bucketEl.style.color = "var(--red)";
 
     const priority = el("span", {
       class: "ticket-row__priority",

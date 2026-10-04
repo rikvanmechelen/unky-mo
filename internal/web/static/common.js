@@ -17,19 +17,20 @@ document.addEventListener("pointerdown", () => {
 // black/white/gray. `short` is the compact label used in the chat nav, and
 // `navSq` overrides `sq` there (the badge's black-on-yellow square would
 // vanish on the nav's gray, so the nav uses the yellow itself);
-// `bg`/`border` style the chat view's status badge; `rowBg` tints the
+// `bg`/`fg`/`border`/`badgeSq` style the chat view's status badge (fg and
+// badgeSq keep text and square on yellow dark in both themes); `rowBg` tints the
 // dashboard's session row.
 const STATUS = {
-  active:     { label: "Working",          short: "working",    sq: "#00B140", ring: 0, bg: "#fff",    border: "#DDDDDD" },
-  idle:       { label: "Idle",             short: "idle",       sq: "#fff",    ring: 2, bg: "#fff",    border: "#DDDDDD" },
-  permission: { label: "Needs permission", short: "permission", sq: "#000", navSq: "#FFCD00", ring: 0, bg: "#FFCD00", border: "#FFCD00", rowBg: "rgba(255,205,0,0.20)" },
-  question:   { label: "Needs input",      short: "input",      sq: "#000", navSq: "#FFCD00", ring: 0, bg: "#FFCD00", border: "#FFCD00", rowBg: "rgba(255,205,0,0.20)" },
-  external:   { label: "External session", short: "external",   sq: "#767676", ring: 0, bg: "#fff",    border: "#DDDDDD" },
-  none:       { label: "No session",       short: "",           sq: "#ddd",    ring: 0, bg: "#fff",    border: "#DDDDDD" },
+  active:     { label: "Working",          short: "working",    sq: "#00B140", ring: 0, bg: "var(--paper)", border: "var(--line)" },
+  idle:       { label: "Idle",             short: "idle",       sq: "var(--paper)", ring: 2, bg: "var(--paper)", border: "var(--line)" },
+  permission: { label: "Needs permission", short: "permission", sq: "var(--ink)", badgeSq: "#000", navSq: "#FFCD00", ring: 0, bg: "#FFCD00", fg: "var(--on-yellow)", border: "#FFCD00", rowBg: "rgba(255,205,0,0.20)" },
+  question:   { label: "Needs input",      short: "input",      sq: "var(--ink)", badgeSq: "#000", navSq: "#FFCD00", ring: 0, bg: "#FFCD00", fg: "var(--on-yellow)", border: "#FFCD00", rowBg: "rgba(255,205,0,0.20)" },
+  external:   { label: "External session", short: "external",   sq: "var(--ink-4)", ring: 0, bg: "var(--paper)", border: "var(--line)" },
+  none:       { label: "No session",       short: "",           sq: "var(--line)", ring: 0, bg: "var(--paper)", border: "var(--line)" },
   // Chat-view only: a just-launched window with no state row yet, and a
   // session whose row disappeared.
-  starting:   { label: "Starting…",        short: "starting",   sq: "#fff",    ring: 1, bg: "#fff",    border: "#DDDDDD" },
-  ended:      { label: "Ended",            short: "ended",      sq: "#ddd",    ring: 0, bg: "#fff",    border: "#DDDDDD" },
+  starting:   { label: "Starting…",        short: "starting",   sq: "var(--paper)", ring: 1, bg: "var(--paper)", border: "var(--line)" },
+  ended:      { label: "Ended",            short: "ended",      sq: "var(--line)", ring: 0, bg: "var(--paper)", border: "var(--line)" },
 };
 
 function el(tag, attrs, children) {
@@ -44,12 +45,12 @@ function el(tag, attrs, children) {
   return e;
 }
 
-// statusSquare draws the status indicator. ringColor defaults to black; the
-// chat nav passes white for the selected (black-background) row.
+// statusSquare draws the status indicator. ringColor defaults to the ink
+// color; the chat nav passes paper for the selected (inverted) row.
 function statusSquare(sq, ring, extraClass, ringColor) {
   const span = el("span", { class: "status-sq" + (extraClass ? " " + extraClass : "") });
   span.style.background = sq;
-  span.style.boxShadow = ring ? `inset 0 0 0 ${ring}px ${ringColor || "#000"}` : "none";
+  span.style.boxShadow = ring ? `inset 0 0 0 ${ring}px ${ringColor || "var(--ink)"}` : "none";
   return span;
 }
 

@@ -14,7 +14,7 @@ const GRAPH_SCOPE_KEY = "mo.graphScope";
 const GRAPH_LANE_W = 12;
 const GRAPH_ROW_H = 26;
 const GRAPH_MAX_LANES = 8; // wider graphs are clipped; the text stays readable
-const GRAPH_COLORS = ["var(--blue)", "var(--mode-plan)", "var(--mode-accept)", "var(--claude)", "var(--green)", "var(--mode-auto)", "var(--red)", "var(--gray-767)"];
+const GRAPH_COLORS = ["var(--blue)", "var(--mode-plan)", "var(--mode-accept)", "var(--claude)", "var(--green)", "var(--mode-auto)", "var(--red)", "var(--ink-4)"];
 const WORKTREE = "~worktree"; // the "Uncommitted changes" pseudo commit
 const SVG_NS = "http://www.w3.org/2000/svg";
 

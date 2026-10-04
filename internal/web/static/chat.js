@@ -312,7 +312,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       body.hidden = true;
       const action = el("span", { class: "tool-card__action", text: "Show" });
       const sq = el("span", { class: "tool-card__sq" });
-      sq.style.background = TEAMMATE_COLORS[t.color] || "var(--gray-767)";
+      sq.style.background = TEAMMATE_COLORS[t.color] || "var(--ink-4)";
       const toggle = el("button", { class: "tool-card__toggle", type: "button" }, [
         sq,
         el("span", { class: "tool-card__name", text: t.id }),
@@ -723,8 +723,9 @@ function main() {
 
   function setBadge(key) {
     const meta = STATUS[key] || STATUS.none;
-    statusBadge.replaceChildren(statusSquare(meta.sq, meta.ring), document.createTextNode(meta.label));
+    statusBadge.replaceChildren(statusSquare(meta.badgeSq || meta.sq, meta.ring), document.createTextNode(meta.label));
     statusBadge.style.background = meta.bg;
+    statusBadge.style.color = meta.fg || "";
     statusBadge.style.boxShadow = `inset 0 0 0 1px ${meta.border}`;
   }
 
@@ -828,7 +829,7 @@ function main() {
     const current = p.window_id === windowID;
     row.link.classList.toggle("is-current", current);
     row.link.title = `${p.name} · ${p.window_name || p.window_id}`;
-    row.sq.replaceWith(row.sq = statusSquare(meta.navSq || meta.sq, meta.ring, "", current ? "#fff" : "#000"));
+    row.sq.replaceWith(row.sq = statusSquare(meta.navSq || meta.sq, meta.ring, "", current ? "var(--paper)" : "var(--ink)"));
     // Siblings share a checkout (and so a branch) — keep their "[2]" /
     // custom-title suffix so the rows stay tellable apart.
     const suffix = p.branch ? ((p.name || "").match(/ \[[^\]]+\]$/) || [""])[0] : "";
