@@ -1,10 +1,12 @@
 // Files panel for the chat view: the browser counterpart of the sidebar's
 // Files section. "Changed" lists the session checkout's changed files with
 // line counts; "All files" is a collapsible tree of every tracked and
-// untracked file; the footer shows totals and the upstream sync state.
+// untracked file; "Graph" the commit history (graph.js); the footer shows
+// totals and the upstream sync state.
 // Data comes from /api/sessions/{windowID}/files and /tree (gitfiles).
 // A changed file calls onOpenDiff(path) and a file in the tree onOpen(path);
 // the chat view opens an editor tab for either. Uses el() from common.js.
+// The graph's callbacks (onOpenCommitFile, onMention) are passed through.
 
 const FILE_MARK_CLASS = { M: "is-mod", R: "is-mod", A: "is-add", "?": "is-add", D: "is-del", U: "is-del" };
 const FILES_POLL_MS = 3000;
@@ -53,11 +55,17 @@ function buildTree(paths) {
   return root;
 }
 
-function createFilesPane(pane, { onOpen, onOpenDiff } = {}) {
+function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention } = {}) {
   const tabs = pane.querySelectorAll(".files-tab");
   const countEl = pane.querySelector("#files-count");
   const list = pane.querySelector("#files-list");
   const foot = pane.querySelector("#files-foot");
+
+  const graph = createGraphView({
+    onOpenCommitFile,
+    onMention,
+    onShowChanges: () => setMode("changed"),
+  });
 
   let windowID = null;
   let available = false; // the window has a live session row — only then poll
@@ -112,7 +120,12 @@ function createFilesPane(pane, { onOpen, onOpenDiff } = {}) {
       foot.replaceChildren();
       return;
     }
-    list.replaceChildren(...(mode === "changed" ? changedRows() : treeRows()));
+    if (mode === "graph") {
+      // The graph renders itself; keep its node (and the scroll position).
+      if (list.childNodes.length !== 1 || list.firstChild !== graph.root) list.replaceChildren(graph.root);
+    } else {
+      list.replaceChildren(...(mode === "changed" ? changedRows() : treeRows()));
+    }
 
     const files = changes.files || [];
     foot.replaceChildren(
@@ -204,6 +217,8 @@ function createFilesPane(pane, { onOpen, onOpenDiff } = {}) {
       if (!data.repo) { note = "Not a git repository."; changes = null; renderIfChanged(); return; }
       note = "";
       changes = data;
+      graph.setChangedCount(data.files?.length || 0);
+      if (mode === "graph") graph.refresh();
 
       if (mode === "all" && (force || !treePaths || Date.now() - treeFetchedAt >= TREE_POLL_MS)) {
         const tree = await fetchJSON(`${base}/tree`);
@@ -222,12 +237,13 @@ function createFilesPane(pane, { onOpen, onOpenDiff } = {}) {
     }
   }
 
-  tabs.forEach((t) => t.addEventListener("click", () => {
-    if (mode === t.dataset.mode) return;
-    mode = t.dataset.mode;
+  function setMode(m) {
+    if (mode === m) return;
+    mode = m;
     render();
     refresh(true);
-  }));
+  }
+  tabs.forEach((t) => t.addEventListener("click", () => setMode(t.dataset.mode)));
 
   document.addEventListener("visibilitychange", () => refresh(false));
   setInterval(() => refresh(false), FILES_POLL_MS);
@@ -259,6 +275,7 @@ function createFilesPane(pane, { onOpen, onOpenDiff } = {}) {
       gen++;
       available = false;
       windowID = id;
+      graph.setWindow(id);
       changes = null;
       treePaths = null;
       treeFetchedAt = 0;

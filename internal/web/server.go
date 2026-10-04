@@ -26,6 +26,7 @@ type Server struct {
 	// they only dedupe several open tabs polling the same checkout.
 	filesCache  *ttlCache
 	treeCache   *ttlCache
+	logCache    *ttlCache
 	branchCache *ttlCache
 	shellsCache *ttlCache
 	agentsCache *ttlCache
@@ -58,6 +59,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		transcripts: newTranscriptHub(),
 		filesCache:  newTTLCache(2 * time.Second),
 		treeCache:   newTTLCache(10 * time.Second),
+		logCache:    newTTLCache(2 * time.Second),
 		branchCache: newTTLCache(15 * time.Second),
 		shellsCache: newTTLCache(2 * time.Second),
 		agentsCache: newTTLCache(time.Second),
@@ -78,6 +80,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/files", s.handleSessionFiles)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/file", s.handleSessionFile)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/log", s.handleSessionLog)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}", s.handleCommit)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}/file", s.handleCommitFile)
 	s.mux.HandleFunc("PUT /api/sessions/{windowID}/file", s.handleSaveFile)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/spinner", s.handleSpinner)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/mode", s.handleMode)

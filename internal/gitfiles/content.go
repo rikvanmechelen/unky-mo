@@ -118,27 +118,12 @@ func ReadHEAD(ctx context.Context, cmd moexec.Commander, root, rel string) (*Con
 	if _, err := Resolve(root, rel); err != nil {
 		return nil, err
 	}
-	// cat-file -s first so a huge blob is never read into memory.
-	spec := "HEAD:" + rel
-	out, stderr, err := cmd.Output(ctx, root, "git", "cat-file", "-s", spec)
-	if err != nil {
-		if notInHEAD(string(stderr)) {
-			return &Content{Path: rel}, nil
-		}
-		return nil, fmt.Errorf("git cat-file -s %s: %v: %s", spec, err, strings.TrimSpace(string(stderr)))
+	c, err := readBlob(ctx, cmd, root, "HEAD:"+rel, rel)
+	var be *blobError
+	if errors.As(err, &be) && notInHEAD(be.stderr) {
+		return &Content{Path: rel}, nil
 	}
-	var size int64
-	if _, err := fmt.Sscan(string(out), &size); err != nil {
-		return nil, fmt.Errorf("git cat-file -s %s: %q", spec, out)
-	}
-	if size > MaxContentBytes {
-		return &Content{Path: rel, Exists: true, TooLarge: true, Size: size}, nil
-	}
-	data, err := git(ctx, cmd, root, "cat-file", "blob", spec)
-	if err != nil {
-		return nil, err
-	}
-	return newContent(rel, data, size), nil
+	return c, err
 }
 
 // notInHEAD reports whether git cat-file's stderr says the path isn't in

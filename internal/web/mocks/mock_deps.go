@@ -619,6 +619,51 @@ func (mr *MockGitFilesMockRecorder) Changes(dir any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Changes", reflect.TypeOf((*MockGitFiles)(nil).Changes), dir)
 }
 
+// Commit mocks base method.
+func (m *MockGitFiles) Commit(root, hash string) (*gitfiles.CommitDetail, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Commit", root, hash)
+	ret0, _ := ret[0].(*gitfiles.CommitDetail)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Commit indicates an expected call of Commit.
+func (mr *MockGitFilesMockRecorder) Commit(root, hash any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Commit", reflect.TypeOf((*MockGitFiles)(nil).Commit), root, hash)
+}
+
+// CommitFile mocks base method.
+func (m *MockGitFiles) CommitFile(root, hash, path string) (*gitfiles.CommitFileDiff, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CommitFile", root, hash, path)
+	ret0, _ := ret[0].(*gitfiles.CommitFileDiff)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CommitFile indicates an expected call of CommitFile.
+func (mr *MockGitFilesMockRecorder) CommitFile(root, hash, path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitFile", reflect.TypeOf((*MockGitFiles)(nil).CommitFile), root, hash, path)
+}
+
+// Log mocks base method.
+func (m *MockGitFiles) Log(dir, scope string) (*gitfiles.Log, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Log", dir, scope)
+	ret0, _ := ret[0].(*gitfiles.Log)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Log indicates an expected call of Log.
+func (mr *MockGitFilesMockRecorder) Log(dir, scope any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Log", reflect.TypeOf((*MockGitFiles)(nil).Log), dir, scope)
+}
+
 // ReadFile mocks base method.
 func (m *MockGitFiles) ReadFile(root, path string) (*gitfiles.Content, error) {
 	m.ctrl.T.Helper()

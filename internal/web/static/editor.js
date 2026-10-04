@@ -1,7 +1,8 @@
 // Editor tabs for the chat view: the middle column becomes tabbed, with the
 // chat (transcript + composer + terminal drawer) as a pinned first tab and
 // one CodeMirror tab per opened file or diff (the file's changes against
-// HEAD, with a per-change "Revert"). Line comments for Claude live in
+// HEAD, with a per-change "Revert"), or one file's changes in a commit
+// (read-only, from the Files panel's Graph tab). Line comments for Claude live in
 // review.js. Tabs are remembered per window in
 // localStorage. Files come from /api/sessions/{windowID}/file, which only
 // serves paths the Files panel lists; the active tab re-polls it with
@@ -152,7 +153,11 @@ function storageSet(key, value) {
 function loadSavedTabs(windowID) {
   const saved = storageGet(EDITOR_TABS_KEY + windowID);
   if (saved && Array.isArray(saved.tabs)) {
-    return { tabs: saved.tabs.filter((t) => t && (t.kind === "file" || t.kind === "diff") && typeof t.path === "string"), active: saved.active };
+    return {
+      tabs: saved.tabs.filter((t) => t && typeof t.path === "string" &&
+        (t.kind === "file" || t.kind === "diff" || (t.kind === "commit" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(t.hash)))),
+      active: saved.active,
+    };
   }
   if (saved && Array.isArray(saved.paths)) return { tabs: saved.paths.map((path) => ({ kind: "file", path })), active: saved.active && "file:" + saved.active };
   return { tabs: [], active: null };
@@ -165,10 +170,11 @@ function clockTime() {
 function createEditorTabs({ strip, chatPanel, editorPanel }) {
   let windowID = null;
   let available = false;
-  // Each tab: {kind ("file"|"diff"), path, key, wrap, host, banner, info,
+  // Each tab: {kind ("file"|"diff"|"commit"), path, key, wrap, host, banner, info,
   // status, saveBtn, view, merge, layout, base, etag, conflict, dirty,
   // loading, saving, draftTimer, draftFailed} plus, for diff tabs,
-  // {original, origEtag, deleted}. view is always the editable working
+  // {original, origEtag, deleted}, and for commit tabs {hash, before,
+  // after, loaded}: both sides read-only, never saved. view is always the editable working
   // copy (a MergeView's b side in a split diff). base is the disk version
   // the edit started from ({text, hash}); conflict is a newer disk version
   // that arrived while the tab had unsaved edits.
@@ -183,7 +189,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
 
   const review = createReview({
     onChange(paths) {
-      for (const t of tabs) if (t.view && !t.deleted && paths.has(t.path)) review.apply(t.view, t.path);
+      for (const t of tabs) if (t.view && !t.deleted && t.kind !== "commit" && paths.has(t.path)) review.apply(t.view, t.path);
       renderReviewBtn();
     },
     onSent: () => activate(null), // show the chat, where Claude answers
@@ -199,14 +205,14 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   const draftKey = (tab) => EDITOR_DRAFT_KEY + windowID + "\u0000" + tab.key;
 
   function save() {
-    if (windowID) storageSet(EDITOR_TABS_KEY + windowID, { tabs: tabs.map((t) => ({ kind: t.kind, path: t.path })), active: active ? active.key : null });
+    if (windowID) storageSet(EDITOR_TABS_KEY + windowID, { tabs: tabs.map((t) => ({ kind: t.kind, path: t.path, ...(t.hash ? { hash: t.hash } : {}) })), active: active ? active.key : null });
   }
 
   function renderStrip() {
     const items = [{ tab: null, label: "Chat", title: "Conversation" }, ...tabs.map((t) => ({
       tab: t,
-      label: (t.kind === "diff" ? "± " : "") + t.path.split("/").pop(),
-      title: t.kind === "diff" ? `Changes in ${t.path}` : t.path,
+      label: (t.kind === "diff" ? "± " : t.kind === "commit" ? t.hash.slice(0, 7) + " " : "") + t.path.split("/").pop(),
+      title: t.kind === "diff" ? `Changes in ${t.path}` : t.kind === "commit" ? `${t.path} in commit ${t.hash.slice(0, 7)}` : t.path,
     }))];
     stripTabs.replaceChildren(...items.map(({ tab, label, title }) => {
       const isActive = tab === active;
@@ -235,7 +241,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     renderStrip();
     save();
     if (tab) {
-      if (tab.kind === "diff" && tab.view && tab.layout !== diffLayout(tab)) rebuildView(tab);
+      if (tab.kind !== "file" && tab.view && tab.layout !== diffLayout(tab)) rebuildView(tab);
       load(tab);
     }
   }
@@ -246,9 +252,11 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     return b;
   }
 
-  function newTab(kind, path) {
+  const tabKey = (kind, path, hash) => kind === "commit" ? `commit:${hash}:${path}` : kind + ":" + path;
+
+  function newTab(kind, path, hash) {
     const tab = {
-      kind, path, key: kind + ":" + path,
+      kind, path, hash, key: tabKey(kind, path, hash), before: null, after: null, loaded: false,
       view: null, merge: null, layout: null, base: null, etag: null, conflict: null,
       dirty: false, loading: false, saving: false, draftTimer: 0, draftFailed: false,
       original: null, origEtag: null, deleted: false, pendingLine: 0,
@@ -258,7 +266,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     tab.saveBtn = barButton("Save", () => saveTab(tab), "is-primary");
     tab.saveBtn.disabled = true;
     const withView = (fn) => () => tab.view && fn(tab.view);
-    const buttons = kind === "diff" ? [
+    const buttons = kind !== "file" ? [
       barButton("Previous change", withView((v) => { CM.goToPreviousChunk(v); v.focus(); })),
       barButton("Next change", withView((v) => { CM.goToNextChunk(v); v.focus(); })),
       barButton("Open file", () => open(path, "file")),
@@ -269,15 +277,16 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     ];
     tab.banner = el("div", { class: "editor-pane__banner", hidden: "" });
     tab.info = el("div", { class: "editor-pane__info", hidden: "" });
-    tab.host = el("div", { class: "editor-pane__host" + (kind === "diff" ? " is-diff" : "") });
+    tab.host = el("div", { class: "editor-pane__host" + (kind !== "file" ? " is-diff" : "") });
     tab.wrap = el("div", { class: "editor-pane" }, [
       el("div", { class: "editor-pane__bar" }, [
         // rtl so a long path loses its start, not the file name; bdi keeps
         // the text itself (e.g. a leading ".") in order.
         el("span", { class: "editor-pane__path" }, [el("bdi", { text: path })]),
         ...(kind === "diff" ? [el("span", { class: "editor-pane__kind", text: "vs HEAD" })] : []),
+        ...(kind === "commit" ? [el("span", { class: "editor-pane__kind", title: hash, text: `commit ${hash.slice(0, 7)}` })] : []),
         tab.status,
-        el("span", { class: "editor-pane__actions" }, [...buttons, tab.saveBtn]),
+        el("span", { class: "editor-pane__actions" }, [...buttons, ...(kind === "commit" ? [] : [tab.saveBtn])]),
       ]),
       tab.banner,
       tab.info,
@@ -289,13 +298,14 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   }
 
   // open shows (creating if needed) the tab for path: kind "file" is the
-  // file itself, "diff" its changes against HEAD.
-  function open(path, kind = "file") {
-    if (!windowID || !path) return;
-    const key = kind + ":" + path;
+  // file itself, "diff" its changes against HEAD, "commit" its changes in
+  // commit hash.
+  function open(path, kind = "file", hash) {
+    if (!windowID || !path || (kind === "commit" && !hash)) return;
+    const key = tabKey(kind, path, hash);
     let tab = tabs.find((t) => t.key === key);
     if (!tab) {
-      tab = newTab(kind, path);
+      tab = newTab(kind, path, hash);
       // New tabs open right after the active one, like most editors.
       const at = active ? tabs.indexOf(active) + 1 : tabs.length;
       tabs.splice(at, 0, tab);
@@ -361,7 +371,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       renderStrip();
     }
     tab.saveBtn.disabled = !tab.view || tab.deleted || tab.saving || (!dirty && !tab.conflict);
-    if (tab.view && !tab.deleted) review.sync(tab.view, tab.path);
+    if (tab.view && !tab.deleted && tab.kind !== "commit") review.sync(tab.view, tab.path);
     if (tab.kind === "diff" && tab.view && !tab.deleted && !tab.mixedEol) {
       const c = CM.getChunks(tab.view.state);
       setInfo(tab, c && !c.chunks.length ? "No changes against HEAD." : "");
@@ -497,6 +507,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   // rebuildView recreates a diff tab's view (layout change), keeping its
   // text, unsaved edits included.
   function rebuildView(tab) {
+    if (tab.kind === "commit") { buildCommitView(tab); return; }
     const doc = docText(tab);
     destroyView(tab);
     tab.host.replaceChildren();
@@ -514,11 +525,60 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   // honour a pending reveal.
   function viewReady(tab) {
     if (!tab.view) return;
-    if (!tab.deleted) review.apply(tab.view, tab.path);
+    if (!tab.deleted && tab.kind !== "commit") review.apply(tab.view, tab.path);
     if (tab.pendingLine) {
       const line = tab.view.state.doc.line(Math.min(Math.max(1, tab.pendingLine), tab.view.state.doc.lines));
       tab.pendingLine = 0;
       tab.view.dispatch({ selection: { anchor: line.from }, effects: CM.EditorView.scrollIntoView(line.from, { y: "center" }) });
+    }
+  }
+
+  // buildCommitView (re)creates a commit tab's view: the file in the
+  // commit's first parent against the commit, both read-only.
+  function buildCommitView(tab) {
+    destroyView(tab);
+    tab.host.replaceChildren();
+    const exts = [...readOnlyExtensions(tab.path), CM.EditorState.readOnly.of(true)];
+    const collapse = { margin: 3, minSize: 6 };
+    tab.layout = diffLayout(tab);
+    if (tab.layout === "split") {
+      tab.merge = new CM.MergeView({ parent: tab.host, a: { doc: tab.before, extensions: exts }, b: { doc: tab.after, extensions: exts }, collapseUnchanged: collapse });
+      tab.view = tab.merge.b;
+    } else {
+      tab.view = new CM.EditorView({
+        parent: tab.host,
+        state: CM.EditorState.create({ doc: tab.after, extensions: [...exts, CM.unifiedMergeView({ original: tab.before, mergeControls: false, collapseUnchanged: collapse })] }),
+      });
+    }
+  }
+
+  // loadCommit reads a commit tab's two versions once: a commit never
+  // changes, so there's nothing to poll.
+  async function loadCommit(tab) {
+    if (tab.loaded || tab.loading) return;
+    const g = gen;
+    tab.loading = true;
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/commits/${tab.hash}/file?path=${encodeURIComponent(tab.path)}`);
+      const data = await res.json().catch(() => ({}));
+      if (g !== gen || !tabs.includes(tab)) return;
+      if (!res.ok) {
+        tab.loaded = res.status === 404; // a transient failure retries on the next poll
+        showNote(tab, res.status === 404 ? "This commit (or this file in it) isn't in the session's repository." : `Couldn't read the commit: ${data.error || res.status}`);
+        return;
+      }
+      tab.loaded = true;
+      const sides = [data.before, data.after].filter((v) => v.exists);
+      if (sides.some((v) => v.binary)) { showNote(tab, "Binary file — no text diff."); return; }
+      if (sides.some((v) => v.tooLarge)) { showNote(tab, "Too large to diff here."); return; }
+      tab.before = data.before.exists ? toLF(data.before.text) : "";
+      tab.after = data.after.exists ? toLF(data.after.text) : "";
+      buildCommitView(tab);
+      setInfo(tab, data.status === "A" ? "Added in this commit." : data.status === "D" ? "Deleted in this commit." : data.oldPath ? `Renamed from ${data.oldPath}.` : "");
+    } catch (err) {
+      if (g === gen && !tab.view) showNote(tab, `Couldn't read the commit: ${err.message}`);
+    } finally {
+      tab.loading = false;
     }
   }
 
@@ -557,6 +617,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
 
   // load fetches the tab's file (and, for a diff tab, HEAD's version).
   async function load(tab) {
+    if (tab.kind === "commit" && available) return loadCommit(tab);
     if (!available || tab.loading || tab.saving) {
       if (!available && !tab.view) showNote(tab, "No live session.");
       return;
@@ -645,7 +706,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   // edit started from; "Keep mine and save" passes the conflicting disk
   // version's hash to overwrite it deliberately.
   async function saveTab(tab, baseHash) {
-    if (!tab.view || tab.saving || tab.deleted || !windowID) return;
+    if (!tab.view || tab.saving || tab.deleted || tab.kind === "commit" || !windowID) return;
     if (!tab.dirty && !tab.conflict) return;
     if (tab.mixedEol) return;
     const g = gen;
@@ -844,7 +905,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (active?.kind === "diff" && active.view && active.layout !== diffLayout(active)) rebuildView(active);
+      if (active && active.kind !== "file" && active.view && active.layout !== diffLayout(active)) rebuildView(active);
     }, 150);
   });
 
@@ -857,6 +918,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
 
   return {
     open,
+    showChat: () => activate(null),
     // setWindow restores the window's remembered tabs; files load lazily
     // when their tab is shown, and unsaved edits come back from drafts.
     setWindow(id) {
@@ -874,7 +936,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       review.setWindow(id);
       renderReviewBtn();
       const saved = id ? loadSavedTabs(id) : { tabs: [], active: null };
-      for (const t of saved.tabs) tabs.push(newTab(t.kind, t.path));
+      for (const t of saved.tabs) tabs.push(newTab(t.kind, t.path, t.hash));
       activate(tabs.find((t) => t.key === saved.active) || null);
     },
     // setAvailable is driven by the chat view's state poll: files are only

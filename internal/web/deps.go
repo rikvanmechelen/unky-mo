@@ -109,6 +109,15 @@ type GitFiles interface {
 	// WriteFile saves an editor tab, only if the file still hashes to
 	// baseHash (a *gitfiles.ConflictError otherwise). Same root/path rules.
 	WriteFile(root, path, text, baseHash string) (*gitfiles.Content, error)
+	// Log reads the commit graph for the Graph tab (scope is
+	// gitfiles.ScopeBranch or ScopeAll).
+	Log(dir, scope string) (*gitfiles.Log, error)
+	// Commit and CommitFile read one commit and one file it changed, from
+	// git's object store. hash must be a full commit id
+	// (gitfiles.ErrUnknownCommit otherwise) and path one of the commit's
+	// changed files (gitfiles.ErrNotInCommit otherwise).
+	Commit(root, hash string) (*gitfiles.CommitDetail, error)
+	CommitFile(root, hash, path string) (*gitfiles.CommitFileDiff, error)
 }
 
 // Terminals reads and drives a window's drawer terminals for the chat
@@ -346,6 +355,24 @@ func (g realGitFiles) ReadHEAD(root, path string) (*gitfiles.Content, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.ReadHEAD(ctx, g.cmd, root, path)
+}
+
+func (g realGitFiles) Log(dir, scope string) (*gitfiles.Log, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetLog(ctx, g.cmd, dir, scope)
+}
+
+func (g realGitFiles) Commit(root, hash string) (*gitfiles.CommitDetail, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetCommit(ctx, g.cmd, root, hash)
+}
+
+func (g realGitFiles) CommitFile(root, hash, path string) (*gitfiles.CommitFileDiff, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetCommitFile(ctx, g.cmd, root, hash, path)
 }
 
 func (g realGitFiles) Branch(dir string) string {

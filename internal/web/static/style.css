@@ -773,6 +773,62 @@ button.file-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 
 .file-row__minus { color: var(--red); }
 .file-row__bin { color: var(--gray-767); }
 
+/* Graph tab (graph.js): one button per commit, its slice of the graph drawn
+ * as an SVG at the left, so the lines join up from row to row. */
+.graph-scope { display: flex; gap: 0; padding: 4px 20px 8px; }
+.graph-scope__btn {
+  all: unset; cursor: pointer; padding: 2px 8px; font-family: var(--font-sans); font-size: 12px; line-height: 18px;
+  border: 1px solid var(--gray-ddd); color: var(--gray-444);
+}
+.graph-scope__btn + .graph-scope__btn { border-left: 0; }
+.graph-scope__btn.is-active { background: var(--black); border-color: var(--black); color: var(--white); }
+.graph-scope__btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.graph-lanes { flex: none; display: block; overflow: hidden; }
+.graph-lanes path { fill: none; stroke-width: 2; }
+.graph-lanes path.is-dashed { stroke-dasharray: 2 2; }
+.graph-dot { fill: var(--lane); stroke: var(--white); stroke-width: 1.5; }
+.graph-dot.is-head { fill: var(--white); stroke: var(--lane); stroke-width: 2.5; }
+.graph-dot.is-pseudo { fill: var(--white); stroke: var(--gray-767); stroke-width: 1.5; stroke-dasharray: 2 1.5; }
+
+.graph-row {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 20px 0 16px;
+  font-size: 12px; line-height: 1.5;
+}
+.graph-row:hover, .graph-row.is-open { background: var(--gray-f6); }
+.graph-row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.graph-row__text { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; }
+.graph-row__subject { flex: 1 0 40%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.graph-row.is-head .graph-row__subject { font-weight: 700; }
+.graph-row.is-pseudo .graph-row__subject { color: var(--gray-666); font-style: italic; }
+.graph-row__unpushed { flex: none; color: var(--blue); font-weight: 700; }
+.graph-row__age { flex: none; color: var(--gray-767); font-size: 11px; }
+
+.graph-ref {
+  flex: 0 1 auto; min-width: 24px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 4px; font-family: var(--font-mono); font-size: 10px; line-height: 16px;
+  border: 1px solid var(--gray-ddd); color: var(--gray-444);
+}
+.graph-ref--branch { border-color: var(--blue); color: var(--blue); }
+.graph-ref--branch.is-head, .graph-ref--head { background: var(--blue); color: var(--white); border-color: var(--blue); font-weight: 700; }
+.graph-ref--remote { border-style: dashed; }
+.graph-ref--more { flex: none; min-width: 0; border-color: var(--gray-ddd); color: var(--gray-666); }
+.graph-ref--tag { border-color: var(--mode-auto); color: var(--mode-auto); }
+
+.graph-detail { display: flex; align-items: stretch; gap: 6px; padding-left: 16px; background: var(--gray-f6); }
+.graph-detail .graph-lanes--gutter { height: auto; }
+.graph-detail__main { flex: 1; min-width: 0; padding: 2px 0 8px; }
+.graph-detail__meta { padding-right: 20px; font-size: 12px; line-height: 1.5; color: var(--gray-444); }
+.graph-detail__hash { font-family: var(--font-mono); color: var(--black); }
+.graph-detail__body { padding: 4px 20px 0 0; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.graph-detail__actions { display: flex; gap: 12px; padding: 6px 0 4px; }
+.graph-detail__action { all: unset; cursor: pointer; font-size: 12px; border-bottom: 1px solid currentColor; }
+.graph-detail__action:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.graph-detail__note { padding: 4px 20px 4px 0; font-size: 12px; color: var(--gray-666); font-style: italic; }
+button.file-row.graph-file { padding-left: 0; }
+button.file-row.graph-file:hover { background: var(--gray-eee); }
+
 .files-pane__foot {
   flex: none; padding: 16px 20px 20px; border-top: 1px solid var(--gray-ddd);
   font-size: 12px; line-height: 1.5; color: var(--gray-444);

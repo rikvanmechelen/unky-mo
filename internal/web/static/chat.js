@@ -562,6 +562,18 @@ function main() {
   const filesPane = createFilesPane(filesEl, {
     onOpen: (path) => editor.open(path, "file"),
     onOpenDiff: (path) => editor.open(path, "diff"),
+    onOpenCommitFile: (hash, path) => editor.open(path, "commit", hash),
+    // Adds a commit reference at the cursor in the message box.
+    onMention: (text) => {
+      const { selectionStart: start, selectionEnd: end, value } = promptInput;
+      const before = value.slice(0, start);
+      const insert = (before && !/\s$/.test(before) ? " " : "") + text + " ";
+      promptInput.value = before + insert + value.slice(end);
+      promptInput.setSelectionRange(start + insert.length, start + insert.length);
+      promptInput.dispatchEvent(new Event("input"));
+      editor.showChat();
+      promptInput.focus();
+    },
   });
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
