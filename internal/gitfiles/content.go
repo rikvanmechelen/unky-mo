@@ -127,11 +127,11 @@ func ReadHEAD(ctx context.Context, cmd moexec.Commander, root, rel string) (*Con
 }
 
 // notInHEAD reports whether git cat-file's stderr says the path isn't in
-// HEAD (a new file) or there is no HEAD yet (no commits), as opposed to
-// git failing.
+// the revision read (HEAD, or a commit for ReadAt) — a new file — or there
+// is no HEAD yet (no commits), as opposed to git failing.
 func notInHEAD(stderr string) bool {
 	msg := strings.ToLower(stderr)
-	for _, s := range []string{"does not exist in 'head'", "but not in 'head'", "invalid object name", "not a valid object name"} {
+	for _, s := range []string{"does not exist in '", "but not in '", "invalid object name", "not a valid object name"} {
 		if strings.Contains(msg, s) {
 			return true
 		}

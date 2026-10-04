@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -97,10 +98,26 @@ func (s *Server) handleSubagentTranscript(w http.ResponseWriter, r *http.Request
 	}
 	row, _ := s.windowRow(windowID)
 	for _, a := range agents {
-		if a.ID == agentID {
-			s.streamTranscript(w, r, row.SessionID+"/agent-"+a.ID, a.TranscriptPath)
+		if a.ID != agentID {
+			continue
+		}
+		// ?once=1 answers with the lines read so far as one JSON array
+		// instead of a stream: the Overview tab's intent trace reads a
+		// finished agent's edits once, without holding a connection open.
+		if r.URL.Query().Get("once") == "1" {
+			lines, err := newTranscriptCursor(a.TranscriptPath).readNew()
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
+			if lines == nil {
+				lines = []json.RawMessage{}
+			}
+			writeJSON(w, lines)
 			return
 		}
+		s.streamTranscript(w, r, row.SessionID+"/agent-"+a.ID, a.TranscriptPath)
+		return
 	}
 	writeError(w, http.StatusNotFound, fmt.Errorf("no subagent %s in window %s", agentID, windowID))
 }

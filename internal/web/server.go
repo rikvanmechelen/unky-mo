@@ -24,16 +24,22 @@ type Server struct {
 
 	// Files panel + nav branch caches, keyed by checkout path. Short TTLs:
 	// they only dedupe several open tabs polling the same checkout.
-	filesCache  *ttlCache
-	treeCache   *ttlCache
-	logCache    *ttlCache
-	branchCache *ttlCache
-	shellsCache *ttlCache
-	agentsCache *ttlCache
-	cmdsCache   *ttlCache
+	filesCache    *ttlCache
+	treeCache     *ttlCache
+	logCache      *ttlCache
+	overviewCache *ttlCache
+	archCache     *ttlCache
+	branchCache   *ttlCache
+	shellsCache   *ttlCache
+	agentsCache   *ttlCache
+	cmdsCache     *ttlCache
 
 	// launchMu serializes session-mutating requests (launch, replace, stop).
 	launchMu sync.Mutex
+
+	// scopeRunning holds the windows with a scope check in flight: one at
+	// a time per window, since each runs a claude process.
+	scopeRunning sync.Map
 
 	// modeMu serializes permission-mode changes; modeSettle is the wait
 	// between footer re-reads after each shift+tab (zero in tests).
@@ -55,21 +61,23 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 	}
 
 	s := &Server{
-		deps:        deps,
-		modeSettle:  25 * time.Millisecond,
-		mux:         http.NewServeMux(),
-		tmuxSession: tmuxSession,
-		prCache:     newTTLCache(90 * time.Second),
-		ticketCache: newTTLCache(ticketRefresh),
-		transcripts: newTranscriptHub(),
-		filesCache:  newTTLCache(2 * time.Second),
-		treeCache:   newTTLCache(10 * time.Second),
-		logCache:    newTTLCache(2 * time.Second),
-		branchCache: newTTLCache(15 * time.Second),
-		shellsCache: newTTLCache(2 * time.Second),
-		agentsCache: newTTLCache(time.Second),
-		cmdsCache:   newTTLCache(30 * time.Second),
-		bootID:      newBootID(),
+		deps:          deps,
+		modeSettle:    25 * time.Millisecond,
+		mux:           http.NewServeMux(),
+		tmuxSession:   tmuxSession,
+		prCache:       newTTLCache(90 * time.Second),
+		ticketCache:   newTTLCache(ticketRefresh),
+		transcripts:   newTranscriptHub(),
+		filesCache:    newTTLCache(2 * time.Second),
+		treeCache:     newTTLCache(10 * time.Second),
+		logCache:      newTTLCache(2 * time.Second),
+		overviewCache: newTTLCache(2 * time.Second),
+		archCache:     newTTLCache(3 * time.Second),
+		branchCache:   newTTLCache(15 * time.Second),
+		shellsCache:   newTTLCache(2 * time.Second),
+		agentsCache:   newTTLCache(time.Second),
+		cmdsCache:     newTTLCache(30 * time.Second),
+		bootID:        newBootID(),
 	}
 	s.routes()
 	return s
@@ -88,6 +96,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/file", s.handleSessionFile)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/log", s.handleSessionLog)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/overview", s.handleOverview)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/architecture", s.handleArchitecture)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/scope", s.handleScope)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}", s.handleCommit)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commits/{hash}/file", s.handleCommitFile)
 	s.mux.HandleFunc("PUT /api/sessions/{windowID}/file", s.handleSaveFile)

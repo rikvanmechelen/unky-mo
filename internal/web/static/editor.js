@@ -154,6 +154,13 @@ function storageSet(key, value) {
   } catch (_) { return false; }
 }
 
+// A "diff" tab compares the working copy with HEAD, a "bdiff" tab with the
+// branch's merge base (opened from the Overview tab). Both are editable on
+// the working-copy side and share all the diff code.
+const isDiffKind = (kind) => kind === "diff" || kind === "bdiff";
+const DIFF_REV = { diff: "HEAD", bdiff: "base" };
+const DIFF_BASE_LABEL = { diff: "HEAD", bdiff: "the branch base" };
+
 // loadSavedTabs returns a window's remembered tabs as {tabs: [{kind,
 // path}], active: key}. Older saves listed plain file paths.
 function loadSavedTabs(windowID) {
@@ -161,7 +168,7 @@ function loadSavedTabs(windowID) {
   if (saved && Array.isArray(saved.tabs)) {
     return {
       tabs: saved.tabs.filter((t) => t && typeof t.path === "string" &&
-        (t.kind === "file" || t.kind === "diff" || (t.kind === "commit" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(t.hash)))),
+        (t.kind === "file" || isDiffKind(t.kind) || (t.kind === "commit" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(t.hash)))),
       active: saved.active,
     };
   }
@@ -173,10 +180,10 @@ function clockTime() {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function createEditorTabs({ strip, chatPanel, editorPanel }) {
+function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   let windowID = null;
   let available = false;
-  // Each tab: {kind ("file"|"diff"|"commit"), path, key, wrap, host, banner, info,
+  // Each tab: {kind ("file"|"diff"|"bdiff"|"commit"), path, key, wrap, host, banner, info,
   // status, saveBtn, view, merge, layout, base, etag, conflict, dirty,
   // loading, saving, draftTimer, draftFailed} plus, for diff tabs,
   // {original, origEtag, deleted}, and for commit tabs {hash, before,
@@ -185,7 +192,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   // the edit started from ({text, hash}); conflict is a newer disk version
   // that arrived while the tab had unsaved edits.
   let tabs = [];
-  let active = null; // a tab, or null for the chat tab
+  let active = null; // a tab, or null for the chat (or overview) tab
+  let overviewShown = false; // the pinned Overview tab is showing
   let gen = 0; // bumped on window switch; stale responses are dropped
 
   const stripTabs = el("div", { class: "editor-tabs__list", role: "tablist" });
@@ -211,21 +219,26 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   const draftKey = (tab) => EDITOR_DRAFT_KEY + windowID + "\u0000" + tab.key;
 
   function save() {
-    if (windowID) storageSet(EDITOR_TABS_KEY + windowID, { tabs: tabs.map((t) => ({ kind: t.kind, path: t.path, ...(t.hash ? { hash: t.hash } : {}) })), active: active ? active.key : null });
+    if (windowID) storageSet(EDITOR_TABS_KEY + windowID, { tabs: tabs.map((t) => ({ kind: t.kind, path: t.path, ...(t.hash ? { hash: t.hash } : {}) })), active: overviewShown ? "overview" : active ? active.key : null });
   }
 
   function renderStrip() {
-    const items = [{ tab: null, label: "Chat", title: "Conversation" }, ...tabs.map((t) => ({
-      tab: t,
-      label: (t.kind === "diff" ? "± " : t.kind === "commit" ? t.hash.slice(0, 7) + " " : "") + t.path.split("/").pop(),
-      title: t.kind === "diff" ? `Changes in ${t.path}` : t.kind === "commit" ? `${t.path} in commit ${t.hash.slice(0, 7)}` : t.path,
-    }))];
-    stripTabs.replaceChildren(...items.map(({ tab, label, title }) => {
-      const isActive = tab === active;
+    const items = [
+      { tab: null, label: "Chat", title: "Conversation" },
+      ...(overview ? [{ tab: null, pinned: "overview", label: "Overview", title: "The shape of this branch's change" }] : []),
+      ...tabs.map((t) => ({
+        tab: t,
+        label: (isDiffKind(t.kind) ? "± " : t.kind === "commit" ? t.hash.slice(0, 7) + " " : "") + t.path.split("/").pop(),
+        title: isDiffKind(t.kind) ? `Changes in ${t.path} against ${DIFF_BASE_LABEL[t.kind]}` : t.kind === "commit" ? `${t.path} in commit ${t.hash.slice(0, 7)}` : t.path,
+      })),
+    ];
+    stripTabs.replaceChildren(...items.map(({ tab, pinned, label, title }) => {
+      const isActive = pinned ? overviewShown : tab === active && !overviewShown;
       const btn = el("button", { class: "editor-tab" + (isActive ? " is-active" : "") + (tab ? "" : " is-chat") + (tab?.dirty ? " is-dirty" : ""), type: "button", role: "tab", "aria-selected": String(isActive), title: tab?.dirty ? `${title} (unsaved)` : title }, [
         el("span", { class: "editor-tab__label", text: label }),
+        ...(pinned ? [overview.badge] : []),
       ]);
-      btn.addEventListener("click", () => activate(tab));
+      btn.addEventListener("click", () => pinned ? showOverview() : activate(tab));
       if (!tab) return btn;
       const close = el("span", { class: "editor-tab__close", role: "button", title: `Close ${tab.path}`, "aria-label": `Close ${tab.path}` }, [
         el("span", { class: "editor-tab__x", text: "×" }),
@@ -241,6 +254,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
 
   function activate(tab) {
     active = tab;
+    if (overviewShown) { overviewShown = false; overview.setVisible(false); }
     chatPanel.hidden = !!tab;
     editorPanel.hidden = !tab;
     for (const t of tabs) t.wrap.hidden = t !== tab;
@@ -250,6 +264,17 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       if (tab.kind !== "file" && tab.view && tab.layout !== diffLayout(tab)) rebuildView(tab);
       load(tab);
     }
+  }
+
+  function showOverview() {
+    active = null;
+    overviewShown = true;
+    chatPanel.hidden = true;
+    editorPanel.hidden = true;
+    for (const t of tabs) t.wrap.hidden = true;
+    overview.setVisible(true);
+    renderStrip();
+    save();
   }
 
   function barButton(text, onClick, cls) {
@@ -289,7 +314,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
         // rtl so a long path loses its start, not the file name; bdi keeps
         // the text itself (e.g. a leading ".") in order.
         el("span", { class: "editor-pane__path" }, [el("bdi", { text: path })]),
-        ...(kind === "diff" ? [el("span", { class: "editor-pane__kind", text: "vs HEAD" })] : []),
+        ...(isDiffKind(kind) ? [el("span", { class: "editor-pane__kind", text: kind === "bdiff" ? "vs branch base" : "vs HEAD" })] : []),
         ...(kind === "commit" ? [el("span", { class: "editor-pane__kind", title: hash, text: `commit ${hash.slice(0, 7)}` })] : []),
         tab.status,
         el("span", { class: "editor-pane__actions" }, [...buttons, ...(kind === "commit" ? [] : [tab.saveBtn])]),
@@ -304,8 +329,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   }
 
   // open shows (creating if needed) the tab for path: kind "file" is the
-  // file itself, "diff" its changes against HEAD, "commit" its changes in
-  // commit hash.
+  // file itself, "diff" its changes against HEAD, "bdiff" against the
+  // branch's merge base, "commit" its changes in commit hash.
   function open(path, kind = "file", hash) {
     if (!windowID || !path || (kind === "commit" && !hash)) return;
     const key = tabKey(kind, path, hash);
@@ -378,9 +403,9 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     }
     tab.saveBtn.disabled = !tab.view || tab.deleted || tab.saving || (!dirty && !tab.conflict);
     if (tab.view && !tab.deleted && tab.kind !== "commit") review.sync(tab.view, tab.path);
-    if (tab.kind === "diff" && tab.view && !tab.deleted && !tab.mixedEol) {
+    if (isDiffKind(tab.kind) && tab.view && !tab.deleted && !tab.mixedEol) {
       const c = CM.getChunks(tab.view.state);
-      setInfo(tab, c && !c.chunks.length ? "No changes against HEAD." : "");
+      setInfo(tab, c && !c.chunks.length ? `No changes against ${DIFF_BASE_LABEL[tab.kind]}.` : "");
     }
     if (statusText !== undefined) tab.status.textContent = statusText;
     else if (tab.view && !tab.saving) tab.status.textContent = dirty ? "Modified" : tab.status.textContent === "Modified" ? "" : tab.status.textContent;
@@ -601,13 +626,13 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     return { ok: res.ok, status: res.status, etag: res.headers.get("ETag"), data };
   }
 
-  // loadOriginal refreshes a diff tab's HEAD version. Returns false (after
-  // showing a note) when it can't be diffed.
+  // loadOriginal refreshes a diff tab's HEAD (or branch base) version.
+  // Returns false (after showing a note) when it can't be diffed.
   async function loadOriginal(tab) {
-    const r = await fetchVersion(tab, "HEAD", tab.origEtag);
+    const r = await fetchVersion(tab, DIFF_REV[tab.kind], tab.origEtag);
     if (!r) return true;
     let problem = null;
-    if (!r.ok) problem = r.status === 404 ? "This file isn't part of the checkout (or is ignored by git)." : `Couldn't read HEAD: ${r.data.error || r.status}`;
+    if (!r.ok) problem = r.status === 404 ? "This file isn't part of the checkout (or is ignored by git)." : `Couldn't read ${DIFF_BASE_LABEL[tab.kind]}: ${r.data.error || r.status}`;
     else if (r.data.binary || r.data.tooLarge) problem = r.data.binary ? "Binary file — no text diff." : "Too large to diff here.";
     if (problem) {
       // An open editor keeps its (possibly unsaved) text; only say why the
@@ -632,7 +657,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     const seq = tab.saveSeq; // a save since this poll started makes its answer stale
     tab.loading = true;
     try {
-      if (tab.kind === "diff" && !(await loadOriginal(tab))) return;
+      if (isDiffKind(tab.kind) && !(await loadOriginal(tab))) return;
       if (g !== gen || !tabs.includes(tab)) return;
       const r = await fetchVersion(tab, "", tab.etag);
       if (g !== gen || !tabs.includes(tab) || tab.saving || tab.saveSeq !== seq || !r) return;
@@ -642,8 +667,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
         showNote(tab, r.status === 404 ? "This file isn't part of the checkout (or is ignored by git)." : `Couldn't open the file: ${data.error || r.status}`);
         return;
       }
-      if (tab.kind === "diff" && !data.exists && !tab.dirty) {
-        // Deleted in the working tree: show what HEAD had, read-only.
+      if (isDiffKind(tab.kind) && !data.exists && !tab.dirty) {
+        // Deleted in the working tree: show what HEAD (or the base) had, read-only.
         if (!tab.deleted || !tab.view) {
           tab.deleted = true;
           destroyView(tab);
@@ -652,7 +677,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
           tab.etag = r.etag;
           buildDiff(tab, "", tabExtensions(tab));
           viewReady(tab);
-          setInfo(tab, "Deleted in the working tree — showing what HEAD had.");
+          setInfo(tab, `Deleted in the working tree — showing what ${DIFF_BASE_LABEL[tab.kind]} had.`);
           updateState(tab, "");
         }
         return;
@@ -694,7 +719,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
     tab.base = { text, hash: data.hash };
     tab.etag = `"${data.hash}"`;
     tab.host.replaceChildren();
-    if (tab.kind === "diff") {
+    if (isDiffKind(tab.kind)) {
       buildDiff(tab, doc, tabExtensions(tab));
     } else {
       tab.view = new CM.EditorView({ parent: tab.host, state: CM.EditorState.create({ doc, extensions: tabExtensions(tab) }) });
@@ -925,6 +950,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
   return {
     open,
     showChat: () => activate(null),
+    showOverview,
     // setWindow restores the window's remembered tabs; files load lazily
     // when their tab is shown, and unsaved edits come back from drafts.
     setWindow(id) {
@@ -944,6 +970,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel }) {
       const saved = id ? loadSavedTabs(id) : { tabs: [], active: null };
       for (const t of saved.tabs) tabs.push(newTab(t.kind, t.path, t.hash));
       activate(tabs.find((t) => t.key === saved.active) || null);
+      if (overview && saved.active === "overview") showOverview();
     },
     // setAvailable is driven by the chat view's state poll: files are only
     // read while the window has a live session.

@@ -54,6 +54,9 @@ func TestSessionFileRejectsUnlistedPaths(t *testing.T) {
 	srv, git := filesFixture(t)
 	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go"}, nil)
 	git.EXPECT().Changes("/ws/foo/sub").Return(&gitfiles.Changes{Root: "/ws/foo"}, nil)
+	// The branch's change doesn't list them either (it never lists an
+	// ignored file: untracked files come from ls-files --exclude-standard).
+	git.EXPECT().Overview("/ws/foo/sub", gitfiles.ModeBranch).Return(&gitfiles.Overview{Root: "/ws/foo"}, nil)
 	// No ReadFile/ReadHEAD expectations: gomock fails on any call.
 	for _, path := range []string{".env", "../../etc/passwd", "/etc/passwd", "sub/../a.go"} {
 		if rec := get(t, srv, "/api/sessions/@5/file?path="+url.QueryEscape(path)); rec.Code != http.StatusNotFound {
@@ -142,6 +145,7 @@ func TestSaveFileRejects(t *testing.T) {
 	srv, git := filesFixture(t)
 	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go", "link"}, nil).AnyTimes()
 	git.EXPECT().Changes("/ws/foo/sub").Return(&gitfiles.Changes{Root: "/ws/foo"}, nil).AnyTimes()
+	git.EXPECT().Overview("/ws/foo/sub", gitfiles.ModeBranch).Return(&gitfiles.Overview{Root: "/ws/foo"}, nil).AnyTimes()
 	git.EXPECT().WriteFile("/ws/foo", "link", "x", "b").Return(nil, gitfiles.ErrOutsideRoot)
 
 	cases := []struct {

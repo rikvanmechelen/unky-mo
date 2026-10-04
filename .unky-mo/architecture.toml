@@ -1,0 +1,45 @@
+# Layer rules for unky-mo's packages. The web Overview tab (internal/review)
+# flags an import a change *adds* that breaks one of these rules; imports
+# that already exist are never flagged.
+#
+# A package belongs to the layer with the longest matching path prefix.
+# `allow` lists the only in-module imports a layer may have (besides its own
+# packages); `deny` lists imports it must not have.
+
+[[layer]]
+name = "git readers"
+paths = ["internal/gitfiles", "internal/github"]
+allow = ["internal/exec"]
+
+[[layer]]
+name = "review"
+paths = ["internal/review"]
+allow = ["internal/gitfiles", "internal/exec"]
+
+[[layer]]
+name = "claude"
+paths = ["internal/claude"]
+allow = ["internal/exec"]
+
+# Domain operations are shared by the CLI, TUI and web: they never reach up
+# into a frontend, and status.Manager belongs to the running TUI.
+[[layer]]
+name = "ops"
+paths = ["internal/ops"]
+deny = ["internal/tui", "internal/web", "internal/status"]
+
+# The web server is a separate process: it never touches the TUI.
+[[layer]]
+name = "web"
+paths = ["internal/web"]
+deny = ["internal/tui"]
+
+[[layer]]
+name = "tui"
+paths = ["internal/tui"]
+deny = ["internal/web"]
+
+[[layer]]
+name = "internal"
+paths = ["internal"]
+deny = ["cmd"]

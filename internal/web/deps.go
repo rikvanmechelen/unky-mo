@@ -25,13 +25,14 @@ import (
 	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
+	"github.com/rvanmech/unky-mo/internal/review"
 	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane,Subagents,SlashCommands,Restarter
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,Restarter
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -120,6 +121,26 @@ type GitFiles interface {
 	// changed files (gitfiles.ErrNotInCommit otherwise).
 	Commit(root, hash string) (*gitfiles.CommitDetail, error)
 	CommitFile(root, hash, path string) (*gitfiles.CommitFileDiff, error)
+	// Overview reads the change for the Overview tab (mode is
+	// gitfiles.ModeBranch or ModeHead).
+	Overview(dir, mode string) (*gitfiles.Overview, error)
+	// ReadAt reads one file as committed in rev, a full commit id
+	// (gitfiles.ErrUnknownCommit otherwise): the base side of a branch diff.
+	ReadAt(root, rev, path string) (*gitfiles.Content, error)
+}
+
+// ChangeAnalyzer works out a change's architecture delta (package imports
+// that appear or disappear, checked against the repo's layer rules) and
+// contract surface, for the Overview tab. o is an overview from GitFiles.
+type ChangeAnalyzer interface {
+	Analyze(o *gitfiles.Overview) (*review.Analysis, error)
+}
+
+// ScopeChecker asks Claude (headless, no tools) whether each changed file
+// fits the ticket and the prompts that changed it — the Overview tab's
+// on-demand drift check.
+type ScopeChecker interface {
+	Check(req review.ScopeRequest) (*review.ScopeResult, error)
 }
 
 // Terminals reads and drives a window's drawer terminals for the chat
@@ -184,6 +205,8 @@ type Deps struct {
 	History   SessionHistory
 	Sessions  SessionOps
 	Git       GitFiles
+	Review    ChangeAnalyzer
+	Scope     ScopeChecker
 	Terminals Terminals
 	Shells    Shells
 	// ClaudePane reads Claude's own pane (spinner line, permission mode)
@@ -356,6 +379,32 @@ type errUnknownProvider string
 
 func (e errUnknownProvider) Error() string { return "unknown ticket provider: " + string(e) }
 
+// realAnalyzer runs review.Analyze against the real git binary.
+type realAnalyzer struct{ cmd moexec.Commander }
+
+func NewChangeAnalyzer(cmd moexec.Commander) ChangeAnalyzer { return realAnalyzer{cmd: cmd} }
+
+func (a realAnalyzer) Analyze(o *gitfiles.Overview) (*review.Analysis, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return review.Analyze(ctx, a.cmd, o)
+}
+
+// realScopeChecker runs review.CheckScope with the real claude binary.
+type realScopeChecker struct{ cmd moexec.Commander }
+
+func NewScopeChecker(cmd moexec.Commander) ScopeChecker { return realScopeChecker{cmd: cmd} }
+
+// scopeTimeout bounds one scope check; claude usually answers in well
+// under a minute.
+const scopeTimeout = 3 * time.Minute
+
+func (c realScopeChecker) Check(req review.ScopeRequest) (*review.ScopeResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), scopeTimeout)
+	defer cancel()
+	return review.CheckScope(ctx, c.cmd, req)
+}
+
 // realGitFiles runs gitfiles against the real git binary.
 type realGitFiles struct{ cmd moexec.Commander }
 
@@ -407,6 +456,18 @@ func (g realGitFiles) CommitFile(root, hash, path string) (*gitfiles.CommitFileD
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.GetCommitFile(ctx, g.cmd, root, hash, path)
+}
+
+func (g realGitFiles) Overview(dir, mode string) (*gitfiles.Overview, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetOverview(ctx, g.cmd, dir, mode)
+}
+
+func (g realGitFiles) ReadAt(root, rev, path string) (*gitfiles.Content, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.ReadAt(ctx, g.cmd, root, rev, path)
 }
 
 func (g realGitFiles) Branch(dir string) string {

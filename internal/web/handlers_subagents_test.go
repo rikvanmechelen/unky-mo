@@ -107,3 +107,21 @@ func TestSubagentTranscriptStreamsListedFile(t *testing.T) {
 	}
 	t.Fatal("no event received")
 }
+
+// ?once=1 answers with the listed agent's lines as one JSON array.
+func TestSubagentTranscriptOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "agent-abc.jsonl", `{"type":"user","uuid":"u1","message":{"content":"research"}}`+"\n"+`{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[]}}`+"\n")
+	srv, sa := subagentsFixture(t)
+	sa.EXPECT().List("/ws/foo", "s5").Return([]claude.Subagent{{ID: "abc", TranscriptPath: path}}, nil).AnyTimes()
+
+	rec := get(t, srv, "/api/sessions/@5/subagents/abc/transcript?once=1")
+	var lines []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &lines); err != nil || rec.Code != http.StatusOK || len(lines) != 2 || lines[1]["uuid"] != "a1" {
+		t.Fatalf("got %d %s (%v)", rec.Code, rec.Body, err)
+	}
+	// Still only for an agent the listing returned.
+	if rec := get(t, srv, "/api/sessions/@5/subagents/zzz/transcript?once=1"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown agent: want 404, got %d", rec.Code)
+	}
+}

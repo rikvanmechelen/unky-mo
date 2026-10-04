@@ -267,7 +267,8 @@ function createTranscriptView(container, scrollEl, opts = {}) {
 
   // appendBubble adds one transcript row. images (user rows only) are data:
   // URLs shown as thumbnails under the text.
-  function appendBubble(kind, text, images = []) {
+  // uuid (a prompt's transcript line) lets reveal() find the bubble.
+  function appendBubble(kind, text, images = [], uuid = "") {
     if (kind === "meta") {
       transcript.appendChild(el("div", { class: "msg-system" }, [
         el("span", { class: "msg-system__text", text }),
@@ -281,7 +282,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
         btn.addEventListener("click", () => openImageViewer(src));
         return btn;
       });
-      transcript.appendChild(el("div", { class: "msg-user" }, [
+      transcript.appendChild(el("div", { class: "msg-user", ...(uuid ? { "data-uuid": uuid } : {}) }, [
         el("span", { class: "msg-user__label", text: userLabel }),
         ...(text ? [el("span", { class: "msg-user__text", text })] : []),
         ...(thumbs.length ? [el("div", { class: "msg-user__images" }, thumbs)] : []),
@@ -440,7 +441,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       if (typeof content === "string") {
         const d = describeUserString(msg, content);
         if (d.kind === "teammates") appendTeammates(d.items);
-        else if (d.kind !== "skip") appendBubble(d.kind, d.text);
+        else if (d.kind !== "skip") appendBubble(d.kind, d.text, [], msg.uuid);
         return;
       }
       for (const block of content || []) {
@@ -453,7 +454,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       const images = (content || []).map(imageSrc).filter(Boolean);
       if (!text && !images.length) return;
       const d = describeUserString(msg, text);
-      if (d.kind === "user") appendBubble("user", d.text, images);
+      if (d.kind === "user") appendBubble("user", d.text, images, msg.uuid);
       else if (d.kind === "meta") appendBubble("meta", d.text);
     }
   }
@@ -524,7 +525,21 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     transcript.replaceChildren();
   }
 
-  return { onLine, clear, withPin, scrollToBottom, toolCards };
+  // reveal scrolls to the prompt with transcript line uuid and flashes it.
+  // It's false when that prompt isn't on the branch shown.
+  function reveal(uuid) {
+    const node = [...transcript.querySelectorAll(".msg-user[data-uuid]")].find((n) => n.dataset.uuid === uuid);
+    if (!node) return false;
+    node.scrollIntoView({ block: "center" });
+    node.classList.remove("is-flash");
+    void node.offsetWidth; // restart the animation
+    node.classList.add("is-flash");
+    clearTimeout(node.flashTimer);
+    node.flashTimer = setTimeout(() => node.classList.remove("is-flash"), 1600);
+    return true;
+  }
+
+  return { onLine, clear, withPin, scrollToBottom, toolCards, reveal };
 }
 
 function main() {
@@ -554,10 +569,30 @@ function main() {
   const usageBox = document.getElementById("usage");
   const shell = document.getElementById("chat-shell");
   const filesEl = document.getElementById("files-pane");
+  // The Overview tab opens branch diffs as editor tabs and jumps to turns
+  // in the transcript; editor and view are defined below by the time a
+  // click can happen. It reads prompts the way the transcript does.
+  const overview = createOverview(document.getElementById("overview-panel"), {
+    onOpenDiff: (path, kind) => editor.open(path, kind),
+    describeUser: describeUserString,
+    revealTurn: (uuid) => {
+      editor.showChat();
+      requestAnimationFrame(() => view.reveal(uuid));
+    },
+    strip: document.getElementById("overview-strip"),
+    onShowOverview: () => editor.showOverview(),
+    // Puts a prompt in the message box without sending it.
+    onDraftPrompt: (text) => {
+      editor.showChat();
+      setPrompt(text);
+      promptInput.focus();
+    },
+  });
   const editor = createEditorTabs({
     strip: document.getElementById("editor-tabs"),
     chatPanel: document.getElementById("chat-panel"),
     editorPanel: document.getElementById("editor-panel"),
+    overview,
   });
   const filesPane = createFilesPane(filesEl, {
     onOpen: (path) => editor.open(path, "file"),
@@ -620,6 +655,7 @@ function main() {
     if (es) { es.close(); es = null; }
     streamSessionID = null;
     view.clear();
+    overview.resetTranscript();
   }
 
   function connectTranscript(sessionID) {
@@ -629,7 +665,9 @@ function main() {
     es = stream;
     stream.addEventListener("transcript", (e) => {
       if (es !== stream) return; // a late event from a stream we've since replaced
-      view.onLine(JSON.parse(e.data));
+      const line = JSON.parse(e.data);
+      view.onLine(line);
+      overview.onTranscriptLine(line);
     });
   }
 
@@ -771,6 +809,7 @@ function main() {
     drawer.setAvailable(false);
     subagents.setAvailable(false);
     editor.setAvailable(false);
+    overview.setAvailable(false);
   }
 
   // resetSession points the view at another window (initial load, a nav
@@ -803,6 +842,7 @@ function main() {
     subagents.setWindow(id);
     commandMenu.setWindow(id);
     editor.setWindow(id);
+    overview.setWindow(id);
     pollStatus();
   }
 
@@ -915,6 +955,7 @@ function main() {
       drawer.setAvailable(!!row);
       subagents.setAvailable(!!p);
       editor.setAvailable(!!p);
+      overview.setAvailable(!!p);
 
       if (row) {
         chatTitle.textContent = row.name || windowID;

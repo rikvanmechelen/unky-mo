@@ -12,11 +12,14 @@ import (
 
 // handleSessionFile serves one file of a session's checkout for the chat
 // view's editor tabs: the working-tree version, or with ?rev=HEAD the
-// committed one (the left side of a diff tab).
+// committed one (the left side of a diff tab), or with ?rev=base the one
+// at the branch's merge base (the left side of a branch diff, see
+// readBase).
 //
 // The path comes from the browser, so it must be one the Files panel lists:
 // a tracked or untracked-but-not-ignored file (Tree), or a changed one
-// (Changes, which also covers files deleted from the working tree). Ignored
+// (Changes, which also covers files deleted from the working tree, or the
+// branch overview, which covers files deleted in the branch's commits). Ignored
 // files like .env are out of reach. gitfiles then re-checks that the path
 // doesn't resolve outside the checkout through a symlink.
 //
@@ -28,7 +31,7 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("missing path"))
 		return
 	}
-	if rev != "" && rev != "HEAD" {
+	if rev != "" && rev != "HEAD" && rev != "base" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported rev %q", rev))
 		return
 	}
@@ -39,9 +42,13 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var c *gitfiles.Content
-	if rev == "HEAD" {
+	switch rev {
+	case "HEAD":
 		c, err = s.deps.Git.ReadHEAD(root, path)
-	} else {
+	case "base":
+		dir, _ := s.sessionPath(windowID)
+		c, err = s.readBase(dir, root, path)
+	default:
 		c, err = s.deps.Git.ReadFile(root, path)
 	}
 	if errors.Is(err, gitfiles.ErrOutsideRoot) {
@@ -95,6 +102,9 @@ func (s *Server) listedPath(windowID, path string) (root string, status int, err
 		if f.Path == path {
 			return ch.Root, 0, nil
 		}
+	}
+	if root, ok := s.inBranchOverview(dir, path); ok {
+		return root, 0, nil
 	}
 	return "", http.StatusNotFound, fmt.Errorf("%s is not a file in this checkout", path)
 }
