@@ -30,6 +30,7 @@ type Server struct {
 	branchCache *ttlCache
 	shellsCache *ttlCache
 	agentsCache *ttlCache
+	cmdsCache   *ttlCache
 
 	// launchMu serializes session-mutating requests (launch, replace, stop).
 	launchMu sync.Mutex
@@ -67,6 +68,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		branchCache: newTTLCache(15 * time.Second),
 		shellsCache: newTTLCache(2 * time.Second),
 		agentsCache: newTTLCache(time.Second),
+		cmdsCache:   newTTLCache(30 * time.Second),
 		bootID:      newBootID(),
 	}
 	s.routes()
@@ -96,6 +98,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells/{pid}/output", s.handleShellOutput)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/subagents", s.handleSubagents)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/subagents/{agentID}/transcript", s.handleSubagentTranscript)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/commands", s.handleCommands)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals", s.handleTerminals)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals", s.handleNewTerminal)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals/{pane}/output", s.handleTerminalOutput)

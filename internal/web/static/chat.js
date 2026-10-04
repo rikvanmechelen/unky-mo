@@ -668,8 +668,11 @@ function main() {
   // Phone keyboards have no shift+enter, so there Enter adds a line and only
   // the Send button sends.
   const enterAddsLine = window.matchMedia("(pointer: coarse)").matches;
+  const commandMenu = createCommandMenu(composer, promptInput,
+    () => { if (!sendBtn.disabled) composer.requestSubmit(); }, enterAddsLine);
 
   promptInput.addEventListener("keydown", (e) => {
+    if (commandMenu.handleKey(e)) return;
     // shift+tab cycles the permission mode, as it does in Claude Code.
     if (e.key === "Tab" && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
@@ -798,6 +801,7 @@ function main() {
     spinner.setWindow(id);
     modeChip.setWindow(id);
     subagents.setWindow(id);
+    commandMenu.setWindow(id);
     editor.setWindow(id);
     pollStatus();
   }

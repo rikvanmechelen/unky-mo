@@ -31,7 +31,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane,Subagents,Restarter
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,Terminals,Shells,ClaudePane,Subagents,SlashCommands,Restarter
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -158,6 +158,21 @@ type Subagents interface {
 	List(path, sessionID string) ([]claude.Subagent, error)
 }
 
+// SlashCommands lists what "/" completes to in a session's prompt box (see
+// claude.SlashCommands). path and sessionID always come from the state
+// file's row for the requested window.
+type SlashCommands interface {
+	List(path, sessionID string) []claude.SlashCommand
+}
+
+type realSlashCommands struct{}
+
+func NewSlashCommands() SlashCommands { return realSlashCommands{} }
+
+func (realSlashCommands) List(path, sessionID string) []claude.SlashCommand {
+	return claude.SlashCommands(path, sessionID)
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -175,7 +190,9 @@ type Deps struct {
 	// and cycles its permission mode.
 	ClaudePane ClaudePane
 	Subagents  Subagents
-	Restarter  Restarter
+	// Commands feeds the composer's "/" completion.
+	Commands  SlashCommands
+	Restarter Restarter
 	// Attachments holds images uploaded from the composer until the prompt
 	// that references them is sent.
 	Attachments *AttachmentStore
