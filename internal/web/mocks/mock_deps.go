@@ -827,3 +827,17 @@ func (mr *MockClaudePaneMockRecorder) Capture(target any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Capture", reflect.TypeOf((*MockClaudePane)(nil).Capture), target)
 }
+
+// CycleMode mocks base method.
+func (m *MockClaudePane) CycleMode(target string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CycleMode", target)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CycleMode indicates an expected call of CycleMode.
+func (mr *MockClaudePaneMockRecorder) CycleMode(target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CycleMode", reflect.TypeOf((*MockClaudePane)(nil).CycleMode), target)
+}

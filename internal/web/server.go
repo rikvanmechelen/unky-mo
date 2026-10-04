@@ -32,6 +32,11 @@ type Server struct {
 
 	// launchMu serializes session-mutating requests (launch, replace, stop).
 	launchMu sync.Mutex
+
+	// modeMu serializes permission-mode changes; modeSettle is the wait
+	// between footer re-reads after each shift+tab (zero in tests).
+	modeMu     sync.Mutex
+	modeSettle time.Duration
 }
 
 // NewServer builds a Server. ticketRefresh is the ticket cache TTL
@@ -45,6 +50,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 
 	s := &Server{
 		deps:        deps,
+		modeSettle:  25 * time.Millisecond,
 		mux:         http.NewServeMux(),
 		tmuxSession: tmuxSession,
 		prCache:     newTTLCache(90 * time.Second),
@@ -72,6 +78,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/tree", s.handleSessionTree)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/diff", s.handleSessionDiff)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/spinner", s.handleSpinner)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/mode", s.handleMode)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/mode", s.handleSetMode)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells", s.handleShells)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells/{pid}/output", s.handleShellOutput)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals", s.handleTerminals)

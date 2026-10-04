@@ -240,6 +240,8 @@ function main() {
   const filesPane = createFilesPane(filesEl);
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
+  const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
+    (msg) => { sendError.textContent = msg; });
 
   // Per-session state — reset by resetSession when the nav switches to
   // another window in place.
@@ -550,6 +552,15 @@ function main() {
     }
   }
 
+  // shift+tab in the message box cycles the permission mode, as it does in
+  // Claude Code.
+  promptInput.addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      modeChip.cycle();
+    }
+  });
+
   composer.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!windowID) return;
@@ -612,6 +623,7 @@ function main() {
     ended = true;
     if (es) { es.close(); es = null; }
     spinner.setActive(false);
+    modeChip.setStatus("ended");
     hideBanners();
     setBadge("ended");
     setNotice("Session ended. The tmux window is closed.");
@@ -646,6 +658,7 @@ function main() {
     filesPane.setWindow(id);
     drawer.setWindow(id);
     spinner.setWindow(id);
+    modeChip.setWindow(id);
     pollStatus();
   }
 
@@ -783,6 +796,7 @@ function main() {
       }
 
       spinner.setActive(status === "active");
+      modeChip.setStatus(status);
 
       if (queued && status === "idle") {
         const text = queued;

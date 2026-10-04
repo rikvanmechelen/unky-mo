@@ -123,10 +123,12 @@ type Shells interface {
 }
 
 // ClaudePane reads the visible screen of a session's Claude pane, for the
-// chat view's copy of Claude Code's spinner line. target is always built
-// from the state file, never from the request.
+// chat view's copy of Claude Code's spinner line and permission mode, and
+// presses shift+tab there to cycle the mode. target is always built from
+// the state file, never from the request.
 type ClaudePane interface {
 	Capture(target string) (string, error)
+	CycleMode(target string) error
 }
 
 // Deps bundles the data sources a Server reads from.
@@ -142,7 +144,8 @@ type Deps struct {
 	Git       GitFiles
 	Terminals Terminals
 	Shells    Shells
-	// ClaudePane reads Claude's own pane (spinner line).
+	// ClaudePane reads Claude's own pane (spinner line, permission mode)
+	// and cycles its permission mode.
 	ClaudePane ClaudePane
 	// Agents is the configured [[agent]] list. Launches only ever run a
 	// command from here — the browser picks an agent by key, never sends a
@@ -406,6 +409,11 @@ func NewClaudePane(client *tmux.Client) ClaudePane { return realClaudePane{clien
 // always drawn there, right above the prompt box.
 func (r realClaudePane) Capture(target string) (string, error) {
 	return r.client.CapturePane(target, 0)
+}
+
+// CycleMode presses shift+tab, Claude Code's permission-mode cycle key.
+func (r realClaudePane) CycleMode(target string) error {
+	return r.client.SendRawKeys(target, "BTab")
 }
 
 // realShells finds shells via ps/lsof (claude.ActiveShells) for the live

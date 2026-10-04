@@ -21,6 +21,13 @@
   --claude: #c15f3c; /* Claude Code's spinner orange */
   --claude-glint: #f2c1ad;
 
+  /* Permission modes, after Claude Code's footer colors (darkened to read
+     on white). Manual mode keeps the plain black composer. */
+  --mode-accept: #7b3fe4;
+  --mode-plan:   #00807a;
+  --mode-auto:   #a86400;
+  --mode-bypass: var(--red);
+
   --font-sans: "MoMA Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --tracking-bold: -0.02em;
@@ -466,6 +473,48 @@ h1, h2 {
 }
 .composer__send:active { background: var(--gray-444); }
 .composer__send.is-locked { background: var(--gray-666); cursor: not-allowed; }
+/* Permission mode: tints the composer and sits as a chip under it. */
+.composer[data-mode="acceptEdits"] { --mode: var(--mode-accept); }
+.composer[data-mode="plan"] { --mode: var(--mode-plan); }
+.composer[data-mode="auto"] { --mode: var(--mode-auto); }
+.composer[data-mode="bypassPermissions"] { --mode: var(--mode-bypass); }
+.composer[data-mode]:not([data-mode=""]):not([data-mode="manual"]) .composer__input {
+  border-color: var(--mode); box-shadow: inset 4px 0 0 var(--mode);
+}
+.composer-mode { position: relative; align-self: flex-start; margin-top: -4px; }
+.composer-mode[hidden] { display: none; }
+.mode-chip {
+  all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 2px 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.4; color: var(--gray-666);
+}
+.mode-chip[data-mode="acceptEdits"] { color: var(--mode-accept); }
+.mode-chip[data-mode="plan"] { color: var(--mode-plan); }
+.mode-chip[data-mode="auto"] { color: var(--mode-auto); }
+.mode-chip[data-mode="bypassPermissions"] { color: var(--mode-bypass); }
+.mode-chip:hover:not(:disabled) span:nth-child(2) { text-decoration: underline; }
+.mode-chip:disabled { cursor: default; opacity: 0.6; }
+.mode-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.mode-chip__glyph { font-size: 12px; }
+.mode-chip__hint { color: var(--gray-767); }
+.mode-menu {
+  position: absolute; left: 0; bottom: calc(100% + 4px); z-index: 20; min-width: 300px;
+  display: flex; flex-direction: column; padding: 4px 0;
+  background: var(--white); border: 1px solid var(--black); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.mode-menu[hidden] { display: none; }
+.mode-menu__item {
+  all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 20px auto 1fr;
+  column-gap: 8px; align-items: baseline; padding: 6px 12px; font-size: 13px; line-height: 1.3;
+}
+.mode-menu__item:hover, .mode-menu__item:focus-visible { background: var(--gray-f6); outline: none; }
+.mode-menu__item.is-current { font-weight: 700; }
+.mode-menu__item[data-mode="acceptEdits"] .mode-menu__glyph { color: var(--mode-accept); }
+.mode-menu__item[data-mode="plan"] .mode-menu__glyph { color: var(--mode-plan); }
+.mode-menu__item[data-mode="auto"] .mode-menu__glyph { color: var(--mode-auto); }
+.mode-menu__item[data-mode="bypassPermissions"] .mode-menu__glyph { color: var(--mode-bypass); }
+.mode-menu__glyph { font-family: var(--font-mono); font-size: 11px; color: var(--gray-666); }
+.mode-menu__hint { color: var(--gray-666); font-weight: 400; font-size: 12px; }
+
 .composer__error { color: var(--red); font-size: 13px; font-family: var(--font-mono); }
 .composer__error:empty { display: none; }
 
