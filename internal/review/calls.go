@@ -199,6 +199,8 @@ func callLangOf(l language) callLang {
 		return &goCalls{module: l.module}
 	case *pyLang:
 		return &hCalls{l: &pyCalls{}}
+	case *rubyLang:
+		return &hCalls{l: &rbCalls{}}
 	}
 	return nil
 }
