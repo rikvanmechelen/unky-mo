@@ -28,6 +28,7 @@ function createMap(overview) {
   canvas.addEventListener("click", (e) => { if (e.target === canvas || e.target === boxLayer) sel.select(null); });
 
   let width = 0;
+  let showing = ""; // "map" or "lens:<fn id>", to reset the scroll on a switch
   new ResizeObserver(() => {
     const w = scroll.clientWidth;
     if (w && Math.abs(w - width) > 4) { width = w; draw(); }
@@ -72,11 +73,111 @@ function createMap(overview) {
       for (const k of Object.keys(fold)) delete fold[k];
       foldFor = M.overview.root + "|" + (M.overview.head || "");
     }
+    const fid = sel.focus();
+    // The map and the lens each start at their top.
+    const shows = M && fid && M.E.get(fid)?.type === "fn" ? "lens:" + fid : "map";
+    if (shows !== showing) { showing = shows; scroll.scrollTop = 0; scroll.scrollLeft = 0; }
+    if (M && fid && M.E.get(fid)?.type === "fn") {
+      queueMicrotask(() => { width = scroll.clientWidth || width; draw(); });
+      return el("div", { class: "map" }, [lensBar(M, fid), scroll]);
+    }
     const parts = [toolbar(viewSwitch)];
     if (M) parts.push(legend(M));
     parts.push(scroll);
     queueMicrotask(() => { width = scroll.clientWidth || width; draw(); });
     return el("div", { class: "map" }, parts);
+  }
+
+  function lensBar(M, fid) {
+    const all = el("button", { class: "link-btn", type: "button", text: "All packages" });
+    all.addEventListener("click", () => sel.setFocus(null));
+    const exit = el("button", { class: "map__exit", type: "button", title: "Leave Focus (Esc)", text: "Exit" });
+    exit.addEventListener("click", () => sel.setFocus(null));
+    return el("div", { class: "map__bar map__crumbs" }, [
+      all, el("span", { class: "map__sep", text: "›" }),
+      el("span", {}, [document.createTextNode("Focus: "), el("b", { class: "mono", text: M.E.get(fid).name })]),
+      el("span", { class: "map__spacer" }), exit,
+    ]);
+  }
+
+  // drawLens draws the one-hop view around the focused function:
+  // callers, the function, callees (or implementations).
+  function drawLens(M, fid) {
+    const lens = ovLens(M, fid);
+    const current = sel.current();
+    const W = Math.max(480, (width || scroll.clientWidth || 900) - 20);
+    const CW = Math.min(260, Math.floor((W - 80) / 3)), GAP = Math.max(40, Math.floor((W - 3 * CW) / 2)), RH = 46, Y0 = 26, BH = 38;
+    const XS = [0, CW + GAP, 2 * (CW + GAP)];
+    const n = Math.max(lens.callers.length, lens.right.length, 1);
+    const midY = Y0 + ((n - 1) * RH) / 2;
+    const nodes = [], edges = [];
+    const fnNode = (id, x, y, center) => {
+      const f = M.E.get(id);
+      const b = el("button", { class: "lens-fn" + (center ? " is-center" : "") + (f.status ? ` is-${f.status}` : " is-ctx") + (!center && current === id ? " is-selected" : ""), type: "button", title: `${f.name} — ${f.status ? CALL_STATUS_TEXT[f.status] : "unchanged"}${center ? "" : " · click to follow"}` }, [
+        el("span", { class: "lens-fn__top" }, [el("span", { class: "map-fn__mark", text: f.mark }), el("span", { class: "lens-fn__name", text: f.name })]),
+        el("span", { class: "lens-fn__sub", text: f.path ? `${f.path}:${f.line}` : f.unit }),
+      ]);
+      Object.assign(b.style, { left: x + 10 + "px", top: y + 10 + "px", width: CW + "px", height: BH + "px" });
+      hook(b, id);
+      nodes.push(b);
+    };
+    const heads = [[XS[0], lens.callersTitle], [XS[1], "Focus"], [XS[2], lens.rightTitle]].map(([x, t]) => {
+      const h = el("div", { class: "lens-head", text: t });
+      Object.assign(h.style, { left: x + 10 + "px", top: "6px", width: CW + "px" });
+      return h;
+    });
+    fnNode(fid, XS[1], midY, true);
+    lens.callers.forEach((c, i) => {
+      const y = Y0 + i * RH;
+      fnNode(c.id, XS[0], y, false);
+      edges.push({ call: c.call, x1: XS[0] + CW, y1: y + BH / 2, x2: XS[1] - 3, y2: midY + BH / 2 });
+    });
+    lens.right.forEach((r, i) => {
+      const y = Y0 + i * RH;
+      fnNode(r.id, XS[2], y, false);
+      edges.push({ call: r.call, impl: r.call === null, x1: XS[1] + CW, y1: midY + BH / 2, x2: XS[2] - 3, y2: y + BH / 2 });
+    });
+    let H = Y0 + n * RH;
+    const notes = [];
+    const note = (x, y, w, text) => {
+      const d = el("div", { class: "lens-note", text });
+      Object.assign(d.style, { left: x + 10 + "px", top: y + 10 + "px", width: w + "px" });
+      notes.push(d);
+    };
+    if (!lens.callers.length) note(XS[0], Y0 + 4, CW, lens.moreCallers ? "" : "Nothing calls it in this change.");
+    if (lens.moreCallers) { note(XS[0], H, CW, `and ${lens.moreCallers} more callers`); H += 24; }
+    if (!lens.right.length) note(XS[2], Y0 + 4, CW, "It calls nothing in this repo.");
+    if (lens.unresolved) { note(XS[2], H, CW, `${pl(lens.unresolved, "call")} in it couldn’t be resolved, so they aren’t drawn.`); H += 40; }
+    canvas.style.width = W + 20 + "px";
+    canvas.style.height = H + 30 + "px";
+    canvas.classList.remove("is-isolate", "has-set");
+    boxLayer.replaceChildren(...heads, ...nodes, ...notes);
+    const parts = [defs()];
+    for (const e of edges) {
+      const mx = (e.x1 + e.x2) / 2 + 10;
+      const d = `M${e.x1 + 10},${e.y1 + 10} C${mx},${e.y1 + 10} ${mx},${e.y2 + 10} ${e.x2 + 10},${e.y2 + 10}`;
+      if (e.impl) { parts.push(svgEl("path", { class: "map__edge is-call is-ctx is-approx", d, "marker-end": "url(#map-arrow-open)" })); continue; }
+      const c = M.E.get(e.call);
+      const red = c.findings.some((x) => M.E.get(x).sev === "red");
+      const cls = `is-call is-${c.op === "+" ? "new" : c.op === "-" ? "removed" : "ctx"} is-${c.kind}` + (red ? " is-broken" : "");
+      const g = svgEl("g", { class: "map__e" + (current === c.id ? " is-selected" : "") });
+      const t = svgEl("title", {});
+      t.textContent = `${M.E.get(c.fromId).name} → ${M.E.get(c.toId).name} — ${ovCallWords(c).join(", ")}`;
+      g.append(t, svgEl("path", { class: "map__hit", d }));
+      if (current === c.id) g.appendChild(svgEl("path", { class: "map__halo", d }));
+      const marker = c.kind === "dynamic" ? "map-arrow-open" : red || c.op === "-" ? "map-arrow-red" : c.op === "+" ? "map-arrow-green" : "map-arrow";
+      g.appendChild(svgEl("path", { class: `map__edge ${cls}`, d, "marker-end": `url(#${marker})` }));
+      if (c.label) {
+        const lt = svgEl("text", { class: "map__label", x: mx, y: (e.y1 + e.y2) / 2 + 4, "text-anchor": "middle" });
+        lt.textContent = c.label;
+        g.appendChild(lt);
+      }
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); sel.select(c.id); });
+      parts.push(g);
+    }
+    svg.setAttribute("width", W + 20);
+    svg.setAttribute("height", H + 30);
+    svg.replaceChildren(...parts);
   }
 
   function relatedSet(M) {
@@ -87,6 +188,8 @@ function createMap(overview) {
   function draw() {
     const M = overview.model();
     if (!M || !scroll.isConnected) return;
+    const fid = sel.focus();
+    if (fid && M.E.get(fid)?.type === "fn") { drawLens(M, fid); return; }
     const w = Math.max(480, width || scroll.clientWidth || 900);
     const set = relatedSet(M);
     const current = sel.current();

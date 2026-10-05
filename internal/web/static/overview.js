@@ -395,7 +395,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     const sec = root.querySelector(`[data-sec="${ovSection(getModel(), cur)}"]`);
     const head = root.querySelector(".ov-head");
     if (!sec) return;
-    panel.scrollTop = Math.max(0, sec.offsetTop - (head?.offsetHeight || 0));
+    const top = sec.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    panel.scrollTop = Math.max(0, panel.scrollTop + top - (head?.offsetHeight || 0));
   }
 
   // The selection decides which sections are open, so a new one re-renders.
@@ -911,7 +912,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
   function mapBody() {
     if (!arch) return archSkeleton(skelHead(null, [viewSwitch()]));
     if (!arch.repo) return el("div");
-    if (archView === "functions") return functionsSection();
+    // Focus (from the inspector) shows the lens in either view.
+    if (archView === "functions" && !focusFn) return functionsSection();
     return map.element(viewSwitch());
   }
 

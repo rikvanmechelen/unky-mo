@@ -1568,6 +1568,26 @@ button.file-row.overview-file { padding: 3px 12px; }
 .map__sw .map__edge.is-ref, .map__sw .map__edge.is-dynamic { stroke: var(--ink-3); }
 .map__sw .map__edge.is-approx { stroke: var(--green); stroke-width: 2; }
 .map__arrow { fill: var(--ink-4); }
+.map__crumbs { gap: 8px; font-size: 13px; }
+.map__sep { color: var(--ink-4); }
+.map__exit { all: unset; cursor: pointer; font-size: 12.5px; font-weight: 700; border-bottom: 1px solid var(--ink); }
+.map__exit:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.map__label { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-2); paint-order: stroke; stroke: var(--paper); stroke-width: 4; pointer-events: none; }
+.lens-head { position: absolute; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); }
+.lens-fn { all: unset; position: absolute; box-sizing: border-box; cursor: pointer; display: grid; align-content: center; gap: 2px; padding: 0 8px 0 4px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
+.lens-fn:hover { box-shadow: inset 0 0 0 1px var(--ink); }
+.lens-fn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.lens-fn.is-center, .lens-fn.is-selected { background: var(--ink); color: var(--paper); box-shadow: none; }
+.lens-fn.is-related { background: var(--warn-bg); }
+.lens-fn.is-center .map-fn__mark, .lens-fn.is-selected .map-fn__mark { color: var(--paper); }
+.lens-fn.is-added .map-fn__mark { color: var(--green); }
+.lens-fn.is-removed .lens-fn__name { text-decoration: line-through; }
+.lens-fn__top { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; font-family: var(--font-mono); font-size: 12px; }
+.lens-fn.is-ctx .lens-fn__name { font-style: italic; }
+.lens-fn__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lens-fn__sub { padding-left: 26px; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.lens-fn.is-center .lens-fn__sub, .lens-fn.is-selected .lens-fn__sub { color: var(--ink-5); }
+.lens-note { position: absolute; font-size: 12px; color: var(--ink-3); font-style: italic; }
 .map__arrow.is-new { fill: var(--green); }
 .map__arrow.is-removed { fill: var(--red); }
 .map__arrow.is-open { fill: none; stroke: var(--ink-3); stroke-width: 1.6; }

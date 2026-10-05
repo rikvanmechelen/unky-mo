@@ -327,3 +327,16 @@ test("map layout", () => {
   assert.equal(new Set([...m.ovLayoutMap(wide, { width: 900 }).boxes.values()].map((b) => b.y)).size, 1);
   assert.equal(new Set([...m.ovLayoutMap(wide, { width: 520 }).boxes.values()].map((b) => b.y)).size, 2, "two 248px boxes fit at 520px");
 });
+
+test("focus lens", () => {
+  const M = alarm();
+  const l = m.ovLens(M, "fn:internal/web.NewServer");
+  assert.deepEqual(l.callers.map((x) => x.id), ["fn:cmd/mo.runWeb"]);
+  assert.equal(l.rightTitle, "Calls 0");
+  const iface = m.ovLens(M, "fn:(internal/tui.Theme).ColorFor");
+  assert.ok(iface.implementations);
+  assert.deepEqual(iface.right, [{ id: "fn:(internal/tui.dark).ColorFor", call: null }]);
+  assert.equal(iface.rightTitle, "Implementations 1");
+  assert.deepEqual(m.ovLens(M, "fn:internal/tui.RenderBadge").right.map((x) => x.id), ["fn:(internal/tui.Theme).ColorFor"]);
+  assert.equal(m.ovLens(M, "file:docs/overview.md"), null);
+});

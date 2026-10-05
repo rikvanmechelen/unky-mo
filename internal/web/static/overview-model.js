@@ -1038,6 +1038,25 @@ function ovLayoutMap(M, { width = 900, set = null, fold = {}, foldUnrelated = tr
   return { W: width, H: Math.max(0, y - MAP_GAP_Y + 10), boxes, rowY };
 }
 
+// ovLens is the one-hop view around a function for the map's Focus: its
+// callers on the left; on the right its callees, or for an interface
+// method with implementations, those.
+function ovLens(M, fnId) {
+  const f = M.E.get(fnId);
+  if (!f || f.type !== "fn") return null;
+  const callers = f.callers.map((cid) => ({ id: M.E.get(cid).fromId, call: cid })).filter((x) => M.E.has(x.id));
+  const impls = f.impls.filter((id) => M.E.has(id));
+  const right = impls.length
+    ? impls.map((id) => ({ id, call: null }))
+    : f.callees.map((cid) => ({ id: M.E.get(cid).toId, call: cid })).filter((x) => M.E.has(x.id));
+  return {
+    callers, right, implementations: impls.length > 0,
+    rightTitle: impls.length ? `Implementations ${impls.length}` : `Calls ${right.length}`,
+    callersTitle: `Called by ${callers.length + f.moreCallers}`,
+    moreCallers: f.moreCallers, unresolved: f.unresolved,
+  };
+}
+
 // ── Selection history ──────────────────────────────────────────
 // {stack, at}: the selections made, and where Back/Forward stand. null is
 // "nothing selected", a step of its own so Back can return to it.
@@ -1092,6 +1111,6 @@ if (typeof module === "object" && module.exports) {
     createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
-    ovSectionSummaries, ovMapUnits, ovMapFns, ovLayoutMap, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
+    ovSectionSummaries, ovMapUnits, ovMapFns, ovLayoutMap, ovLens, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }

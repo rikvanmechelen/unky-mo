@@ -645,6 +645,32 @@ it over. A step gets its detailed plan in this doc before coding
   today's `calls.js` view (re-skinned, unit collapse past 60, per-unit
   +/− counts), useful for very large changes. Clicking a node there
   selects the `fn:` entity like the map does.
+
+  **F8 detail.**
+  - **`ovLens(M, fnId)`** in the model file (Node-tested): `{callers:
+    [{id, call}], right: [{id, call | null}], rightTitle, implementations}`.
+    For an interface method that has implementations, the right column is
+    the implementations ("Implementations N"); otherwise its callees
+    ("Calls N"). Callers include the `ref` and `dynamic` ones; the context
+    the server cut (`moreCallers`) is reported.
+  - **`overview-map.js`** draws the lens instead of the map while
+    `selection.focus()` names a function the model has, in both the
+    Packages and the Functions view (Focus is reached from the inspector):
+    - a bar: "All packages › Focus: name · Exit" (Exit = `setFocus(null)`;
+      Esc does the same);
+    - three columns (each up to 260px, fitting the width) of 40px rows
+      (mark, name, `path:line`), the focused function in the middle and
+      inverted;
+    - edges styled like the map's, `ref` labels (a handler's route)
+      written at the edge's middle, implementations as dotted lines;
+    - notes: "Nothing calls it in this change", "and N more callers",
+      unresolved calls.
+    - A click on a row selects it, which moves the focus to it if it's a
+      function (`followFocus`), so you can walk the graph one hop at a
+      time; Back returns.
+  - The Map section's summary already says "focus on X". The Functions
+    view's own Focus (`calls.js`) stays as it is.
+
 - **F9. Footprint, Intent, Scope restyled** to the design. Footprint:
   hide-by-kind applies to the Review list too, and an area click sets the
   Review filter. Intent: matrix cells become selectable entities. Scope:
@@ -739,4 +765,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F7 built 2026-10-05; next: F8.
+backend) F1–F8 built 2026-10-05; next: F9.
