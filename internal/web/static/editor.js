@@ -154,13 +154,16 @@ function storageSet(key, value) {
   } catch (_) { return false; }
 }
 
-// A "diff" tab compares the working copy with HEAD, a "bdiff" tab with the
+// A "diff" tab compares the working copy with HEAD, an "sdiff" tab with the
+// base of a Git log selection that includes the uncommitted changes (hash
+// holds the selected commits' ids, possibly none), a "bdiff" tab with the
 // branch's merge base (opened from the Overview tab). Both are editable on
 // the working-copy side and share all the diff code.
-const isDiffKind = (kind) => kind === "diff" || kind === "bdiff";
+const isDiffKind = (kind) => kind === "diff" || kind === "bdiff" || kind === "sdiff";
 const READ_ONLY_NOTE = "Read-only: this branch isn't checked out, so this is its last commit.";
-const DIFF_REV = { diff: "HEAD", bdiff: "base" };
-const DIFF_BASE_LABEL = { diff: "HEAD", bdiff: "the branch base" };
+const DIFF_REV = { diff: "HEAD", bdiff: "base", sdiff: "sel-base" };
+const DIFF_BASE_LABEL = { diff: "HEAD", bdiff: "the branch base", sdiff: "the selection's base" };
+const DIFF_KIND_NOTE = { diff: "vs HEAD", bdiff: "vs branch base", sdiff: "vs selection base" };
 // "commit" and "range" tabs show two fixed versions, both read-only: one
 // commit's change, or the change of consecutive commits selected in the
 // Git log (hash holds their ids, sorted and comma-joined).
@@ -176,7 +179,8 @@ function loadSavedTabs(windowID) {
   if (saved && Array.isArray(saved.tabs)) {
     return {
       tabs: saved.tabs.filter((t) => t && typeof t.path === "string" &&
-        (t.kind === "file" || isDiffKind(t.kind) || (t.kind === "commit" && COMMIT_RE.test(t.hash)) || (t.kind === "range" && RANGE_RE.test(t.hash)))),
+        (t.kind === "file" || isDiffKind(t.kind) || (t.kind === "commit" && COMMIT_RE.test(t.hash)) || (t.kind === "range" && RANGE_RE.test(t.hash)) ||
+        (t.kind === "sdiff" && (!t.hash || RANGE_RE.test(t.hash))))),
       active: saved.active,
     };
   }
@@ -194,7 +198,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // the target's API prefix, e.g. /api/sessions/@3
   let available = false;
-  // Each tab: {kind ("file"|"diff"|"bdiff"|"commit"), path, key, wrap, host, banner, info,
+  // Each tab: {kind ("file"|"diff"|"bdiff"|"sdiff"|"commit"|"range"), path, key, wrap, host, banner, info,
   // status, saveBtn, view, merge, layout, base, etag, conflict, dirty,
   // loading, saving, draftTimer, draftFailed} plus, for diff tabs,
   // {original, origEtag, deleted}, and for commit tabs {hash, before,
@@ -297,7 +301,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     return b;
   }
 
-  const tabKey = (kind, path, hash) => isFixedKind(kind) ? `${kind}:${hash}:${path}` : kind + ":" + path;
+  const tabKey = (kind, path, hash) => isFixedKind(kind) || kind === "sdiff" ? `${kind}:${hash || ""}:${path}` : kind + ":" + path;
 
   function newTab(kind, path, hash) {
     const tab = {
@@ -328,7 +332,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
         // rtl so a long path loses its start, not the file name; bdi keeps
         // the text itself (e.g. a leading ".") in order.
         el("span", { class: "editor-pane__path" }, [el("bdi", { text: path })]),
-        ...(isDiffKind(kind) ? [el("span", { class: "editor-pane__kind", text: kind === "bdiff" ? "vs branch base" : "vs HEAD" })] : []),
+        ...(isDiffKind(kind) ? [el("span", { class: "editor-pane__kind", text: DIFF_KIND_NOTE[kind] })] : []),
         ...(kind === "commit" ? [el("span", { class: "editor-pane__kind", title: hash, text: `commit ${hash.slice(0, 7)}` })] : []),
         ...(kind === "range" ? [el("span", { class: "editor-pane__kind", title: `${hash.split(",").length} commits selected in the Git log`, text: "selected commits" })] : []),
         tab.status,
@@ -674,7 +678,10 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   // fetchVersion GETs one version of the tab's file, sending the ETag we
   // last saw so an unchanged file costs a body-less 304 (returned as null).
   async function fetchVersion(tab, rev, etag) {
-    const res = await fetch(`${fileURL()}?path=${encodeURIComponent(tab.path)}${rev ? "&rev=" + rev : ""}`, {
+    // An sdiff tab names its selection on both reads, so a file deleted in
+    // a selected commit is still served.
+    const sel = tab.kind === "sdiff" ? `&base=commits${tab.hash ? "&commits=" + tab.hash : ""}&worktree=1` : "";
+    const res = await fetch(`${fileURL()}?path=${encodeURIComponent(tab.path)}${rev ? "&rev=" + rev : ""}${sel}`, {
       headers: etag ? { "If-None-Match": etag } : {}, cache: "no-store",
     });
     if (res.status === 304) return null;

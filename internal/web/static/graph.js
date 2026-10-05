@@ -8,9 +8,10 @@
 // "All" every branch, remote branch and tag. Clicking a commit expands
 // its message and changed files (/commits/{hash}); a file calls
 // onOpenCommitFile(hash, path), which opens a read-only diff tab.
-// Ctrl/Cmd-click and Shift-click select commits (selectionProblem checks
-// they're consecutive); a bar above the rows offers to show their change in
-// the Overview (onShowSelection). Uses el() from common.js.
+// Ctrl/Cmd-click and Shift-click select commits, and the "Uncommitted
+// changes" row (selectionProblem checks they're consecutive); a bar above
+// the rows offers to show their change in the Overview (onShowSelection).
+// Uses el() from common.js.
 
 const GRAPH_SCOPE_KEY = "mo.graphScope";
 const GRAPH_LANE_W = 12;
@@ -136,12 +137,14 @@ function refChips(refs) {
 // the Overview can show, or "" if nothing the loaded log shows is wrong.
 // It mirrors gitfiles.ResolveSelection over the parents in commits (the
 // log, newest first); the server has the last word, since commits past the
-// log's limit aren't known here.
-function selectionProblem(commits, selected) {
+// log's limit aren't known here. WORKTREE (the uncommitted changes) sits on
+// head, so with it selected the newest selected commit must be head.
+function selectionProblem(commits, selected, head) {
   const byHash = new Map(commits.map((c) => [c.hash, c]));
   const sel = [...selected].filter((h) => byHash.has(h));
-  if (!sel.length) return "";
   const short = (h) => h.slice(0, 7);
+  if (selected.has(WORKTREE) && sel.length && !sel.includes(head)) return `The uncommitted changes sit on ${short(head)}, which isn't selected.`;
+  if (!sel.length) return "";
   const parentsOf = (h) => byHash.get(h)?.parents || [];
   const reach = (from) => {
     const seen = new Set();
@@ -161,6 +164,9 @@ function selectionProblem(commits, selected) {
   if (tips.length > 1 && !tips.some((t) => { const r = reach(t); return tips.every((o) => r.has(o)); })) {
     return "These commits are on different branches.";
   }
+  // A selected commit built on head (another branch ahead of it) would put
+  // the uncommitted changes in the middle.
+  if (selected.has(WORKTREE) && !tips.includes(head)) return `The uncommitted changes sit on ${short(head)}, but newer commits are selected.`;
   const boundary = [...new Set(sel.flatMap(parentsOf))].filter((p) => !isSel.has(p));
   for (const b of boundary) {
     const r = reach(b);
@@ -202,13 +208,20 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
     if (key !== renderedKey) render(key);
   }
 
-  // order is the selectable commits in display order (newest first).
-  const order = () => (log ? log.commits.map((c) => c.hash) : []);
+  // showsWorktree: the "Uncommitted changes" row is shown (there are
+  // uncommitted files, and HEAD is in the log).
+  const showsWorktree = () => !!log && changedCount > 0 && log.commits.some((c) => c.hash === log.head);
 
-  // selection lists the selected commits newest first, with subjects.
+  // order is the selectable rows in display order (newest first).
+  const order = () => (log ? [...(showsWorktree() ? [WORKTREE] : []), ...log.commits.map((c) => c.hash)] : []);
+
+  // selection lists the selected rows newest first, with subjects.
   function selection() {
     if (!log) return [];
-    return log.commits.filter((c) => selected.has(c.hash)).map((c) => ({ hash: c.hash, subject: c.subject }));
+    return [
+      ...(selected.has(WORKTREE) && showsWorktree() ? [{ hash: WORKTREE, subject: "Uncommitted changes" }] : []),
+      ...log.commits.filter((c) => selected.has(c.hash)).map((c) => ({ hash: c.hash, subject: c.subject })),
+    ];
   }
 
   function selectionChanged() {
@@ -244,9 +257,15 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
     selbar.hidden = !sel.length;
     if (!sel.length) { selbar.replaceChildren(); return; }
     const short = (h) => h.slice(0, 7);
-    const range = sel.length === 1 ? short(sel[0].hash) : `${short(sel[sel.length - 1].hash)}..${short(sel[0].hash)}`;
-    const label = [document.createTextNode(`${sel.length} ${sel.length === 1 ? "commit" : "commits"} · `), el("span", { class: "graph-selbar__range", text: range })];
-    const problem = selectionProblem(log.commits, selected);
+    const wt = sel[0].hash === WORKTREE;
+    const cs = wt ? sel.slice(1) : sel;
+    const range = !cs.length ? "" : cs.length === 1 ? short(cs[0].hash) : `${short(cs[cs.length - 1].hash)}..${short(cs[0].hash)}`;
+    const count = `${cs.length} ${cs.length === 1 ? "commit" : "commits"}`;
+    const label = [
+      document.createTextNode(wt ? (cs.length ? `Uncommitted + ${count} · ` : "Uncommitted changes") : `${count} · `),
+      ...(range ? [el("span", { class: "graph-selbar__range", text: range })] : []),
+    ];
+    const problem = selectionProblem(log.commits, selected, log.head);
     const actions = [];
     if (onShowSelection) {
       const show = el("button", { class: "graph-detail__action", type: "button", text: "Show in Overview", title: "Show what these commits changed in the Overview tab" });
@@ -291,8 +310,8 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
         class: "graph-row" + (pseudo ? " is-pseudo" : "") + (c.hash === log.head ? " is-head" : "") + (isOpen ? " is-open" : "") + (isSel ? " is-selected" : ""),
         type: "button",
         "data-hash": c.hash,
-        title: pseudo ? "Show the changed files" : `${c.hash.slice(0, 7)} — ${c.author}, ${new Date(c.time * 1000).toLocaleString()}${c.unpushed ? " — not pushed" : ""}\n${c.subject}\nCtrl/Cmd-click or Shift-click to select`,
-        ...(pseudo ? {} : { "aria-expanded": String(isOpen), "aria-pressed": String(isSel) }),
+        title: pseudo ? "Show the changed files\nCtrl/Cmd-click or Shift-click to select" : `${c.hash.slice(0, 7)} — ${c.author}, ${new Date(c.time * 1000).toLocaleString()}${c.unpushed ? " — not pushed" : ""}\n${c.subject}\nCtrl/Cmd-click or Shift-click to select`,
+        ...(pseudo ? { "aria-pressed": String(isSel) } : { "aria-expanded": String(isOpen), "aria-pressed": String(isSel) }),
       }, [
         rowLanes(row, width, { head: c.hash === log.head, pseudo }),
         el("span", { class: "graph-row__text" }, [
@@ -306,7 +325,7 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
       btn.addEventListener("mousedown", (e) => { if (e.shiftKey || e.ctrlKey || e.metaKey) e.preventDefault(); });
       btn.addEventListener("click", (e) => {
         const mod = e.ctrlKey || e.metaKey;
-        if (pseudo) { if (!mod && !e.shiftKey) onShowChanges?.(); return; }
+        if (pseudo && !mod && !e.shiftKey) { anchor = c.hash; onShowChanges?.(); return; }
         if (e.shiftKey) { selectTo(c.hash, mod); return; }
         if (mod) { toggle(c.hash); return; }
         anchor = c.hash;
@@ -328,18 +347,17 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
     const row = e.target.closest?.(".graph-row");
     if (!row) return;
     const hash = row.dataset.hash;
-    const selectable = hash !== WORKTREE;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       const rows = [...rowsEl.querySelectorAll(".graph-row")];
       const next = rows[rows.indexOf(row) + (e.key === "ArrowDown" ? 1 : -1)];
       if (!next) return;
       e.preventDefault();
       next.focus();
-      if (e.shiftKey && next.dataset.hash !== WORKTREE) {
-        if (!anchor && selectable) anchor = hash;
+      if (e.shiftKey) {
+        if (!anchor) anchor = hash;
         selectTo(next.dataset.hash, false);
       }
-    } else if (e.key === " " && (e.ctrlKey || e.metaKey) && selectable) {
+    } else if (e.key === " " && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       toggle(hash);
     }
@@ -425,7 +443,7 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
       etag = res.headers.get("ETag");
       note = "";
       // Commits the log no longer has (a rebase, another scope) drop out.
-      const known = new Set(log.commits.map((c) => c.hash));
+      const known = new Set(order());
       const dropped = [...selected].filter((h) => !known.has(h));
       dropped.forEach((h) => selected.delete(h));
       if (dropped.length) selectionChanged();
@@ -455,7 +473,10 @@ function createGraphView({ onOpenCommitFile, onShowChanges, onMention, onSelecti
     clearSelection,
     setChangedCount(n) {
       changedCount = n;
-      if (log) renderIfChanged();
+      if (!log) return;
+      // Everything committed: the Uncommitted row, and its selection, go.
+      if (selected.has(WORKTREE) && !showsWorktree()) { selected.delete(WORKTREE); selectionChanged(); return; }
+      renderIfChanged();
     },
     setWindow(id) {
       if (id === windowID) return;

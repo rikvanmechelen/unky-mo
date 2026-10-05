@@ -1,6 +1,6 @@
 # Overview of selected commits
 
-**Status:** v1 (consecutive commits, chat view) built on main, 2026-10-05: steps 1–5 below. The "Later" items are still open.
+**Status:** v1 (consecutive commits, chat view) built on main, 2026-10-05: steps 1–5 below. The follow-up (the uncommitted changes as part of a selection, steps A–C) is built too. The other "Later" items are still open.
 
 ## Goal
 
@@ -115,7 +115,7 @@ This applies to any commit in the repository, not just the branch's: Overview da
 ## Later
 
 - **Selections with gaps:** apply each selected commit in order onto `base` with `git merge-tree --write-tree --merge-base=<c>^ <acc> <c>` (no checkout or index), then `git commit-tree` the final tree. That leaves an unreferenced commit for `gc` to clean up. A conflict means the selection depends on a commit it leaves out, and gets the same kind of 422.
-- The "Uncommitted changes" row as part of a selection (the newest selected commit up to the working tree).
+- ~~The "Uncommitted changes" row as part of a selection~~ (built, see the follow-up).
 - `base=commits` on the reviewer view once it has a Git log tab.
 - `mo calls --commits a..b` for the terminal.
 
@@ -428,3 +428,34 @@ Steps: A. `gitfiles`; B. web; C. browser + docs.
   - `worktree=1` with `base=branch`, `worktree=yes`, `base=commits` with neither commits nor worktree → 400 with no `GitFiles` call;
   - `ErrNoCommits` → 422;
   - `/file`: `rev=sel-head` → 400; the plain read of a path only the selection lists → `ReadFile`; a path outside it → 404.
+
+### Step C in detail: browser and docs
+
+**`graph.js`**
+- The "Uncommitted changes" row (`WORKTREE`) becomes selectable whenever it's shown:
+  - Ctrl/Cmd-click toggles it, Shift-click ranges include it, and the keyboard rules treat it like a commit;
+  - a plain click still shows the changed files.
+- `order()` starts with `WORKTREE` while the row is shown. `selection()` lists it first as `{hash: WORKTREE, subject: "Uncommitted changes"}`.
+- When the row disappears (everything committed, `setChangedCount(0)`), it drops out of the selection like a commit gone from the log.
+- `selectionProblem(commits, selected, head)`: with `WORKTREE` selected, the other rules apply to the commits alone. Then, if any commits are selected, their newest one must be `head` ("The uncommitted changes sit on abc1234, which isn't selected.").
+- Bar label: `Uncommitted changes`, or `Uncommitted + N commits · <oldest>..<newest>`.
+
+**`overview.js`**
+- `selIDs()` leaves `WORKTREE` out, and `selWorktree()` says whether it's selected. The query becomes `base=commits[&commits=…][&worktree=1]`.
+- Polling continues while the uncommitted changes are selected; only commit-only selections stop it.
+- Header: `Uncommitted changes`, or `N commits + uncommitted · range · subject`.
+- Files open an `sdiff` tab.
+
+**`editor.js`: `sdiff` tabs**
+- An editable diff tab like `bdiff`: `DIFF_REV.sdiff = "sel-base"`, label "vs selection base", base label "the selection's base". Its `hash` is the comma-joined ids, possibly empty; the key is `sdiff:<ids>:<path>`.
+- `fetchVersion` adds `&base=commits[&commits=…]&worktree=1` to both of an `sdiff` tab's reads: the base side and the working copy, so a file deleted in a selected commit is still served.
+- Saving is unchanged (the plain `PUT`). `loadSavedTabs` accepts `sdiff` with an empty or valid id list, and `reveal` passes `hash` through.
+
+**Docs:** CLAUDE.md (the Selected paragraph, plus the Git log rules), `testing.md` (the new tests), and the plan's status line.
+
+**Checks by hand:**
+- Select only Uncommitted → the Overview equals the Uncommitted mode's files.
+- Select Uncommitted + HEAD's commit → its files plus the uncommitted ones.
+- Uncommitted + an older commit → the bar's reason; the server 422s the same.
+- Open a file → an editable diff against the selection's base. Edit and save; the tab and the Overview update on the next poll.
+- Commit everything → the Uncommitted row and its selection go away.

@@ -467,7 +467,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // remembered: leaving it goes back to the stored mode.
   let mode = storedMode();
   let commitSel = [];
-  const selIDs = () => commitSel.map((c) => c.hash).sort().join(",");
+  // The selected commits' ids (sorted, comma-joined), and whether the
+  // uncommitted changes (graph.js's WORKTREE row) are selected too.
+  const selIDs = () => commitSel.map((c) => c.hash).filter((h) => h !== WORKTREE).sort().join(",");
+  const selWorktree = () => commitSel.some((c) => c.hash === WORKTREE);
+  const selKey = () => selIDs() + (selWorktree() ? "+wt" : "");
   const hidden = new Set(Array.isArray(storageGet(OVERVIEW_HIDDEN_KEY)) ? storageGet(OVERVIEW_HIDDEN_KEY) : []);
 
   // The tab strip shows the number of rule violations next to "Overview".
@@ -508,11 +512,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // is reloaded and an empty one leaves the mode; otherwise only the
   // header's Selected button changes.
   function setSelection(sel) {
-    const before = selIDs();
+    const before = selKey();
     commitSel = sel || [];
     if (mode === "commits") {
       if (!commitSel.length) { mode = storedMode(); reload(); return; }
-      if (selIDs() !== before) { reload(); return; }
+      if (selKey() !== before) { reload(); return; }
     }
     if (data) render();
   }
@@ -862,10 +866,13 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     }
     let what;
     if (data.mode === "commits") {
-      const n = commitSel.length;
-      const range = n > 1 ? `${commitSel[n - 1].hash.slice(0, 7)}..${commitSel[0].hash.slice(0, 7)}` : commitSel[0]?.hash.slice(0, 7) || data.head.slice(0, 7);
-      what = [el("b", { text: n === 1 ? "1 commit" : `${n} commits` }), document.createTextNode(" · "), el("span", { class: "mono", text: range }),
-        ...(commitSel[0] ? [el("span", { class: "overview__muted", text: ` · ${commitSel[0].subject}` })] : [])];
+      const cs = commitSel.filter((c) => c.hash !== WORKTREE);
+      const n = cs.length;
+      const range = n > 1 ? `${cs[n - 1].hash.slice(0, 7)}..${cs[0].hash.slice(0, 7)}` : n ? cs[0].hash.slice(0, 7) : "";
+      const count = n === 1 ? "1 commit" : `${n} commits`;
+      what = [el("b", { text: !data.worktree ? count : n ? `${count} + uncommitted` : "Uncommitted changes" }),
+        ...(range ? [document.createTextNode(" · "), el("span", { class: "mono", text: range })] : []),
+        ...(cs[0] ? [el("span", { class: "overview__muted", text: ` · ${cs[0].subject}` })] : [])];
     } else if (data.mode === "branch") {
       what = [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" vs "), el("span", { class: "mono", text: data.base }), document.createTextNode(" @ "), el("span", { class: "mono", title: data.mergeBase, text: data.mergeBase.slice(0, 7) }), el("span", { class: "overview__muted", text: " (merge base)" })];
     } else {
@@ -1249,13 +1256,14 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   // openDiff shows a file's changes, scrolled to line if given.
   function openDiff(f, line) {
-    if (data.mode === "commits") onOpenDiff?.(f.path, "range", line, selIDs());
+    if (data.mode === "commits") onOpenDiff?.(f.path, data.worktree ? "sdiff" : "range", line, selIDs());
     else onOpenDiff?.(f.path, data.mode === "branch" ? "bdiff" : "diff", line);
   }
 
   // get fetches one endpoint with If-None-Match: null when unchanged.
   async function get(what, tag) {
-    const q = mode === "commits" ? `base=commits&commits=${selIDs()}` : `base=${mode}`;
+    const ids = selIDs();
+    const q = mode !== "commits" ? `base=${mode}` : `base=commits${ids ? "&commits=" + ids : ""}${selWorktree() ? "&worktree=1" : ""}`;
     const res = await fetch(`${api}/${what}?${q}`, {
       headers: tag ? { "If-None-Match": tag } : {}, cache: "no-store",
     });
@@ -1305,7 +1313,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // shown: it can take seconds, and the rest of the tab shouldn't wait.
   async function loadCalls() {
     if (archView !== "functions" || !visible || !windowID || !available || callsInflight === gen) return;
-    if (mode === "commits" && calls) return; // commits never change
+    if (mode === "commits" && !selWorktree() && calls) return; // commits never change
     const g = gen;
     callsInflight = g;
     try {
@@ -1329,7 +1337,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   setInterval(() => {
     if (document.visibilityState !== "visible") return;
-    if (mode === "commits" && data) return; // commits never change
+    if (mode === "commits" && !selWorktree() && data) return; // commits never change
     if (visible || Date.now() - lastLoad >= OVERVIEW_BG_POLL_MS) load();
   }, OVERVIEW_POLL_MS);
   document.addEventListener("visibilitychange", () => { if (visible) load(); });
