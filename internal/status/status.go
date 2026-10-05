@@ -72,11 +72,11 @@ type sessionState struct {
 	LastHookAt   time.Time
 	PendingTool  string          // tool name Claude is blocked on, set iff Status == StatusQuestion
 	PendingInput json.RawMessage // that tool's raw input, set iff Status == StatusQuestion
-	// QuestionFromAgent marks a StatusQuestion that came from the
-	// `claude agents --json` signal rather than a PreToolUse hook (so there's
-	// no PendingTool/PendingInput to show). Only that same signal may clear
-	// it on "busy" — see ProcessAgentStatus.
-	QuestionFromAgent bool
+	// FromAgent marks a StatusQuestion or StatusPermission that came from
+	// the `claude agents --json` signal rather than a hook (so there's no
+	// PendingTool/PendingInput to show). Only that same signal may clear it
+	// on "busy" — see ProcessAgentStatus.
+	FromAgent bool
 }
 
 // isInteractiveTool reports whether a tool is known to block waiting on a
@@ -238,7 +238,7 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 	// the first's, even though there's no status change to emit for it).
 	s.PendingTool = pendingTool
 	s.PendingInput = pendingInput
-	s.QuestionFromAgent = false
+	s.FromAgent = false
 	if old == newStatus {
 		// No status transition — don't emit, but the pending-question
 		// refresh above still applies.
@@ -294,20 +294,26 @@ const (
 	agentStatusIdle         = "idle"
 	agentStatusWaiting      = "waiting"
 	agentWaitingInputNeeded = "input needed"
+	// Claude Code's default for a dialog with no reason of its own: tool
+	// permission prompts, ExitPlanMode's plan approval.
+	agentWaitingPermission = "permission prompt"
 )
 
 // ProcessAgentStatus reconciles a session against Claude Code's own live
 // status, as reported by `claude agents --json` at observedAt. This is the
-// backstop for StatusQuestion when the PreToolUse hook didn't reach us (hooks
-// not installed / dropped): Claude reports "waiting" + "input needed" while an
-// AskUserQuestion menu is open. Only that exact pair maps to Question — other
-// "waiting" reasons ("dialog open", …) are left alone, and so is Permission.
+// backstop for StatusQuestion and StatusPermission when the hooks didn't reach
+// us (hooks not installed / dropped, or the TUI restarted while a dialog was
+// open): Claude reports "waiting" + "input needed" while an AskUserQuestion
+// menu is open, and "waiting" + "permission prompt" for a permission dialog.
+// Only those pairs count — other "waiting" reasons ("dialog open", …) are
+// left alone — and neither replaces a question or permission already set.
 //
 // A hook that arrived after observedAt is fresher than this snapshot, so the
-// snapshot is ignored. Leaving Question: "idle" clears any question (the
-// session is neither working nor blocked); "busy" clears only a question this
-// signal set itself — a hook-sourced question can briefly read "busy" before
-// Claude publishes its waiting state, and clearing it would lose its content.
+// snapshot is ignored. Leaving a blocked state: "idle" clears any question
+// and a permission this signal set (the session is neither working nor
+// blocked); "busy" clears only a state this signal set itself — a
+// hook-sourced one can briefly read "busy" before Claude publishes its
+// waiting state, and clearing it would lose its content.
 func (m *Manager) ProcessAgentStatus(sessionID, agentStatus, waitingFor string, observedAt time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -323,16 +329,19 @@ func (m *Manager) ProcessAgentStatus(sessionID, agentStatus, waitingFor string, 
 
 	var newStatus SessionStatus
 	switch {
-	case agentStatus == agentStatusWaiting && waitingFor == agentWaitingInputNeeded:
+	case agentStatus == agentStatusWaiting && (waitingFor == agentWaitingInputNeeded || waitingFor == agentWaitingPermission):
 		if old == StatusQuestion || old == StatusPermission {
 			return
 		}
 		newStatus = StatusQuestion
-	case old != StatusQuestion:
+		if waitingFor == agentWaitingPermission {
+			newStatus = StatusPermission
+		}
+	case old != StatusQuestion && old != StatusPermission:
 		return
-	case agentStatus == agentStatusIdle:
+	case agentStatus == agentStatusIdle && (old == StatusQuestion || s.FromAgent):
 		newStatus = StatusIdle
-	case agentStatus == agentStatusBusy && s.QuestionFromAgent:
+	case agentStatus == agentStatusBusy && s.FromAgent:
 		newStatus = StatusActive
 	default:
 		return
@@ -344,7 +353,7 @@ func (m *Manager) ProcessAgentStatus(sessionID, agentStatus, waitingFor string, 
 	}
 	s.Status = newStatus
 	s.PendingTool, s.PendingInput = "", nil
-	s.QuestionFromAgent = newStatus == StatusQuestion
+	s.FromAgent = newStatus == StatusQuestion || newStatus == StatusPermission
 	m.emit(StatusChange{SessionID: sessionID, Old: old, New: newStatus})
 }
 

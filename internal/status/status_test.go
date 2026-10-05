@@ -395,6 +395,45 @@ func TestAgentStatus_UnknownSession_WaitingInputNeeded_SetsQuestion(t *testing.T
 	}
 }
 
+func TestAgentStatus_WaitingPermissionPrompt_SetsPermission(t *testing.T) {
+	mgr := NewManager()
+	// After a TUI restart the JSONL reads the open tool_use as active.
+	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
+	mgr.ProcessAgentStatus("s1", "waiting", "permission prompt", time.Now())
+	if got := mgr.Status("s1"); got != StatusPermission {
+		t.Fatalf("got %v, want StatusPermission", got)
+	}
+
+	mgr.ProcessAgentStatus("s1", "busy", "", time.Now())
+	if got := mgr.Status("s1"); got != StatusActive {
+		t.Errorf("after busy: got %v, want StatusActive", got)
+	}
+	mgr.ProcessAgentStatus("s1", "waiting", "permission prompt", time.Now())
+	mgr.ProcessAgentStatus("s1", "idle", "", time.Now())
+	if got := mgr.Status("s1"); got != StatusIdle {
+		t.Errorf("after idle: got %v, want StatusIdle", got)
+	}
+}
+
+func TestAgentStatus_PermissionPromptKeepsQuestion(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "AskUserQuestion", ToolInput: []byte(`{"q":1}`)})
+	mgr.ProcessAgentStatus("s1", "waiting", "permission prompt", time.Now())
+	if got := mgr.Status("s1"); got != StatusQuestion {
+		t.Errorf("got %v, want StatusQuestion", got)
+	}
+}
+
+func TestAgentStatus_HookPermissionSurvivesBusyAndIdle(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventPermissionRequest, SessionID: "s1", ToolName: "Bash"})
+	mgr.ProcessAgentStatus("s1", "busy", "", time.Now())
+	mgr.ProcessAgentStatus("s1", "idle", "", time.Now())
+	if got := mgr.Status("s1"); got != StatusPermission {
+		t.Errorf("got %v, want StatusPermission (hooks own a hook-sourced permission)", got)
+	}
+}
+
 func TestAgentStatus_OtherWaitingReasons_Ignored(t *testing.T) {
 	mgr := NewManager()
 	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})
