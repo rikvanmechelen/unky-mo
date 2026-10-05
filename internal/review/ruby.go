@@ -22,6 +22,9 @@ type rubyLang struct {
 	// consts maps a squashed constant path ("audio/tourbuilder") to the
 	// unit of the file defining it; "" when two units define it.
 	consts map[string]string
+	// files maps the same keys to the file defining the constant, "" when
+	// two files do: the call graph's canonical home of a class.
+	files map[string]string
 }
 
 func (l *rubyLang) name() string { return "ruby" }
@@ -37,6 +40,7 @@ func (l *rubyLang) detect(idx *index) bool {
 		return false
 	}
 	l.consts = map[string]string{}
+	l.files = map[string]string{}
 	for _, p := range idx.paths {
 		if !strings.HasSuffix(p, ".rb") || isTest(p) {
 			continue
@@ -48,6 +52,11 @@ func (l *rubyLang) detect(idx *index) bool {
 				unit = "" // defined in two units: ambiguous
 			}
 			l.consts[key] = unit
+			if _, ok := l.files[key]; ok {
+				l.files[key] = ""
+			} else {
+				l.files[key] = p
+			}
 		}
 	}
 	return true
@@ -166,6 +175,20 @@ func (l *rubyLang) lookup(c string, nesting []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// constFile is the file Zeitwerk loads constant c (a full path,
+// "Admin::User") from: its own file, or for a constant nested in a class
+// (User::Error) the class's file. "" when it isn't autoloaded or two files
+// would be.
+func (l *rubyLang) constFile(c string) string {
+	segs := strings.Split(squashConst(strings.TrimPrefix(c, "::")), "/")
+	for k := len(segs); k > 0; k-- {
+		if f, ok := l.files[strings.Join(segs[:k], "/")]; ok {
+			return f
+		}
+	}
+	return ""
 }
 
 var (
