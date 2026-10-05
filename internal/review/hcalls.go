@@ -103,6 +103,12 @@ type hLang interface {
 	resolve(r *hResolver, p string, d *hDef, c hCall) (to string, want []string)
 }
 
+// hTests is implemented by languages with a test-file convention: the test
+// files that would cover source file p, whether or not they exist.
+type hTests interface {
+	testsFor(p string) []string
+}
+
 // hCalls adapts an hLang to callLang.
 type hCalls struct{ l hLang }
 
@@ -129,11 +135,38 @@ func (h *hCalls) funcs(idx *index, files []string, full bool) (*callSet, error) 
 			continue
 		}
 		test := isTest(p)
+		// The file's conventional tests (app/models/x.rb → test/models/
+		// x_test.rb), and the names they call: a function they name counts
+		// as tested even through framework calls the graph can't follow.
+		var tested map[string]bool
+		if conv, ok := h.l.(hTests); ok && !test {
+			var tests []string
+			tested = map[string]bool{}
+			for _, t := range conv.testsFor(p) {
+				tf := r.files[t]
+				if tf == nil {
+					continue
+				}
+				tests = append(tests, t)
+				for _, td := range tf.Defs {
+					for _, c := range td.Calls {
+						tested[c.Name] = true
+						for _, seg := range strings.FieldsFunc(c.Recv, func(r rune) bool { return r == '.' || r == ':' }) {
+							tested[seg] = true
+						}
+					}
+				}
+			}
+			if full && len(tests) > 0 {
+				set.testFiles[p] = tests
+			}
+		}
 		for i := range f.Defs {
 			d := &f.Defs[i]
 			fn := &fn{Func: Func{ID: h.l.id(p, d), Name: h.l.display(p, d), Path: p, Line: d.Line, End: d.End,
 				Unit: h.l.unit(p), Lang: h.l.name(), Test: test}, body: d.Body, sig: d.Sig, req: d.Req,
-				entry: d.IsClass || strings.HasPrefix(d.Name, "<")} // pseudo-definitions are named "<…>"
+				entry:        d.IsClass || strings.HasPrefix(d.Name, "<"), // pseudo-definitions are named "<…>"
+				conventional: tested[d.Name]}
 			for _, c := range d.Calls {
 				to, want := h.l.resolve(r, p, d, c)
 				switch {

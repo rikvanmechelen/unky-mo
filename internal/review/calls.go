@@ -35,6 +35,9 @@ const (
 	FindingRemovedCalled    = "removed-called"    // a removed function something still calls
 	FindingSignatureCallers = "signature-callers" // a changed signature with callers the change doesn't touch
 	FindingUntested         = "untested"          // a changed function no test reaches within untestedHops calls
+	// FindingTestNotUpdated: a changed source file whose conventional test
+	// file exists but wasn't changed with it (a hint, like untested).
+	FindingTestNotUpdated = "test-not-updated"
 )
 
 const (
@@ -163,6 +166,9 @@ type fn struct {
 	// nothing in the code calls (a package's init, a class body, a view,
 	// a file's top-level code).
 	generated, entry bool
+	// conventional: the source file's conventional test file calls it by
+	// name, which counts as tested (Rails tests go through framework calls).
+	conventional bool
 }
 
 // callSet is one version's functions for one language: the changed files'
@@ -171,10 +177,12 @@ type callSet struct {
 	funcs     map[string]*fn
 	unparsed  map[string]bool // paths that didn't parse
 	truncated bool
+	// testFiles: a source file → its conventional test files that exist.
+	testFiles map[string][]string
 }
 
 func newCallSet() *callSet {
-	return &callSet{funcs: map[string]*fn{}, unparsed: map[string]bool{}}
+	return &callSet{funcs: map[string]*fn{}, unparsed: map[string]bool{}, testFiles: map[string][]string{}}
 }
 
 // add puts f in the set. A second definition with the same ID (a
@@ -591,12 +599,36 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	if hasTests {
 		for _, id := range sortedKeys(status) {
 			st := status[id]
-			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated || newFns[id].entry {
+			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated || newFns[id].entry || newFns[id].conventional {
 				continue
 			}
 			if !reachedByTest(id, after, callers, untestedHops) {
 				cg.Findings = append(cg.Findings, CallFinding{Kind: FindingUntested, Func: id})
 			}
+		}
+	}
+	// A changed file whose conventional test file exists but didn't change.
+	byFile := map[string]string{} // path → its first changed function
+	for _, id := range sortedKeys(status) {
+		if f := newFns[id]; f != nil && status[id] != FuncRemoved && !f.Test && !f.generated && !f.entry {
+			if _, ok := byFile[f.Path]; !ok {
+				byFile[f.Path] = id
+			}
+		}
+	}
+	for _, p := range sortedKeys(byFile) {
+		tests := after.testFiles[p]
+		if len(tests) == 0 {
+			continue
+		}
+		touched := false
+		var sites []EdgeFile
+		for _, t := range tests {
+			touched = touched || changedNew[t]
+			sites = append(sites, EdgeFile{Path: t, Line: 1})
+		}
+		if !touched {
+			cg.Findings = append(cg.Findings, CallFinding{Kind: FindingTestNotUpdated, Func: byFile[p], Sites: sites})
 		}
 	}
 	g.flush()
@@ -773,6 +805,15 @@ func capCallGraph(cg *CallGraph) {
 	sort.SliceStable(cg.Findings, func(i, j int) bool {
 		return findingRank(cg.Findings[i].Kind) < findingRank(cg.Findings[j].Kind)
 	})
+	// Sites were gathered from maps: give them a stable order.
+	for _, f := range cg.Findings {
+		sort.Slice(f.Sites, func(i, j int) bool {
+			if f.Sites[i].Path != f.Sites[j].Path {
+				return f.Sites[i].Path < f.Sites[j].Path
+			}
+			return f.Sites[i].Line < f.Sites[j].Line
+		})
+	}
 	if len(cg.Funcs) <= maxCallFuncs {
 		return
 	}
@@ -813,6 +854,8 @@ func findingRank(kind string) int {
 		return 0
 	case FindingSignatureCallers:
 		return 1
+	case FindingUntested:
+		return 2
 	}
-	return 2
+	return 3
 }

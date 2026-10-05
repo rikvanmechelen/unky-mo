@@ -95,6 +95,8 @@ func WriteCallsText(w io.Writer, cg *CallGraph) {
 			what = "signature changed; callers not updated"
 		case FindingUntested:
 			what = "no test reaches it within 2 calls"
+		case FindingTestNotUpdated:
+			what = "changed, but its test file wasn't"
 		}
 		fmt.Fprintf(w, "%s: %s", name(x.Func), what)
 		var sites []string

@@ -13,6 +13,7 @@ const CALL_FINDING_TEXT = {
   "removed-called": "removed but still called",
   "signature-callers": "signature changed; callers not updated",
   untested: "no test reaches it",
+  "test-not-updated": "its test file wasn't updated",
 };
 
 // callIndex maps the graph by function: funcs, and calls in and out.
@@ -132,6 +133,7 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
   let selected = null;
   const expanded = new Set();
   let untestedOpen = false;
+  let staleOpen = false;
 
   function reset() {
     cg = null; ix = null; focus = []; selected = null; expanded.clear();
@@ -393,9 +395,30 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
   function findingsList() {
     const list = cg.findings || [];
     if (!list.length) return null;
-    const serious = list.filter((x) => x.kind !== "untested");
+    const isHint = (k) => k === "untested" || k === "test-not-updated";
+    const serious = list.filter((x) => !isHint(x.kind));
     const hints = list.filter((x) => x.kind === "untested");
     const parts = serious.map(findingRow);
+    // Files changed without their conventional test file: a folded hint,
+    // listing the test files to look at.
+    const stale = list.filter((x) => x.kind === "test-not-updated");
+    if (stale.length) {
+      const rows = stale.map((x) => {
+        const f = ix.funcs.get(x.func);
+        return el("div", { class: "calls__row" }, [
+          link(f?.path || x.func, () => select(x.func), f ? `${f.name} and other changes in this file` : x.func),
+          el("span", { class: "overview__muted", text: "→" }),
+          el("span", { class: "calls__sites" }, siteButtons(x.sites, false)),
+        ]);
+      });
+      const box = el("details", { class: "calls__finding is-untested" }, [
+        el("summary", { text: `${stale.length} changed file${stale.length === 1 ? "" : "s"} whose test file wasn't updated` }),
+        el("div", { class: "calls__untested" }, rows),
+      ]);
+      if (staleOpen) box.open = true;
+      box.addEventListener("toggle", () => { staleOpen = box.open; });
+      parts.push(box);
+    }
     if (hints.length) {
       // A hint, folded: it can't see table-driven or reflective tests.
       const names = el("div", { class: "calls__untested" });
