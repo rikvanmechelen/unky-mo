@@ -584,4 +584,3 @@ func TestIndexAtPrefetch(t *testing.T) {
 		t.Errorf("unprefetched base read = %v", got)
 	}
 }
-

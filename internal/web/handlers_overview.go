@@ -146,6 +146,7 @@ func (s *Server) fetchBase(w http.ResponseWriter, o *gitfiles.Overview, err erro
 	}
 	s.overviewCache.clear()
 	s.archCache.clear()
+	s.callCache.clear()
 	w.WriteHeader(http.StatusNoContent)
 }
 

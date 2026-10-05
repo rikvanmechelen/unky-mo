@@ -32,7 +32,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,Restarter
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,CallGrapher,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,Restarter
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -148,6 +148,13 @@ type ChangeAnalyzer interface {
 	Analyze(o *gitfiles.Overview) (*review.Analysis, error)
 }
 
+// CallGrapher works out a change's function-level view (changed functions,
+// the calls they gain and lose, their callers and callees, findings), for
+// the Overview tab's Functions view. o is an overview from GitFiles.
+type CallGrapher interface {
+	Calls(o *gitfiles.Overview) (*review.CallGraph, error)
+}
+
 // ScopeChecker asks Claude (headless, no tools) whether each changed file
 // fits the ticket and the prompts that changed it — the Overview tab's
 // on-demand drift check.
@@ -218,6 +225,7 @@ type Deps struct {
 	Sessions  SessionOps
 	Git       GitFiles
 	Review    ChangeAnalyzer
+	Calls     CallGrapher
 	Scope     ScopeChecker
 	Terminals Terminals
 	Shells    Shells
@@ -405,6 +413,21 @@ func (a realAnalyzer) Analyze(o *gitfiles.Overview) (*review.Analysis, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), analysisTimeout)
 	defer cancel()
 	return review.Analyze(ctx, a.cmd, o)
+}
+
+// realCallGrapher runs review.Calls against the real git binary.
+type realCallGrapher struct{ cmd moexec.Commander }
+
+func NewCallGrapher(cmd moexec.Commander) CallGrapher { return realCallGrapher{cmd: cmd} }
+
+// callTimeout bounds one call graph: it type-checks (Go) or scans the
+// changed code and everything that could call it.
+const callTimeout = 20 * time.Second
+
+func (c realCallGrapher) Calls(o *gitfiles.Overview) (*review.CallGraph, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return review.Calls(ctx, c.cmd, o)
 }
 
 // realScopeChecker runs review.CheckScope with the real claude binary.

@@ -29,6 +29,7 @@ type Server struct {
 	logCache      *ttlCache
 	overviewCache *ttlCache
 	archCache     *ttlCache
+	callCache     *fingerprintCache
 	// Reviewer view: a branch's head commit (localCache) or a PR branch's,
 	// fetched from origin at most every few minutes (fetchCache).
 	localRefCache *ttlCache
@@ -80,6 +81,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		logCache:      newTTLCache(2 * time.Second),
 		overviewCache: newTTLCache(2 * time.Second),
 		archCache:     newTTLCache(3 * time.Second),
+		callCache:     newFingerprintCache(),
 		localRefCache: newTTLCache(5 * time.Second),
 		fetchCache:    newTTLCache(5 * time.Minute),
 		branchCache:   newTTLCache(15 * time.Second),
@@ -107,12 +109,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/log", s.handleSessionLog)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/overview", s.handleOverview)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/architecture", s.handleArchitecture)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/calls", s.handleCalls)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/scope", s.handleScope)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/fetch-base", s.handleFetchBase)
 	// The reviewer view: a branch, or a pull request (resolved by number).
 	for _, prefix := range []string{"/api/projects/{name}/branches/{branch}", "/api/projects/{name}/pulls/{pr}"} {
 		s.mux.HandleFunc("GET "+prefix+"/overview", s.handleBranchOverview)
 		s.mux.HandleFunc("GET "+prefix+"/architecture", s.handleBranchArchitecture)
+		s.mux.HandleFunc("GET "+prefix+"/calls", s.handleBranchCalls)
 		s.mux.HandleFunc("GET "+prefix+"/file", s.handleBranchFile)
 		s.mux.HandleFunc("PUT "+prefix+"/file", s.handleBranchSaveFile)
 		s.mux.HandleFunc("GET "+prefix+"/tree", s.handleBranchTree)

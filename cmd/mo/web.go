@@ -50,6 +50,7 @@ func webCmd() *cobra.Command {
 				Sessions:   web.NewSessionOps(ops.NewContext(tmuxClient)),
 				Git:        web.NewGitFiles(moexec.DefaultCommander),
 				Review:     web.NewChangeAnalyzer(moexec.DefaultCommander),
+				Calls:      web.NewCallGrapher(moexec.DefaultCommander),
 				Scope:      web.NewScopeChecker(moexec.DefaultCommander),
 				Terminals:  web.NewTerminals(tmuxClient),
 				ClaudePane: web.NewClaudePane(tmuxClient),
