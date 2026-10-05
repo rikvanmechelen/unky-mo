@@ -213,6 +213,8 @@ func callLangOf(l language) callLang {
 		return &hCalls{l: &jvmCalls{}}
 	case *rubyLang:
 		return &hCalls{l: &rbCalls{}}
+	case *nodeLang:
+		return &hCalls{l: &jsCalls{}}
 	}
 	return nil
 }
