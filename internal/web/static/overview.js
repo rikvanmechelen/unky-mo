@@ -101,7 +101,7 @@ function callsSkeleton() {
 // createOverview builds the tab in panel. The chat view points it at a
 // session (setWindow); the reviewer view at a branch (setTarget, without a
 // transcript), and learns what the branch resolved to through onTarget.
-function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget, onClearSelection } = {}) {
+function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget, onClearSelection } = {}) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // its endpoint prefix
   let withTranscript = true; // false in the reviewer view: no trace, no strip
@@ -373,6 +373,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     if (isOpen("foot")) drawTreemap();
     if (traced && isOpen("trace")) renderTrace();
     renderStrip();
+    selChanged("model");
   }
 
   // --- The page: a header, then sections that open where the selection is ---
@@ -1159,6 +1160,16 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     }));
   }
 
+  // openEntity opens where id is: its diff ("diff") or the file ("file"),
+  // at its line when that line is in the new version.
+  function openEntity(id, how = "diff") {
+    const w = ovWhere(getModel(), id);
+    if (!w?.path || !data) return;
+    const line = w.side === "new" && w.line ? w.line : undefined;
+    if (how === "file" && w.side === "new") onOpenFile?.(w.path, line);
+    else openDiff({ path: w.path }, line);
+  }
+
   // openDiff shows a file's changes, scrolled to line if given.
   function openDiff(f, line) {
     if (data.mode === "commits") onOpenDiff?.(f.path, data.worktree ? "sdiff" : "range", line, selIDs());
@@ -1253,6 +1264,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     // the first overview), and selection its selection store.
     model: getModel,
     selection,
+    open: openEntity,
+    toggleKind,
+    hiddenKinds: () => hidden,
+    // available reports whether the tab has a change to show.
+    hasData: () => !!data?.repo,
     setSelection,
     // showSelection switches to the commits selected in the Git log.
     showSelection(sel) {
@@ -1302,6 +1318,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     setVisible(v) {
       visible = v;
       panel.hidden = !v;
+      onVisible?.(v);
       if (v) {
         if (data) { drawTreemap(); if (withTranscript && trace.version !== traceShown) renderTrace(); }
         load();

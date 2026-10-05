@@ -472,6 +472,64 @@ h1, h2 {
 .nav-session.is-current, .nav-session.is-current:hover { background: var(--ink); color: var(--paper); }
 .nav-session .status-sq { width: 10px; height: 10px; }
 .nav-session__branch { font-family: var(--font-mono); font-size: 12px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-session__name { min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.nav-session__project { display: none; flex: none; font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+
+/* Overview mode (chat.js: .is-overview while the Overview tab shows): the
+   nav widens and holds the inspector (inspector.js) under a compact
+   session list, and the Files panel widens a little. */
+.chat-shell.is-overview:not(.hide-nav) { --nav-w: 340px; }
+.chat-shell.is-overview.has-files:not(.hide-files) { --files-w: 320px; }
+.chat-shell.is-overview .chat-nav > * { width: 340px; }
+.chat-shell.is-overview .chat-nav__brand { padding: 18px 20px 12px; flex-direction: row; align-items: baseline; flex-wrap: wrap; column-gap: 12px; }
+.chat-shell.is-overview .chat-nav__wordmark { font-size: 26px; line-height: 26px; flex-basis: 100%; }
+.chat-shell.is-overview .chat-nav__list { flex: 0 1 auto; max-height: 30%; gap: 0; padding-bottom: 10px; }
+.chat-shell.is-overview .nav-group__project { display: none; }
+.chat-shell.is-overview .nav-session { padding: 0 20px; height: 28px; box-sizing: border-box; }
+.chat-shell.is-overview .nav-session__project { display: inline; }
+.chat-nav__inspector { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--paper); border-top: 2px solid var(--ink); }
+.chat-nav__inspector[hidden] { display: none; }
+.insp-bar { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; line-height: 1; }
+.insp-bar__nav { all: unset; cursor: pointer; width: 26px; height: 24px; display: flex; align-items: center; justify-content: center; }
+.insp-bar__nav::before { content: ""; width: 7px; height: 7px; border-left: 2px solid var(--ink); border-bottom: 2px solid var(--ink); transform: rotate(45deg); }
+.insp-bar__nav.is-forward::before { transform: rotate(-135deg); }
+.insp-bar__nav:disabled { cursor: default; opacity: 0.3; }
+.insp-bar__nav:focus-visible, .insp-bar__crumb:focus-visible, .insp-bar__clear:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.insp-bar__crumbs { flex: 1; min-width: 0; display: flex; gap: 5px; overflow: hidden; white-space: nowrap; }
+.insp-bar__crumb { all: unset; cursor: pointer; font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.insp-bar__crumb:hover, .insp-bar__crumb.is-current { color: var(--ink); }
+.insp-bar__sep { color: var(--ink-5); }
+.insp-bar__clear { all: unset; cursor: pointer; padding: 4px 6px; color: var(--ink-2); }
+.insp-bar__clear:hover { color: var(--ink); }
+.insp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 40px; display: flex; flex-direction: column; gap: 18px; }
+.insp-note { font-size: 13px; color: var(--ink-3); font-style: italic; }
+.insp-kicker { font-size: 12px; line-height: 1; color: var(--ink-3); margin-bottom: -10px; }
+.insp-title { font-family: var(--font-mono); font-size: 18px; line-height: 1.15; font-weight: 700; overflow-wrap: anywhere; }
+.insp-title.is-sans { font-family: var(--font-sans); font-size: 22px; letter-spacing: -0.02em; }
+.insp-text { font-size: 13.5px; line-height: 1.4; color: var(--ink-2); }
+.insp-kinds { display: grid; gap: 8px; }
+.insp-kinds__bar { display: flex; height: 10px; }
+.insp-kinds__legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--ink-2); }
+.insp-checks { display: grid; }
+.insp-check { all: unset; cursor: pointer; display: grid; grid-template-columns: 10px minmax(0, 1fr); column-gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); }
+.insp-check:disabled { cursor: default; }
+.insp-check:hover:not(:disabled) .insp-check__label { text-decoration: underline; }
+.insp-check:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.insp-check__sq { width: 10px; height: 10px; margin-top: 3px; box-sizing: border-box; }
+.insp-check.is-red .insp-check__sq { background: var(--red); }
+.insp-check.is-warn .insp-check__sq { background: var(--yellow); }
+.insp-check.is-ink .insp-check__sq { background: var(--ink); }
+.insp-check.is-calm .insp-check__sq { box-shadow: inset 0 0 0 1.5px var(--ink-4); }
+.insp-check.is-pending .insp-check__sq { display: none; }
+.insp-check__text { display: grid; gap: 3px; min-width: 0; }
+.insp-check__label { font-size: 13px; line-height: 1.3; }
+.insp-check.is-red .insp-check__label { font-weight: 700; }
+.insp-check__sub { font-size: 11.5px; line-height: 1.3; color: var(--ink-3); overflow-wrap: anywhere; }
+.insp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.insp-act { all: unset; cursor: pointer; padding: 8px 12px; font-size: 13px; line-height: 1; font-weight: 700; box-shadow: inset 0 0 0 1px var(--ink); }
+.insp-act:hover { background: var(--surface); }
+.insp-act.is-primary { background: var(--ink); color: var(--paper); }
+.insp-act:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .nav-session__status { font-size: 11px; line-height: 1; }
 
 .meter--compact { gap: 6px; }

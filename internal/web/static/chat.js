@@ -584,8 +584,15 @@ function main() {
     editor.showChat();
     promptInput.focus();
   }
+  const inspectorEl = document.getElementById("inspector");
   const overview = createOverview(document.getElementById("overview-panel"), {
     onOpenDiff: (path, kind, line, hash) => editor.reveal(path, line, kind, hash),
+    onOpenFile: (path, line) => editor.reveal(path, line, "file"),
+    // While the Overview shows, the left rail holds its inspector.
+    onVisible: (v) => {
+      shell.classList.toggle("is-overview", v);
+      inspectorEl.hidden = !v;
+    },
     onMention: insertMention,
     // The × after "Selected (N)": through the Git log, which owns the selection.
     onClearSelection: () => filesPane.clearSelection(),
@@ -610,6 +617,7 @@ function main() {
     overview,
   });
   const rails = createRails(shell);
+  createInspector(inspectorEl, overview);
   const filesPane = createFilesPane(filesEl, {
     onCount: rails.setCount,
     onOpen: (path) => editor.open(path, "file"),
@@ -866,7 +874,10 @@ function main() {
   function switchTo(id, push) {
     if (id === windowID) return;
     if (push) history.pushState({}, "", `/chat?window=${encodeURIComponent(id)}`);
+    // The Overview stays the open tab in the session switched to.
+    const inOverview = shell.classList.contains("is-overview");
     resetSession(id, false);
+    if (inOverview && id) editor.showOverview();
   }
 
   window.addEventListener("popstate", () => {
@@ -893,14 +904,16 @@ function main() {
     row.status.textContent = meta.short;
   }
 
-  function newNavRow(p) {
+  function newNavRow(p, project) {
     const row = {
       link: el("a", { class: "nav-session plain", href: `/chat?window=${encodeURIComponent(p.window_id)}` }),
       sq: el("span"),
       branch: el("span", { class: "nav-session__branch" }),
       status: el("span", { class: "nav-session__status" }),
     };
-    row.link.append(row.sq, row.branch, row.status);
+    // The project shows in each row only in the compact list beside the
+    // Overview's inspector, which drops the group headings.
+    row.link.append(row.sq, el("span", { class: "nav-session__name" }, [el("span", { class: "nav-session__project", text: project }), row.branch]), row.status);
     row.link.addEventListener("click", (e) => {
       // Modified clicks keep their browser meaning (new tab/window).
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -924,7 +937,7 @@ function main() {
       sessionNav.replaceChildren(...groups.map((g) => el("div", { class: "nav-group" }, [
         el("div", { class: "nav-group__project", text: g.project }),
         ...g.items.map((p) => {
-          const row = newNavRow(p);
+          const row = newNavRow(p, g.project);
           navRows.set(p.window_id, row);
           return row.link;
         }),

@@ -415,6 +415,40 @@ it over. A step gets its detailed plan in this doc before coding
   `#inspector` (nav bar + body) fills the rest. Switching session keeps the
   Overview tab active there. Start here: kinds bar + Checks. The rail
   tabs and `[` / `]` work as today.
+
+  **F4 detail.**
+  - `createOverview` takes `onVisible(v)`; `chat.js` toggles
+    `.chat-shell.is-overview` and the inspector's `hidden` with it.
+  - **Overview mode CSS:** the nav widens to 340px (`--nav-w`, and its
+    children's fixed width) and the Files panel to 320px. The session list
+    becomes compact rows: no project headings, each row shows its project
+    (a new `.nav-session__project`, hidden outside Overview mode) and
+    branch, 28px high. The list is capped at about a third of the rail and
+    scrolls, so the inspector gets the rest. `[` / `]` and the rail tabs
+    work as before.
+  - Switching session from the nav while the Overview shows keeps it
+    showing in the new window (`switchTo` calls `editor.showOverview()`).
+  - **`static/inspector.js`, `createInspector(host, overview, {onOpen})`:**
+    - **Nav bar:** Back / Forward (disabled at the ends, titled with
+      Alt+← / Alt+→), breadcrumbs (`selection.crumbs()`, labels from
+      `ovLabel`, click → `selection.go`) and Clear (Esc).
+    - **Body:** with nothing selected, Start here: the kinds bar (clicking
+      a kind hides it from Footprint and Review, shared with Footprint's
+      legend via `overview.toggleKind`) and the Checks list (`ovChecks`, a
+      tone square, label, sub-line; click selects the target). A selected
+      entity gets a minimal view for now: kicker (type and unit), title,
+      status chip and Diff / File actions (`overview.open(id, how)`). F5
+      fills in the rest.
+    - It re-renders on select / focus / target and on a new model, which
+      `render()` announces with `selChanged("model")`; not on hover.
+    - An id the model no longer has (the change moved on) shows "No longer
+      in this change" with Clear.
+  - **`overview.open(id, how)`:** `ovWhere` plus today's `openDiff` rules
+    (bdiff / diff / range / sdiff by mode). `how === "file"` opens a file
+    tab at the line; an old-side line opens the diff without a line,
+    since the working copy doesn't have it.
+  - Reviewer view: no nav, so no inspector until F12.
+
 - **F5. Inspector per entity** (`static/inspector.js`): function, call,
   import, file, package, contract, finding, prompt, cell, following the
   mock's `inspector()`. Code blocks use B1, and Peek toggles per
@@ -543,4 +577,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F3 built 2026-10-05; next: F4.
+backend) F1–F4 built 2026-10-05; next: F5.
