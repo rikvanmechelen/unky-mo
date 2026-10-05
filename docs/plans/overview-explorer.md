@@ -232,6 +232,24 @@ in the map, the Review list and the inspector.
   `goarch` paths especially), and fix it at the source if not: the map nests
   functions in packages by that key.
 
+  **B4 result.** Checked on every language's fixture: the call analyzers
+  name units with their architecture language's own `unit` (Node, Python
+  and Ruby from the path alone; Kotlin and Swift through the detected
+  instance), so changed functions always land in a listed package. Two
+  gaps, both fixed:
+  - Go interface implementations were bare nodes (no path, no unit):
+    `implsOf` now registers them in `l.callees`, so `addCallees` gives
+    them a context node with their position and `pkgDir` unit.
+  - Context functions are often in units `/architecture` never mentions
+    (an unchanged package, a test folder, a Rails controller), so B3's
+    `UnitLayers` couldn't place them. `CallGraph.UnitLayers` now names the
+    layer of every function's unit (`loadRules` again in `Calls`; the map
+    merges both maps).
+  - `unitalign_test.go` keeps it so: for each language's fixture, every
+    changed function's unit is one of `/architecture`'s packages and every
+    function has a path and (outside the root) a unit. `TestCallUnitLayers`
+    checks the layers of context units.
+
 ### Frontend steps
 
 Each step is one commit, and the old Overview keeps working until F9 swaps
@@ -395,5 +413,5 @@ in the reviewer view, phone bottom-sheet inspector.
 
 ## Status
 
-Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B3
-built 2026-10-05; next: B4.
+Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
+backend) built 2026-10-05; next: F1.

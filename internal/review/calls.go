@@ -132,6 +132,10 @@ type CallGraph struct {
 	Unparsed  []string `json:"unparsed,omitempty"`
 	Errors    []string `json:"errors,omitempty"`
 	Truncated bool     `json:"truncated,omitempty"`
+	// UnitLayers names the layer of every unit a function here is in, like
+	// Analysis.UnitLayers: context functions are often in units the
+	// architecture analysis doesn't mention.
+	UnitLayers map[string]string `json:"unitLayers"`
 }
 
 // callSite is one resolved call in a function's body.
@@ -331,6 +335,7 @@ func Calls(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Ca
 	}
 	crossPass(cg, base, idx, files, runs, idle)
 	capCallGraph(cg)
+	cg.UnitLayers = funcLayers(cg.Funcs, loadRules(r, idx))
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("call graph didn't finish in time: %w", err)
 	}
@@ -964,6 +969,23 @@ func findingRank(kind string) int {
 		return 4
 	}
 	return 5
+}
+
+// funcLayers maps the unit of each function to its layer's name, judged
+// with the function's language, leaving out units in no layer.
+func funcLayers(funcs []Func, rules *ruleSet) map[string]string {
+	m := map[string]string{}
+	seen := map[string]bool{}
+	for _, f := range funcs {
+		if seen[f.Unit] {
+			continue
+		}
+		seen[f.Unit] = true
+		if l := rules.layerOf(f.Unit, f.Lang); l != nil {
+			m[f.Unit] = l.Name
+		}
+	}
+	return m
 }
 
 // addSignatures fills in a signature change's header text on both sides,

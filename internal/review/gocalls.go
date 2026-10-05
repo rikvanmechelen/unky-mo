@@ -815,6 +815,9 @@ func (l *goLoader) implsOf(iface *types.Interface, method string, pkgs []*goPkg)
 			obj, _, _ := types.LookupFieldOrMethod(recv, false, pkg.types, method)
 			if m, ok := obj.(*types.Func); ok && l.inModule(m) {
 				out = append(out, l.id(m))
+				// addCallees gives it a node with its position and unit,
+				// like any callee whose package was only type-checked.
+				l.callees[l.id(m)] = m
 			}
 		}
 	}
