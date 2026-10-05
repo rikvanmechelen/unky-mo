@@ -75,7 +75,10 @@ type hFile struct {
 	// Local is the exported name ("*" for export * from), Spec and Name
 	// as for an import ("" Name: the module itself).
 	Reexports []hImport `json:"r,omitempty"`
-	OK        bool      `json:"ok"`
+	// Targets are a class's Stimulus static targets, by its owner path
+	// (JS only): declared names a view binds, not functions.
+	Targets map[string][]string `json:"t,omitempty"`
+	OK      bool                `json:"ok"`
 }
 
 // hLang is what a heuristic language provides.
@@ -109,8 +112,65 @@ type hTests interface {
 	testsFor(p string) []string
 }
 
+// hExtra is implemented by a language that defines things no file scan
+// sees: Rails routes and their URL helpers, read from config/routes.rb as
+// a whole. extraDefs returns them by the file they're defined in, and
+// newHResolver adds them to copies of those files' cached scans (never to
+// the cached values), so they resolve and show like any definition.
+type hExtra interface {
+	extraDefs(idx *index) map[string][]hDef
+}
+
+// hFlagger is implemented by a language some of whose unresolved calls are
+// findings of their own: a route to an action that doesn't exist, a view
+// binding a Stimulus method that doesn't. flag returns the finding kind
+// ("" for none) and the files whose change makes it worth raising; the
+// engine raises it when the calling definition changed or one of those
+// files did (see flaggedFindings).
+type hFlagger interface {
+	flag(r *hResolver, p string, d *hDef, c hCall) (kind string, about []string)
+}
+
+// hCross is implemented by a language whose calls reach another language's
+// functions (Ruby views binding Stimulus controllers); hCalls passes it on
+// as crossLang.
+type hCross interface {
+	crossCalls(idx *index) bool
+	foreign(id string) (Func, bool)
+	aliases(f Func) []string
+	removedExtra(base, idx *index, changed map[string]bool) []Func
+}
+
 // hCalls adapts an hLang to callLang.
 type hCalls struct{ l hLang }
+
+func (h *hCalls) crossCalls(idx *index) bool {
+	if c, ok := h.l.(hCross); ok {
+		return c.crossCalls(idx)
+	}
+	return false
+}
+
+func (h *hCalls) foreign(id string) (Func, bool) {
+	if c, ok := h.l.(hCross); ok {
+		return c.foreign(id)
+	}
+	return Func{}, false
+}
+
+func (h *hCalls) aliases(f Func) []string {
+	if c, ok := h.l.(hCross); ok {
+		return c.aliases(f)
+	}
+	return nil
+}
+
+func (h *hCalls) removedExtra(base, idx *index, changed map[string]bool) []Func {
+	if c, ok := h.l.(hCross); ok {
+		return c.removedExtra(base, idx, changed)
+	}
+	return nil
+}
 
 func (h *hCalls) name() string { return h.l.name() }
 func (h *hCalls) exact() bool  { return false }
@@ -183,8 +243,13 @@ func (h *hCalls) funcs(idx *index, files []string, full bool) (*callSet, error) 
 					for _, w := range want {
 						counted = counted || !strings.HasPrefix(w, "~")
 					}
-					if counted || len(want) > 0 {
-						fn.unresolved = append(fn.unresolved, unresolvedSite{line: c.Line, want: want, quiet: !counted})
+					var kind string
+					var about []string
+					if fl, ok := h.l.(hFlagger); ok {
+						kind, about = fl.flag(r, p, d, c)
+					}
+					if counted || len(want) > 0 || kind != "" {
+						fn.unresolved = append(fn.unresolved, unresolvedSite{line: c.Line, want: want, quiet: !counted, flag: kind, about: about})
 					}
 				}
 			}
@@ -227,6 +292,10 @@ func newHResolver(l hLang, idx *index) *hResolver {
 		}
 	}
 	idx.prefetch(reads)
+	var extra map[string][]hDef
+	if x, ok := l.(hExtra); ok {
+		extra = x.extraDefs(idx)
+	}
 	for _, p := range idx.paths {
 		if !l.owns(p) {
 			continue
@@ -235,6 +304,11 @@ func newHResolver(l hLang, idx *index) *hResolver {
 		f, _ := v.(*hFile)
 		if f == nil {
 			continue
+		}
+		if defs := extra[p]; len(defs) > 0 {
+			cp := *f
+			cp.Defs = append(append(make([]hDef, 0, len(f.Defs)+len(defs)), f.Defs...), defs...)
+			f = &cp
 		}
 		r.paths = append(r.paths, p)
 		r.files[p] = f

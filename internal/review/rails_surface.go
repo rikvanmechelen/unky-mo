@@ -8,12 +8,18 @@ import (
 	"github.com/rvanmech/unky-mo/internal/gitfiles"
 )
 
-// The Rails part of the contract surface: controller actions (the HTTP
-// surface behind the routes), initializers, and the locked versions of
+// The Rails part of the contract surface: the routes, controller actions
+// (the HTTP surface behind the routes, which also catches unrouted ones),
+// initializers, and the locked versions of
 // the gems the Gemfile names.
 
 // railsSurface adds the Rails items to s.
 func railsSurface(r *repo, s *Surface, all []gitfiles.OverviewFile, files []*file) {
+	if routesChanged(files) {
+		// The routes as the mapper builds them, diffed by VERB path: a
+		// moved line, or a resources line split in two, isn't a change.
+		s.Routes = append(s.Routes, routeChanges(railsRoutesOf(newIndexAt(r, r.rev)), railsRoutesOf(newIndex(r)))...)
+	}
 	for _, f := range files {
 		if strings.HasPrefix(f.Path, "app/controllers/") && strings.HasSuffix(f.Path, "_controller.rb") && !isTest(f.Path) {
 			s.Routes = append(s.Routes, actionChanges(f)...)

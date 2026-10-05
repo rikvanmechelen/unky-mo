@@ -82,6 +82,6 @@ func callsCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&base, "base", gitfiles.ModeBranch, "compare with the branch's merge base (branch) or HEAD (head)")
 	c.Flags().StringVar(&format, "format", "text", "output: text, json or dot (Graphviz)")
-	c.Flags().StringSliceVar(&failOn, "fail-on", nil, "exit 1 when there are findings of these kinds (removed-called, signature-callers, untested)")
+	c.Flags().StringSliceVar(&failOn, "fail-on", nil, "exit 1 when there are findings of these kinds (removed-called, stimulus-unbound, route-without-action, signature-callers, untested)")
 	return c
 }

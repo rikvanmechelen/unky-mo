@@ -1236,7 +1236,9 @@ button.file-row.overview-file { padding: 3px 12px; }
 .calls__sites .link-btn { font-weight: 400; }
 .calls__findings { display: grid; gap: 6px; }
 .calls__finding { display: grid; gap: 2px; padding: 6px 10px; border-left: 3px solid var(--line); background: var(--surface); font-size: 12.5px; }
-.calls__finding.is-removed-called { border-left-color: var(--red); background: var(--diff-del-bg); }
+.calls__finding.is-removed-called,
+.calls__finding.is-stimulus-unbound,
+.calls__finding.is-route-without-action { border-left-color: var(--red); background: var(--diff-del-bg); }
 .calls__finding.is-signature-callers { border-left-color: var(--yellow); }
 .calls__finding.is-untested { color: var(--ink-3); }
 .calls__finding.is-untested summary { cursor: pointer; }

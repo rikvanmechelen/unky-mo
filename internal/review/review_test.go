@@ -329,8 +329,12 @@ func TestFindNames(t *testing.T) {
 		t.Errorf("js env %v", got)
 	}
 	rb := "Rails.application.routes.draw do\n  resources :users, only: [:index] # list\n  get 'health', to: 'health#show'\nend\n"
-	if got := keys(findNames(rb, routePatterns, "config/routes.rb")); !reflect.DeepEqual(got, []string{"get 'health', to: 'health#show'", "resources :users, only: [:index]"}) {
+	// An app in a subfolder; the root config/routes.rb is parsed (rails_routes.go).
+	if got := keys(findNames(rb, routePatterns, "web/config/routes.rb")); !reflect.DeepEqual(got, []string{"get 'health', to: 'health#show'", "resources :users, only: [:index]"}) {
 		t.Errorf("rails routes %v", got)
+	}
+	if got := findNames(rb, routePatterns, "config/routes.rb"); len(got) != 0 {
+		t.Errorf("root routes.rb read by line: %v", got)
 	}
 	if got := keys(findNames("x = ENV.fetch('DB_URL')\ny = ENV[\"REDIS\"]\n", envPatterns, "config/x.rb")); !reflect.DeepEqual(got, []string{"DB_URL", "REDIS"}) {
 		t.Errorf("ruby env %v", got)

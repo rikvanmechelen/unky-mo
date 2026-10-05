@@ -208,6 +208,7 @@ func (l *jsCalls) scanFile(p, src string) hFile {
 		}
 	}
 	sc.build(hashLines, jsxExts[ext], markup)
+	sc.stimulusTargets()
 	return sc.f
 }
 
