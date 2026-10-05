@@ -113,9 +113,25 @@ function callsSummary(cg) {
 // file at a line (before: the line is in the base version); onMention, if
 // given, puts text into the composer; changedIn(f), if given, names the
 // conversation turn ({n, uuid, text}) that changed f, which onRevealTurn
-// scrolls to.
-function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
+// scrolls to. With onSelect(id), a click selects the function outside the
+// view (the Overview's inspector shows it), the selection comes back in
+// through setSelected, and the view draws no detail of its own.
+function createCallsView({ onOpen, onMention, changedIn, onRevealTurn, onSelect } = {}) {
   const root = el("div", { class: "calls" });
+  // The graph's scroll box is kept across renders, and its position across
+  // moves in the page (a re-attached box starts at the top): restore puts
+  // it back.
+  const scrollBox = el("div", { class: "overview-arch-scroll calls__scroll" });
+  const pos = { left: 0, top: 0 };
+  scrollBox.addEventListener("scroll", () => {
+    if (!scrollBox.isConnected) return;
+    pos.left = scrollBox.scrollLeft;
+    pos.top = scrollBox.scrollTop;
+  });
+  function restore() {
+    if (scrollBox.scrollLeft !== pos.left) scrollBox.scrollLeft = pos.left;
+    if (scrollBox.scrollTop !== pos.top) scrollBox.scrollTop = pos.top;
+  }
   let cg = null, ix = null;
   let focus = []; // focus stack: function IDs, innermost last
   let selected = null;
@@ -125,6 +141,7 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
 
   function reset() {
     cg = null; ix = null; focus = []; selected = null; expanded.clear();
+    pos.left = 0; pos.top = 0;
     root.replaceChildren();
   }
 
@@ -144,7 +161,15 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
   }
 
   function select(id) {
+    if (onSelect) { onSelect(id); return; }
     selected = selected === id ? null : id;
+    render();
+  }
+
+  // setSelected marks the function selected outside the view (or none).
+  function setSelected(id) {
+    if ((id || null) === selected) return;
+    selected = id || null;
     render();
   }
 
@@ -160,12 +185,14 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
     if (!view.center.length) {
       parts.push(el("div", { class: "overview__note", text: "No functions added, removed or changed." }));
     } else {
-      parts.push(el("div", { class: "overview-arch-scroll calls__scroll" }, [svg(view)]), legend());
+      scrollBox.replaceChildren(svg(view));
+      parts.push(scrollBox, legend());
     }
-    if (selected && ix.funcs.has(selected)) parts.push(detail(ix.funcs.get(selected)));
+    if (!onSelect && selected && ix.funcs.has(selected)) parts.push(detail(ix.funcs.get(selected)));
     const fl = findingsList();
     if (fl) parts.push(fl);
     root.replaceChildren(...parts);
+    restore();
   }
 
   function crumbs() {
@@ -432,5 +459,5 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
     return el("div", { class: "calls__findings" }, parts);
   }
 
-  return { el: root, update, reset, setFocus };
+  return { el: root, update, reset, setFocus, setSelected, restore };
 }

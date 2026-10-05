@@ -25,6 +25,18 @@ function createMap(overview) {
   const boxLayer = el("div", { class: "map__boxes" });
   canvas.append(svg, boxLayer);
   const scroll = el("div", { class: "map__scroll" }, [canvas]);
+  // A selection re-renders the page and moves this box, which then starts
+  // at the top: its position is kept here and put back after each draw.
+  const pos = { left: 0, top: 0 };
+  scroll.addEventListener("scroll", () => {
+    if (!scroll.isConnected) return;
+    pos.left = scroll.scrollLeft;
+    pos.top = scroll.scrollTop;
+  });
+  function restoreScroll() {
+    if (scroll.scrollLeft !== pos.left) scroll.scrollLeft = pos.left;
+    if (scroll.scrollTop !== pos.top) scroll.scrollTop = pos.top;
+  }
   canvas.addEventListener("click", (e) => { if (e.target === canvas || e.target === boxLayer) sel.select(null); });
 
   let width = 0;
@@ -76,15 +88,15 @@ function createMap(overview) {
     const fid = sel.focus();
     // The map and the lens each start at their top.
     const shows = M && fid && M.E.get(fid)?.type === "fn" ? "lens:" + fid : "map";
-    if (shows !== showing) { showing = shows; scroll.scrollTop = 0; scroll.scrollLeft = 0; }
+    if (shows !== showing) { showing = shows; pos.left = 0; pos.top = 0; }
     if (M && fid && M.E.get(fid)?.type === "fn") {
-      queueMicrotask(() => { width = scroll.clientWidth || width; draw(); });
+      queueMicrotask(() => { width = scroll.clientWidth || width; draw(); restoreScroll(); });
       return el("div", { class: "map" }, [lensBar(M, fid), scroll]);
     }
     const parts = [toolbar(viewSwitch)];
     if (M) parts.push(legend(M));
     parts.push(scroll);
-    queueMicrotask(() => { width = scroll.clientWidth || width; draw(); });
+    queueMicrotask(() => { width = scroll.clientWidth || width; draw(); restoreScroll(); });
     return el("div", { class: "map" }, parts);
   }
 

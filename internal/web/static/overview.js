@@ -112,6 +112,9 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
     // The prompt whose edit last changed a function (chat view only).
     changedIn: (f) => (withTranscript && mode !== "commits" && data?.root && f.status && !f.before ? turnForRange(trace, data.root, f.path, f.line, f.end || f.line) : null),
     onRevealTurn: revealTurn,
+    // A click selects the function, so the inspector shows its code,
+    // callers and callees.
+    onSelect: (id) => selection.select("fn:" + id),
   });
   let lastLoad = 0;
   let fetching = false; // a fetch of origin's base is running
@@ -415,12 +418,20 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
   }
 
   // The selection decides which sections are open, so a new one re-renders.
+  // It scrolls to the selection's section only when that section wasn't
+  // already open (a click inside an open section keeps the page where it is).
   selection.subscribe((what) => {
     if (what !== "select" && what !== "focus") return;
+    const cur = selCurrent(hist);
+    const M = getModel();
+    const sec = cur && M ? ovSection(M, cur) : null;
+    const wasOpen = !!sec && !!root.querySelector(`[data-sec="${sec}"].is-open`);
     manual = {};
     if (!data?.repo) return;
+    const top = panel.scrollTop;
     render();
-    requestAnimationFrame(revealSection);
+    if (wasOpen) panel.scrollTop = top;
+    else requestAnimationFrame(revealSection);
   });
 
   // selMark is the class a part of a section gets for the selection: the
@@ -945,7 +956,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
     } else {
       const sum = callsSummary(calls);
       if (sum) parts.push(el("div", { class: "overview__muted", text: sum }));
+      const cur = selCurrent(hist);
+      callsView.setSelected(cur?.startsWith("fn:") ? cur.slice(3) : null);
       parts.push(callsView.el);
+      // Moved into the new page, the graph's box starts at the top: put
+      // it back once it's in the document.
+      queueMicrotask(() => callsView.restore());
       const approx = calls.languages.filter((l) => !l.exact && l.units);
       if (approx.length) parts.push(el("div", { class: "overview-rules", text: `${approx.map((l) => LANG_LABEL[l.name] || l.name).join(", ")}: calls are inferred from names, so they're approximate (dotted).` }));
       if (calls.unparsed?.length) parts.push(el("div", { class: "overview-rules", text: `Not read (doesn't parse right now): ${calls.unparsed.join(", ")}` }));
