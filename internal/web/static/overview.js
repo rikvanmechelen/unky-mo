@@ -118,7 +118,6 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
   const trace = createIntentTrace(describeUser);
   let traceShown = -1; // trace.version last rendered
   let traceTimer = 0;
-  let selected = null; // {path, turn} of the trace cell whose detail is shown
   const agentsRead = new Map(); // subagent id → {at, done}
   const traceBox = el("div", { class: "overview-section" });
   let scope = null; // {sig, mode, result, at} of the last check, from localStorage
@@ -408,6 +407,28 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     requestAnimationFrame(revealSection);
   });
 
+  // selMark is the class a part of a section gets for the selection: the
+  // selected entity, one it relates to, or (with a selection) the rest.
+  function selMark(id) {
+    const cur = selCurrent(hist);
+    if (!cur) return "";
+    if (id === cur) return " is-selected";
+    const M = getModel();
+    if (!M) return "";
+    if (selMark.for !== cur || selMark.model !== M) { selMark.for = cur; selMark.model = M; selMark.set = ovRelated(M, cur); }
+    return selMark.set.has(id) ? " is-related" : " is-dim";
+  }
+
+  // selectable makes a node select id on click and open its diff on a
+  // double click.
+  function selectable(node, id, openID = id) {
+    node.addEventListener("click", () => selection.select(id));
+    node.addEventListener("dblclick", () => openEntity(openID, "diff"));
+    node.addEventListener("mouseenter", () => selection.hover(id));
+    node.addEventListener("mouseleave", () => selection.hover(null));
+    return node;
+  }
+
   // pageHead is the header: what's compared, notes, the verdict and the
   // counts. Once something is selected it shrinks to a sticky strip.
   function pageHead(M) {
@@ -537,8 +558,7 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
   function renderTrace() {
     traceShown = trace.version;
     const head = el("div", { class: "overview-section__head" }, [
-      el("h3", { text: "Intent trace" }),
-      el("span", { class: "overview__muted", text: "files by the prompt that first edited them" }),
+      el("span", { class: "overview__muted", text: "Files by the prompt that first edited them. A square is a prompt's edits to a file; a column number is the prompt." }),
     ]);
     if (!data?.files?.length) { traceBox.replaceChildren(); return; }
     const files = data.files.filter((f) => !hidden.has(f.kind));
@@ -551,8 +571,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     const headRow = el("tr", {}, [el("th", { class: "overview-trace__file", text: `${plural(traced, "file")} edited here` })]);
     for (const n of columns) {
       const th = el("th", { class: "overview-trace__turn" });
-      const b = el("button", { class: "overview-trace__turnbtn", type: "button", title: `${turnText(n)}\n\nJump to this prompt`, text: n === 0 ? "–" : String(n) });
-      b.addEventListener("click", () => jumpTo(n));
+      const b = el("button", { class: "overview-trace__turnbtn" + selMark("prompt:" + n), type: "button", title: turnText(n), text: n === 0 ? "–" : String(n) });
+      b.addEventListener("click", () => selection.select("prompt:" + n));
       th.appendChild(b);
       headRow.appendChild(th);
     }
@@ -561,19 +581,21 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       const label = g.turn === null ? "Not edited in this conversation (Bash, another session, or earlier)" : `${g.turn === 0 ? "Before the first prompt" : g.turn + ". " + oneLine(turnText(g.turn), 140)}`;
       body.appendChild(el("tr", { class: "overview-trace__group" + (g.turn === null ? " is-untraced" : "") }, [el("td", { colspan: String(columns.length + 1), title: g.turn ? turnText(g.turn) : "", text: label })]));
       for (const r of g.rows) {
-        const name = el("button", { class: "overview-trace__name", type: "button", title: `${r.f.path} — show changes`, text: r.f.path });
-        name.addEventListener("click", () => openDiff(r.f));
-        const tr = el("tr", { class: selected?.path === r.f.path ? "is-selected" : "" }, [el("td", { class: "overview-trace__file" }, [el("span", { class: "overview-trace__namewrap" }, [name, ...driftTag(r.f.path)])])]);
+        const fid = "file:" + r.f.path;
+        const name = selectable(el("button", { class: "overview-trace__name", type: "button", title: `${r.f.path} — click to inspect, double-click for the changes`, text: r.f.path }), fid);
+        const out = g.turn === null ? [el("i", { class: "overview-trace__out", title: "Not edited in this conversation" })] : [];
+        const tr = el("tr", { class: selMark(fid).trim() }, [el("td", { class: "overview-trace__file" }, [el("span", { class: "overview-trace__namewrap" }, [...out, name, ...driftTag(r.f.path)])])]);
         for (const n of columns) {
           const td = el("td", { class: "overview-trace__cell" });
           if (r.turns.has(n)) {
             const es = r.edits.filter((e) => e.turn === n);
+            const cid = cellID(r.f.path, n);
             const cell = el("button", {
-              class: "overview-trace__mark" + (es.every((e) => e.agent) ? " is-agent" : "") + (selected?.path === r.f.path && selected?.turn === n ? " is-selected" : ""),
+              class: "overview-trace__mark" + (es.every((e) => e.agent) ? " is-agent" : "") + (selCurrent(hist) === cid ? " is-selected" : ""),
               type: "button",
-              title: `${es.length} edit${es.length === 1 ? "" : "s"} in prompt ${n}${es.some((e) => e.agent) ? " (by a subagent)" : ""}`,
+              title: `${es.length} edit${es.length === 1 ? "" : "s"} in prompt ${n}${es.some((e) => e.agent) ? " (by a subagent)" : ""} — click for the reason`,
             });
-            cell.addEventListener("click", () => { selected = { path: r.f.path, turn: n }; renderTrace(); });
+            selectable(cell, cid, "file:" + r.f.path);
             td.appendChild(cell);
           }
           tr.appendChild(td);
@@ -582,35 +604,11 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       }
     }
     const table = el("table", { class: "overview-trace" }, [el("thead", {}, [headRow]), body]);
-    traceBox.replaceChildren(head, el("div", { class: "overview-trace-scroll" }, [table]), ...(selected ? [traceDetail(groups)] : []), el("div", { class: "overview-legend is-static" }, [
-      el("span", {}, [el("i", { class: "overview-trace__mark is-legend" }), document.createTextNode("edited in that prompt")]),
+    traceBox.replaceChildren(head, el("div", { class: "overview-trace-scroll" }, [table]), el("div", { class: "overview-legend is-static" }, [
+      el("span", {}, [el("i", { class: "overview-trace__mark is-legend" }), document.createTextNode("edited in that prompt (click for the reason)")]),
       el("span", {}, [el("i", { class: "overview-trace__mark is-agent is-legend" }), document.createTextNode("by a subagent")]),
+      el("span", {}, [el("i", { class: "overview-trace__out" }), document.createTextNode("not edited in this conversation")]),
     ]));
-  }
-
-  function traceDetail(groups) {
-    const row = groups.flatMap((g) => g.rows).find((r) => r.f.path === selected.path);
-    const es = row ? row.edits.filter((e) => e.turn === selected.turn) : [];
-    if (!es.length) { selected = null; return el("div"); }
-    const turn = trace.turns[selected.turn - 1];
-    const notes = [...new Set(es.map((e) => e.note).filter(Boolean))];
-    const jump = el("button", { class: "btn btn--small btn--primary", type: "button", text: "Jump to prompt" });
-    jump.addEventListener("click", () => jumpTo(selected.turn));
-    jump.disabled = !turn;
-    const diff = el("button", { class: "btn btn--small", type: "button", text: "Show changes" });
-    diff.addEventListener("click", () => openDiff(row.f));
-    const close = el("button", { class: "link-btn", type: "button", text: "Close" });
-    close.addEventListener("click", () => { selected = null; renderTrace(); });
-    return el("div", { class: "overview-why" }, [
-      el("div", { class: "overview-why__head" }, [
-        el("span", { class: "mono", text: selected.path }),
-        el("span", { class: "overview__muted", text: ` · ${es.length} ${es.map((e) => e.tool).filter((t, i, a) => a.indexOf(t) === i).join("/")} in prompt ${selected.turn}` + (es.some((e) => e.agent) ? " (subagent)" : "") }),
-        close,
-      ]),
-      ...(turn ? [el("div", { class: "overview-why__prompt", text: oneLine(turn.text, 400) })] : []),
-      ...notes.slice(-2).map((n) => el("div", { class: "overview-why__note" }, [el("span", { class: "overview__muted", text: "Claude, before the edit: " }), document.createTextNode(oneLine(n, 500))])),
-      el("div", { class: "overview-why__actions" }, [jump, diff]),
-    ]);
   }
 
   // --- Scope check ---
@@ -643,7 +641,7 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
 
   function scopeButton() {
     const key = ticketKey();
-    const b = el("button", { class: "btn btn--small", type: "button", text: scopeBusy ? "Checking…" : key ? `Check scope against ${key}` : "Check scope", title: "Ask Claude which files drift from what was asked (no tools; usually under a minute)" });
+    const b = el("button", { class: "btn btn--small btn--primary", type: "button", text: scopeBusy ? "Checking…" : key ? `Check scope against ${key}` : "Check scope", title: "Ask Claude which files drift from what was asked (no tools; usually under a minute)" });
     b.disabled = scopeBusy || !available;
     b.addEventListener("click", runScope);
     return b;
@@ -712,19 +710,18 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
         el("span", { class: "overview__muted", text: ` · checked ${when}` + scopeAgainst() }),
       ]),
       ...(scope.result.summary ? [el("div", { text: scope.result.summary })] : []),
-      ...(stale ? [el("div", { class: "overview__muted", text: "The change moved on since this check — run it again for an up-to-date answer." })] : []),
+      ...(stale ? [el("div", { class: "ov-note" }, [el("span", { class: "ov-note__text", text: "Out of date: the change moved on since this check." }), (() => { const b = el("button", { class: "ov-note__act", type: "button", text: "Run again" }); b.addEventListener("click", runScope); return b; })()])] : []),
     ];
     if (drift.length) {
-      parts.push(el("ul", { class: "overview-scope__list" }, drift.map((f) => {
-        const b = el("button", { class: "link-btn overview-violation__file", type: "button", text: f.path });
-        b.addEventListener("click", () => openDiff({ path: f.path }));
-        return el("li", {}, [b, document.createTextNode(` — ${f.reason}`)]);
-      })));
+      parts.push(el("div", { class: "overview-scope__list" }, drift.map((f) => selectable(el("button", { class: "overview-scope__row" + selMark("file:" + f.path), type: "button" }, [
+        el("span", { class: "overview-tag is-drift", text: "drift" }),
+        el("span", { class: "overview-scope__file" }, [el("span", { class: "mono", text: f.path }), el("span", { class: "overview__muted", text: f.reason })]),
+      ]), "file:" + f.path))));
       if (onDraftPrompt) {
         const ask = el("button", { class: "btn btn--small btn--primary", type: "button", text: "Ask Claude to split these out" });
         ask.title = "Puts a prompt in the message box; nothing is sent until you send it";
         ask.addEventListener("click", () => onDraftPrompt(splitPrompt(drift)));
-        parts.push(el("div", { class: "overview-why__actions" }, [ask]));
+        parts.push(el("div", { class: "overview-scope__actions" }, [ask, el("span", { class: "overview__muted", text: "Drafts a prompt in the message box. Nothing is sent." })]));
       }
     }
     return [el("div", { class: "overview-scope" + (drift.length ? " is-drift" : "") }, parts)];
@@ -733,9 +730,9 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
   // scopeBody is the Scope section: the check's button and its answer.
   function scopeBody() {
     return el("div", { class: "overview-section" }, [
-      el("div", { class: "overview-section__head" }, [
-        el("span", { class: "overview__muted", text: "Does every file fit what " + (withTranscript ? "was asked" : "the branch is for") + "? The one part that asks a model; it only runs when you click." }),
+      el("div", { class: "overview-scope__run" }, [
         scopeButton(),
+        el("span", { class: "overview__muted", text: "Does every file fit what " + (withTranscript ? "was asked" : "the branch is for") + "? The one part that asks a model. It only runs when you click." }),
       ]),
       ...scopeCard(),
     ]);
@@ -954,8 +951,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       ]),
       el("div", { class: "overview-section" }, [
         el("div", { class: "overview-section__head" }, [
-          el("h3", { text: areaFilter ? areaFilter : "Files by area" }),
-          ...(areaFilter ? [clearFilterBtn()] : []),
+          el("h3", { text: "Files by area" }),
+          ...(areaFilter ? [el("span", { class: "overview__muted" }, [document.createTextNode("Showing "), el("b", { text: areaFilter }), document.createTextNode(" here and in the Review list · "), clearFilterBtn()])] : []),
         ]),
         el("div", { class: "overview-files" }, fileGroups(sum)),
       ]),
@@ -987,7 +984,7 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     const rel = area !== "." && f.path.startsWith(area + "/") ? f.path.slice(area.length + 1) : f.path;
     const { dir, name } = splitPath(rel);
     const title = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-    const row = el("button", { class: "file-row overview-file" + (OVERVIEW_NOISE.has(f.kind) ? " is-noise" : ""), type: "button", title: `${title} — show changes` }, [
+    const row = el("button", { class: "file-row overview-file" + (OVERVIEW_NOISE.has(f.kind) ? " is-noise" : "") + selMark("file:" + f.path), type: "button", title: `${title} — click to inspect, double-click for the changes` }, [
       el("span", { class: "file-row__mark " + (FILE_MARK_CLASS[f.status] || ""), text: f.status }),
       el("span", { class: "file-row__name" }, [
         el("span", { class: "file-row__dir", text: dir }),
@@ -997,15 +994,16 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       ]),
       el("span", { class: "file-row__counts" }, fileCounts(f)),
     ]);
-    row.addEventListener("click", () => openDiff(f));
-    return row;
+    return selectable(row, "file:" + f.path);
   }
 
   // drawTreemap tiles the areas by changed lines, then each area's files
   // inside it, so one big area still shows where its lines are. Clicking an
-  // area's label filters the file list; clicking a file opens its diff.
+  // area's label filters the file list (and the Review list); clicking a
+  // file selects it.
   function drawTreemap() {
-    const sum = summarizeOverview(data);
+    // Kinds hidden from the list are hidden from the treemap too.
+    const sum = summarizeOverview({ ...data, files: (data.files || []).filter((f) => !hidden.has(f.kind)) });
     const W = tm.clientWidth, H = tm.clientHeight;
     lastSize = `${W}x${H}`;
     tm.setAttribute("aria-label", "Changed lines by area: " + sum.areas.map((a) => `${a.area} ${a.added + a.removed}`).join(", "));
@@ -1024,12 +1022,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
         const share = lines ? f.added / lines : 1;
         const cls = OVERVIEW_NOISE.has(f.kind) ? "is-noise" : share >= 0.6 ? "is-added" : share <= 0.4 ? "is-removed" : "is-mixed";
         const tile = el("button", {
-          class: `overview-tile ${cls}` + (fw < 40 || fh < 16 ? " is-tiny" : ""),
+          class: `overview-tile ${cls}` + (fw < 40 || fh < 16 ? " is-tiny" : "") + selMark("file:" + f.path),
           type: "button",
-          title: `${f.path} (${OVERVIEW_KIND_LABEL[f.kind].toLowerCase()}): +${f.added} −${f.removed} — show changes`,
+          title: `${f.path} (${OVERVIEW_KIND_LABEL[f.kind].toLowerCase()}): +${f.added} −${f.removed} — click to inspect, double-click for the changes`,
         }, [el("span", { text: splitPath(f.path).name })]);
         Object.assign(tile.style, { left: 1 + fx + "px", top: 1 + labelH + fy + "px", width: fw + "px", height: fh + "px" });
-        tile.addEventListener("click", () => openDiff(f));
+        selectable(tile, "file:" + f.path);
         box.appendChild(tile);
       }
       return box;
@@ -1240,7 +1238,6 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     resetTranscript() {
       trace.reset();
       agentsRead.clear();
-      selected = null;
       scheduleTrace();
     },
     setAvailable(ok) {

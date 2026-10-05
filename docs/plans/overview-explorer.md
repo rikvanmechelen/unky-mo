@@ -676,6 +676,35 @@ it over. A step gets its detailed plan in this doc before coding
   Review filter. Intent: matrix cells become selectable entities. Scope:
   ran-at / against / error / stale / drift / split. Then remove the old
   bodies (chips row, noise bar, trace table). `calls.js` stays (F8).
+
+  **F9 detail.** The sections' parts select entities instead of opening
+  diffs at once; the inspector then offers Diff / File. A double-click
+  still opens the diff.
+  - **Footprint:**
+    - The kinds bar and its legend (click a kind to hide it) now also hide
+      that kind's tiles in the treemap.
+    - An area label filters the Review list and Files by area (the shared
+      `areaFilter`), with "Showing X in the Review list · Show all areas".
+    - A tile or a row selects its file. The selected file's tile and row
+      are outlined, related ones marked, the rest dimmed when something is
+      selected.
+  - **Intent** (the matrix):
+    - A cell selects `cell:<path>|<n>`, which the inspector already
+      shows: the edits, the notes, the file's first change, Jump to prompt.
+      Today's inline cell detail (`traceDetail`) goes.
+    - A column number selects `prompt:<n>`; a file name selects the file.
+    - The selected cell, row and column are marked.
+    - The legend gains the yellow "not edited in this conversation" mark
+      for the untraced group's rows.
+  - **Scope:**
+    - Run button (primary) with the design's line ("The one part that
+      asks a model. It only runs when you click.").
+    - The answer: the summary, "Checked HH:MM against …", the ticket error,
+      "Out of date … Run again", and the drift files as rows that select
+      the file (with the reason). Then "Ask Claude to split these out".
+  - **Cleanup:** remove what nothing uses any more: `traceDetail` and
+    `selected`, and the `.overview-why*` and `.overview-violation*` CSS.
+
 - **F10. (Optional) Origin of untraced files**: scan the trace's Bash
   tool_use commands for the path, `git rm`, `go generate`/`go get`/`make
   mocks`, to say "git rm (Bash)" instead of "not edited in this
@@ -765,4 +794,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F8 built 2026-10-05; next: F9.
+backend) F1–F9 built 2026-10-05; next: F10.

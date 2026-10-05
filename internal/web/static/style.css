@@ -1432,12 +1432,6 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-sw.is-edge-bad { height: 3px; background: var(--red); }
 .overview-rules { font-size: 12px; color: var(--ink-3); }
 .overview-rules.is-error { color: var(--red); }
-.overview-violations { display: grid; gap: 6px; }
-.overview-violation { display: grid; gap: 2px; padding: 6px 10px; border-left: 3px solid var(--red); background: var(--diff-del-bg); font-size: 12.5px; }
-.overview-violation.is-fixed { border-left-color: var(--green); background: var(--diff-add-bg); }
-.overview-violation__edge { font-family: var(--font-mono); font-weight: 700; }
-.overview-violation__files { display: flex; flex-wrap: wrap; gap: 4px 12px; }
-.overview-violation__file { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
 
 /* Overview page (overview.js: pageHead, section): a header with the
    verdict, then sections that open where the selection is. Once something
@@ -1738,12 +1732,6 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-trace__mark.is-selected { outline: 2px solid var(--blue); outline-offset: 2px; }
 .overview-trace__mark:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .overview-trace__mark.is-legend { width: 14px; height: 10px; cursor: default; }
-.overview-why { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-top: 3px solid var(--claude); font-size: 13px; }
-.overview-why__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
-.overview-why__head .link-btn { margin-left: auto; font-size: 12px; }
-.overview-why__prompt { font-family: var(--font-mono); font-size: 12px; background: var(--surface); padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.overview-why__note { overflow-wrap: anywhere; }
-.overview-why__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .overview-strip { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--claude); font-size: 13px; }
 .overview-strip[hidden] { display: none; }
@@ -1771,7 +1759,28 @@ button.file-row.overview-file { padding: 3px 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .overview-scope.is-busy::after { animation: none; } }
 .overview-scope.is-error { border-color: var(--red); color: var(--red); }
-.overview-scope__list { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.overview-scope__list { display: grid; }
+.overview-scope__run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.overview-scope__row { all: unset; cursor: pointer; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); }
+.overview-scope__row:hover .mono { text-decoration: underline; }
+.overview-scope__row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.overview-scope__row.is-selected { background: var(--surface); }
+.overview-scope__row.is-dim { opacity: 0.5; }
+.overview-scope__file { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.overview-scope__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding-top: 4px; }
+.overview-trace__out { display: inline-block; flex: none; width: 10px; height: 10px; background: var(--yellow); vertical-align: middle; }
+.overview-trace__namewrap .overview-trace__out { margin-right: 6px; }
+.overview-trace tr.is-related td { background: var(--warn-bg); }
+.overview-trace tr.is-dim .overview-trace__name { color: var(--ink-4); }
+.overview-trace__turnbtn.is-selected { background: var(--ink); color: var(--paper); }
+.overview-trace__turnbtn.is-related { text-decoration: underline; }
+.overview-tile.is-selected { outline: 2px solid var(--ink); outline-offset: -2px; z-index: 1; color: var(--ink); }
+.overview-tile.is-related { outline: 2px dashed var(--ink-3); outline-offset: -2px; }
+.overview-tile.is-dim { opacity: 0.45; }
+.overview-file.is-selected, .overview-file.is-selected:hover { background: var(--ink); color: var(--paper); }
+.overview-file.is-selected .file-row__dir, .overview-file.is-selected .file-row__plus, .overview-file.is-selected .file-row__minus, .overview-file.is-selected .file-row__mark { color: var(--paper); }
+.overview-file.is-related { box-shadow: inset 3px 0 0 var(--ink); }
+.overview-file.is-dim { opacity: 0.45; }
 
 /* Reviewer view (branch.html): the chat view's middle column on its own. */
 .branch-shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--paper); }
