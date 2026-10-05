@@ -255,7 +255,10 @@ function renderQuestionBanner(tool, input, onAnswer) {
 function renderPermissionBanner(data, onAnswer, opts = {}) {
   const frag = document.createDocumentFragment();
   const dialog = data && data.dialog;
-  const content = permissionContent(data && data.tool, data && data.input);
+  // Without a tool call that matches the dialog, what the dialog itself
+  // shows of the call (its lines on screen) stands in.
+  const content = permissionContent(data && data.tool, data && data.input)
+    || (dialog && dialog.preview ? { kind: "screen", text: dialog.preview } : null);
 
   frag.appendChild(el("div", { class: "question-banner__tool", text: (dialog && dialog.title) || (data && data.tool) || "Permission" }));
   frag.appendChild(el("div", { class: "question-banner__question", text: dialog ? dialog.question : "Claude is waiting for permission." }));
@@ -301,6 +304,10 @@ function renderPermissionBanner(data, onAnswer, opts = {}) {
         break;
       case "plan":
         box.appendChild(el("div", { class: "permission-content__plan" }, [renderMarkdown(content.plan)]));
+        break;
+      case "screen":
+        box.appendChild(el("pre", { class: "permission-content__mono", text: content.text }));
+        box.appendChild(el("div", { class: "permission-content__desc", text: "As shown in the terminal." }));
         break;
       default:
         box.appendChild(el("pre", { class: "permission-content__mono", text: content.text }));

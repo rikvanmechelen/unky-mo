@@ -1,6 +1,6 @@
 # Answering permission prompts from the web
 
-**Status:** planned, 2026-10-05. Nothing built yet. The status fix it builds on (a permission prompt that was open across a TUI restart now reads `permission` through `claude agents --json`) is committed as `f9868e6`.
+**Status:** built on main, 2026-10-05: steps 1–5 below, checked end to end against a throwaway Claude Code 2.1.289 session (step 5). The status fix it builds on (a permission prompt that was open across a TUI restart now reads `permission` through `claude agents --json`) is committed as `f9868e6`.
 
 ## Goal
 
@@ -286,3 +286,32 @@ When nothing matches and `planFile` is set, `readPlanFile` serves `{plan, planFi
 
 - `jstests/permission_model.test.js`: every kind, `editRows` (shared lines as context, a gap past 3, a pure insert, an empty old string, the cap), `choiceTone` on the probed labels.
 - The banner by hand on a real prompt (step 5).
+
+## Step 5 in detail: end to end, then docs
+
+### End to end (by hand, isolated)
+
+- **A tmux server of its own:** `TMUX_TMPDIR` points at a scratch directory, so its default socket isn't yours. On it, a session named `mo` runs a throwaway `claude --setting-sources project --strict-mcp-config` in a temp git repo, in manual mode, so no unky-mo hook fires and your TUI never sees it.
+- **A temporary `mo web`** with the same `TMUX_TMPDIR` and `TMUX` unset, a config in a scratch `XDG_CONFIG_HOME` (`tmux_session = "mo"`, `disable_tls`, `state_file_path` = a scratch file), on a free loopback port. The state file is written by hand (the TUI isn't involved): one row with the window id, the session id, `status: "permission"` and the pending tool. Hand-written, since no hook runs.
+- **In the browser**, for each dialog:
+  - Bash: answer "No" with text, check Claude retries with it; then "Yes".
+  - Edit: answer "Yes" with text, check the edit lands and the text arrives as the next prompt.
+  - Plan approval: send feedback, check Claude revises; then approve with feedback.
+  - Each time, check the terminal shows the answer the web gave.
+- Afterwards: kill the tmux server and the web server, and remove the scratch config.
+
+### Docs
+
+- **`CLAUDE.md`:** the web dashboard paragraph now says permission prompts are answered from the browser (`/permission`, `permission.go`, `permission-model.js`) instead of "feasible but not built". A sentence next to the question banner's describes the permission banner.
+- **`session-detection.md`:** the line about answering permission dialogs from the browser being feasible but not built.
+- **`testing.md`:** `permission_test.go` (fixtures, matching, plan file, the fake dialog's answers and refusals) and `permission_model.test.js`.
+- **This plan's status line:** built, with the date.
+
+### Step 5 results
+
+- Answered from the browser, against a throwaway session on its own tmux server, through a temporary `mo web` (port 7911, hand-written state file):
+  - Bash: "No" with text, then Claude retried as told; "Yes" by click; "No" by the `4` key, which ended the turn.
+  - Edit: "Yes" with text, then the edit landed and the text came in as the next prompt.
+  - Plan: feedback, then Claude revised the plan (the banner picked up the new plan file contents); then "Approve with this feedback", which ran it in auto mode.
+- **Correction to step 1:** the Bash call Claude retried after the "No, and tell Claude…" answer was *not* in the transcript while its dialog was open. So transcript recovery is best effort for any tool, not just ExitPlanMode.
+- **Added:** `dialog.preview`, the dialog's own lines on screen (title, dashed rules and tips left out). The banner shows it ("As shown in the terminal.") when no tool call matches. Tested on the fixtures and checked live.

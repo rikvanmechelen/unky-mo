@@ -88,6 +88,24 @@ func TestParsePermissionDialogFixtures(t *testing.T) {
 	}
 }
 
+// The browser's fallback content: what the dialog shows of the call.
+func TestPermissionDialogShownPreview(t *testing.T) {
+	for file, want := range map[string]string{
+		"bash.txt":         "Write \"probe\" to out.txt\necho probe > out.txt",
+		"edit.txt":         "notes.txt\n1  hello\n2 -world\n2 +there",
+		"webfetch.txt":     "Claude wants to fetch content from example.com\nurl: https://example.com/\nprompt: What is the title of this page?",
+		"read-outside.txt": "Read(/etc/hostname)",
+	} {
+		if got := parsePermissionDialog(readFixture(t, file)).shown; got != want {
+			t.Errorf("%s: shown = %q, want %q", file, got, want)
+		}
+	}
+	plan := parsePermissionDialog(readFixture(t, "plan.txt")).shown
+	if !strings.HasPrefix(plan, "Here is Claude's plan:\nAdd \"bye\" to notes.txt") {
+		t.Errorf("plan: shown = %q", plan)
+	}
+}
+
 func TestParsePermissionDialogNotAPrompt(t *testing.T) {
 	idle := rule + "\n❯ \n" + rule + "\n  ⏸ manual mode on · ? for shortcuts\n"
 	ask := newFakeDialog([]questionSpec{spec("Which pet?", false, "Cat", "Dog")}).screen()
@@ -354,8 +372,8 @@ func TestGetPermission(t *testing.T) {
 
 	// A parallel call's command: the dialog isn't about it.
 	srv = permissionServer(t, permissionRow("permission", "Bash", `{"command":"rm -rf build"}`), newFakeBash())
-	if _, got := getPermission(t, srv); got.Tool != "" || got.Input != nil || got.Dialog == nil {
-		t.Errorf("unmatched call shown: %+v", got)
+	if _, got := getPermission(t, srv); got.Tool != "" || got.Input != nil || got.Dialog == nil || got.Dialog.Preview != "echo probe > out.txt" {
+		t.Errorf("unmatched call shown, or no screen preview: %+v", got)
 	}
 	if len(d.keys) != 0 {
 		t.Errorf("GET pressed keys %q", d.keys)

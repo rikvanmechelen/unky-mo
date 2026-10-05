@@ -16,16 +16,17 @@ const pendingTailBytes = 1 << 20
 // JSONL transcript: the newest tool_use with no tool_result after it, in
 // the current turn — of an interactive tool (see isInteractiveTool) for a
 // question, of any tool for a permission prompt. Claude Code (2.1.289)
-// writes the assistant line carrying the tool_use before it opens the
-// dialog, so the call is on disk while it waits — this is how a question
-// or permission prompt survives a TUI restart, or a dropped hook, which
-// would otherwise leave only `claude agents`' content-less status. The
-// input is the tool_use's own, the same shape the hook forwards. ok is
-// false when there's no such call: ExitPlanMode's call is sometimes only
-// written once it's answered, and a future Claude Code that stops writing
-// calls early just falls back to the content-less status. With parallel
-// calls open, the newest wins; it may not be the one the dialog asks
-// about, which the web checks against the screen.
+// usually writes the assistant line carrying the tool_use before it
+// opens the dialog, so the call is on disk while it waits — this is how a
+// question or permission prompt survives a TUI restart, or a dropped
+// hook, which would otherwise leave only `claude agents`' content-less
+// status. The input is the tool_use's own, the same shape the hook
+// forwards. ok is false when there's no such call: some calls
+// (ExitPlanMode, a call retried after a rejection) are only written once
+// answered, and a future Claude Code that stops writing calls early just
+// falls back to the content-less status. With parallel calls open, the
+// newest wins; it may not be the one the dialog asks about, which the web
+// checks against the screen.
 func ReadPendingTool(path string, interactiveOnly bool) (tool string, input json.RawMessage, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {

@@ -84,6 +84,10 @@ type permView struct {
 	title    string
 	question string
 	preview  string // the lines above the question: title, tool preview
+	// shown is the preview as the browser gets it: no title, dashed rules
+	// or tips — what the dialog shows of the call, for when the state
+	// file has no matching content.
+	shown    string
 	rows     []permRowView
 	cursor   int // the row the ❯ is on
 	tabAmend bool
@@ -177,6 +181,14 @@ func parsePermissionDialog(screen string) permView {
 		v.title = above[0]
 	}
 	v.preview = strings.Join(above, "\n")
+	var shown []string
+	for i, l := range above {
+		if i == 0 || strings.Trim(l, "╌") == "" || strings.HasPrefix(l, "Tip:") {
+			continue
+		}
+		shown = append(shown, l)
+	}
+	v.shown = strings.Join(shown, "\n")
 
 	var footer []string
 	for _, l := range block[first:] {
@@ -313,6 +325,7 @@ func (s *Server) permissionRow(windowID string) (state.ProjectState, bool, error
 
 type permDialogJSON struct {
 	Title    string        `json:"title"`
+	Preview  string        `json:"preview"`
 	Question string        `json:"question"`
 	Rows     []permRowView `json:"rows"`
 	Sig      string        `json:"sig"`
@@ -348,7 +361,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		Dialog *permDialogJSON `json:"dialog"`
 	}{}
 	if v.found {
-		resp.Dialog = &permDialogJSON{Title: v.title, Question: v.question, Rows: v.rows, Sig: v.sig()}
+		resp.Dialog = &permDialogJSON{Title: v.title, Preview: v.shown, Question: v.question, Rows: v.rows, Sig: v.sig()}
 		if pendingMatches(row.PendingTool, row.PendingInput, v) {
 			resp.Tool, resp.Input = row.PendingTool, row.PendingInput
 		} else if v.planFile != "" {
