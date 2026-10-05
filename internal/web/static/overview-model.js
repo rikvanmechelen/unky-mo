@@ -902,6 +902,52 @@ function ovSectionSummaries(M, { scope = "idle", stale = false, hidden = 0, area
   };
 }
 
+// ovCallWords describes a call in words: whether the change adds or drops
+// it, and how it calls (["new", "via interface"]).
+function ovCallWords(c) {
+  const out = [c.op === "+" ? "new" : c.op === "-" ? "removed" : "existing"];
+  if (c.kind === "ref") out.push("passed as a value");
+  else if (c.kind === "dynamic") out.push("via interface");
+  else if (c.kind === "approx") out.push("inferred from names");
+  return out;
+}
+
+// ovFindingTitle is a finding as a sentence ("Summarize removed but still
+// called"); a renamed function's old name says so.
+function ovFindingTitle(M, f) {
+  const fn = f.fnId ? M.E.get(f.fnId) : null;
+  if (f.renamed && fn) return `${fn.name} was renamed from ${f.func.split(/[./#:]/).pop()}, but the old name is still called`;
+  return `${fn?.name || f.func} ${CALL_FINDING_TEXT[f.kind] || f.kind}`;
+}
+
+// ovFixPrompt is what "Ask Claude to fix" puts in the message box for a
+// finding or an import that breaks a rule (never sent by itself), or "".
+function ovFixPrompt(M, id) {
+  const e = M.E.get(id);
+  if (!e) return "";
+  const at = (t) => `${t.path}:${t.line}`;
+  if (e.type === "imp" && e.kind === "broken") {
+    const where = e.files.map(at).join(", ");
+    return `${e.from} now imports ${e.to}${where ? ` (${where})` : ""}, which breaks a layer rule: ${e.violation}. Please change it so the rule holds.`;
+  }
+  if (e.type === "fn") {
+    const f = e.findings.map((x) => M.E.get(x)).find((x) => x.sev !== "fold");
+    return f ? ovFixPrompt(M, f.id) : "";
+  }
+  if (e.type !== "find") return "";
+  const fn = e.fnId ? M.E.get(e.fnId) : null;
+  const def = fn?.path ? ` (${fn.path}:${fn.line})` : "";
+  const sites = e.sites.length ? ` It's used at ${e.sites.slice(0, 8).map(at).join(", ")}${e.sites.length > 8 ? " and more" : ""}.` : "";
+  const sig = e.kind === "signature-callers" && fn?.sig ? ` The signature is now \`${fn.sig}\`${fn.oldSig ? `, was \`${fn.oldSig}\`` : ""}.` : "";
+  return `${ovFindingTitle(M, e)}${def}.${sig}${sites} Please fix it.`;
+}
+
+// ovFirstChange is the index of the first added or removed row of an
+// excerpt's rows, or -1.
+function ovFirstChange(rows) {
+  return (rows || []).findIndex((r) => r.sign === "+" || r.sign === "-");
+}
+
 // ── Selection history ──────────────────────────────────────────
 // {stack, at}: the selections made, and where Back/Forward stand. null is
 // "nothing selected", a step of its own so Back can return to it.
@@ -956,6 +1002,6 @@ if (typeof module === "object" && module.exports) {
     createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, archGraph, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
-    ovSectionSummaries, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
+    ovSectionSummaries, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }

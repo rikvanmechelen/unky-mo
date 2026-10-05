@@ -457,6 +457,65 @@ it over. A step gets its detailed plan in this doc before coding
   in Chat (`revealTurn`), Mark reviewed. It keeps today's extras:
   Implementations / Implements, unresolved count, a reference's `label`,
   "N more callers", subagent edits.
+
+  **F5 detail.**
+  - **`overview` gains:**
+    - `excerpt(path, line, {side, end, ctx})`: a Promise of B1's answer,
+      with the tab's mode params, cached per overview ETag. `peekExcerpt`
+      gives the cached value synchronously, so a re-render doesn't flicker.
+    - `revealPrompt(n)`, `mention(text)` and `draft(text)`, each null when
+      the page can't do it (the reviewer view has no chat to draft in).
+  - **Blocks** (`inspector.js`):
+    - Chips (red / warn / green / plain / mono).
+    - Alert bars (red / warn / note edge).
+    - Signature before/after (`sig`, `oldSig`).
+    - Code block: a title, a head with `path:line` and Diff / File, and
+      rows from `excerpt` (line numbers of the side asked for, +/- tint,
+      the focus line marked). Bones until it lands, "Not available" on an
+      error or a binary file.
+    - "Why" block: prompt number (selects the prompt), its text, Claude's
+      note in quotes.
+    - Related list: mark or square, name (selects), a sub-line, and for
+      call sites the call's own line (`excerpt` ctx 0, first 8 rows) with
+      Peek (ctx 3, per selection and site) / Diff / File.
+    - Action buttons.
+  - **Per type,** following the design's `inspector()` on our data:
+    - **Function:** status and test chips (`testedBy` "Reached by X (via
+      Y)", or "No test reaches it" with an `untested` finding);
+      findings as alerts; unresolved note; signature; definition (`line ..
+      min(end, line+10)`, old side when removed); Implementations /
+      Implements; Called by (+ "N more"); Calls with their sites, kinds and
+      `label`; Contracts; Why it changed (`turn` → prompt + that file's
+      notes).
+      Actions: Focus, Diff, File, Mention in prompt, Ask Claude to fix
+      (with a red/warn finding).
+    - **Call:** kind chips + label; findings; where the caller makes it
+      (site, old side when removed); where the callee is defined;
+      caller/callee; findings.
+    - **Import:** kind chip; rule / fixed / approximate alerts; the import
+      line; other sites; calls across it (same units); the two packages;
+      Ask Claude to fix when broken.
+    - **File:** dir, status, kind, +/−, drift alert; first change (the first
+      +/- row of `excerpt(path, 1, end 400, ctx 0)`, then ±3 around it);
+      functions in it; Edited by (prompts with notes) or "Not edited in
+      this conversation"; contracts.
+    - **Package:** status, layer, language; imports / imported by (changed
+      ones); functions (changed first, 14 + "N more"); changed files.
+    - **Contract:** op chip, detail; where it's defined; "Who relies on it":
+      the defining function's callers; defined in.
+    - **Finding:** severity kicker, sentence title; signature for
+      `signature-callers`; the first site's code, more sites as a list;
+      the function (or what was removed); Ask Claude to fix.
+    - **Prompt:** text; files it edited (edits, subagent, note); functions
+      it changed; Jump to prompt in Chat.
+    - **Cell:** edit count, subagent, the notes, the file's first change,
+      the file and the prompt.
+  - **Pure helpers in the model file (Node-tested):** `ovCallWords(call)`
+    (new / removed / existing, as a value, via interface, inferred),
+    `ovFindingTitle(M, find)`, `ovFixPrompt(M, id)` (what "Ask Claude to
+    fix" drafts: the problem, the places, "Please fix it."),
+    `ovFirstChange(rows)`.
+
 - **F6. Review tab** in the Files panel (`files.js` gets a `review` mode,
   rows from `reviewQueue`). It exists **only while the Overview tab is
   active** (decided). Opening the Overview switches the panel to Review, and
@@ -577,4 +636,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F4 built 2026-10-05; next: F5.
+backend) F1–F5 built 2026-10-05; next: F6.

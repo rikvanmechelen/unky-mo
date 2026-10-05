@@ -258,3 +258,24 @@ test("section summaries", () => {
   assert.equal(bare.map.summary, "reading packages… · reading calls…");
   assert.equal(bare.scope.summary, "Not checked yet");
 });
+
+test("inspector helpers", () => {
+  const M = alarm();
+  assert.deepEqual(m.ovCallWords({ op: "+", kind: "dynamic" }), ["new", "via interface"]);
+  assert.deepEqual(m.ovCallWords({ op: "", kind: "ref" }), ["existing", "passed as a value"]);
+  const removed = M.order.find[0];
+  assert.equal(m.ovFindingTitle(M, M.E.get(removed)), "Summarize removed but still called");
+  assert.equal(m.ovFixPrompt(M, removed), "Summarize removed but still called (internal/web/summary.go:12). It's used at cmd/mo/report.go:44. Please fix it.");
+  const sig = M.order.find[1];
+  assert.match(m.ovFixPrompt(M, sig), /The signature is now `func NewServer\(cfg Config, poll time.Duration\) \*Server`, was `func NewServer\(cfg Config\) \*Server`\./);
+  assert.equal(m.ovFixPrompt(M, "fn:internal/web.NewServer"), m.ovFixPrompt(M, sig), "a function drafts its finding's fix");
+  assert.match(m.ovFixPrompt(M, "imp:internal/web>internal/tui|+"), /^internal\/web now imports internal\/tui \(internal\/web\/handlers_overview.go:9\), which breaks a layer rule: web must not import internal\/tui\./);
+  assert.equal(m.ovFixPrompt(M, "file:docs/overview.md"), "");
+  // A renamed function's old name, still called.
+  const r = m.buildModel({ ...alarmInputs(), calls: { ...alarmInputs().calls, findings: [{ kind: "removed-called", func: "internal/tui.renderBadge", sites: [{ path: "x.go", line: 3 }] }] } });
+  const f = r.E.get("find:0");
+  assert.equal(f.fnId, "fn:internal/tui.RenderBadge");
+  assert.equal(m.ovFindingTitle(r, f), "RenderBadge was renamed from renderBadge, but the old name is still called");
+  assert.equal(m.ovFirstChange([{ sign: " " }, { sign: "-" }, { sign: "+" }]), 1);
+  assert.equal(m.ovFirstChange([{ sign: " " }]), -1);
+});

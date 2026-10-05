@@ -1160,10 +1160,11 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     }));
   }
 
-  // openEntity opens where id is: its diff ("diff") or the file ("file"),
-  // at its line when that line is in the new version.
+  // openEntity opens where id is (an entity id, or a place {path, line,
+  // side}): its diff ("diff") or the file ("file"), at its line when that
+  // line is in the new version.
   function openEntity(id, how = "diff") {
-    const w = ovWhere(getModel(), id);
+    const w = typeof id === "object" ? id : ovWhere(getModel(), id);
     if (!w?.path || !data) return;
     const line = w.side === "new" && w.line ? w.line : undefined;
     if (how === "file" && w.side === "new") onOpenFile?.(w.path, line);
@@ -1176,10 +1177,51 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     else onOpenDiff?.(f.path, data.mode === "branch" ? "bdiff" : "diff", line);
   }
 
+  // modeQuery is the change the tab shows, as query parameters.
+  function modeQuery() {
+    const ids = selIDs();
+    return mode !== "commits" ? `base=${mode}` : `base=commits${ids ? "&commits=" + ids : ""}${selWorktree() ? "&worktree=1" : ""}`;
+  }
+
+  // Excerpts (a few lines of a file as the change shows them) are cached
+  // per overview version: a new /overview body starts afresh.
+  const excerpts = new Map(); // key → {promise, value}
+  let excerptsFor = "";
+  function excerptKey(path, line, { side = "new", end = 0, ctx = 3 } = {}) {
+    return [path, line, side, end, ctx].join("|");
+  }
+  function excerptCache() {
+    const v = `${gen}|${etag}`;
+    if (v !== excerptsFor) { excerpts.clear(); excerptsFor = v; }
+    return excerpts;
+  }
+  function excerpt(path, line, opts = {}) {
+    const cache = excerptCache();
+    const key = excerptKey(path, line, opts);
+    if (cache.has(key)) return cache.get(key).promise;
+    const { side = "new", end = 0, ctx = 3 } = opts;
+    const q = new URLSearchParams({ path, line: String(Math.max(1, line || 1)), side, ctx: String(ctx) });
+    if (end) q.set("end", String(end));
+    const entry = { value: undefined };
+    entry.promise = fetch(`${api}/excerpt?${modeQuery()}&${q}`, { cache: "no-store" })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || String(res.status));
+        entry.value = body;
+        return body;
+      })
+      .catch((err) => { entry.value = null; cache.delete(key); throw err; });
+    cache.set(key, entry);
+    return entry.promise;
+  }
+  // peekExcerpt is a cached excerpt, or undefined while it loads.
+  function peekExcerpt(path, line, opts = {}) {
+    return excerptCache().get(excerptKey(path, line, opts))?.value;
+  }
+
   // get fetches one endpoint with If-None-Match: null when unchanged.
   async function get(what, tag) {
-    const ids = selIDs();
-    const q = mode !== "commits" ? `base=${mode}` : `base=commits${ids ? "&commits=" + ids : ""}${selWorktree() ? "&worktree=1" : ""}`;
+    const q = modeQuery();
     const res = await fetch(`${api}/${what}?${q}`, {
       headers: tag ? { "If-None-Match": tag } : {}, cache: "no-store",
     });
@@ -1265,6 +1307,15 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     model: getModel,
     selection,
     open: openEntity,
+    excerpt,
+    peekExcerpt,
+    // What the inspector can do beyond showing: each null where the page
+    // can't (the reviewer view has no chat, and Selected mode no trace).
+    revealPrompt: (n) => jumpTo(n),
+    canRevealPrompt: () => !!revealTurn && withTranscript,
+    mention: onMention ? (text) => onMention(text) : null,
+    draft: onDraftPrompt ? (text) => onDraftPrompt(text) : null,
+    mode: () => data?.mode || mode,
     toggleKind,
     hiddenKinds: () => hidden,
     // available reports whether the tab has a change to show.
