@@ -304,12 +304,15 @@ func newHResolver(l hLang, idx *index) *hResolver {
 	if x, ok := l.(hExtra); ok {
 		extra = x.extraDefs(idx)
 	}
+	var owned []string
 	for _, p := range idx.paths {
-		if !l.owns(p) {
-			continue
+		if l.owns(p) {
+			owned = append(owned, p)
 		}
-		v := idx.symbols(key(p), p, func(src string) any { f := l.scanFile(p, src); return &f })
-		f, _ := v.(*hFile)
+	}
+	scans := idx.symbolsMany(owned, key, func(p, src string) any { f := l.scanFile(p, src); return &f })
+	for i, p := range owned {
+		f, _ := scans[i].(*hFile)
 		if f == nil {
 			continue
 		}

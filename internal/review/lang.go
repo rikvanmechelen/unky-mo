@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -228,6 +229,53 @@ func (x *index) symbols(lang, p string, extract func(src string) any) any {
 		symCache.put(lang+"\x00"+oid, v)
 	}
 	return v
+}
+
+// symbolsMany is symbols for several files, under lang(p) each: the
+// files are read one after another, but those not cached are extracted in
+// parallel, so extract must be safe to run concurrently (a pure function
+// of the path and source, as every scanFile is). A file that can't be read
+// is nil.
+func (x *index) symbolsMany(paths []string, lang func(p string) string, extract func(p, src string) any) []any {
+	out := make([]any, len(paths))
+	type job struct {
+		i   int
+		src string
+	}
+	var jobs []job
+	for i, p := range paths {
+		if oid := x.blobs[p]; oid != "" {
+			if v, ok := symCache.get(lang(p) + "\x00" + oid); ok {
+				out[i] = v
+				continue
+			}
+		}
+		if src := x.read(p); src != nil {
+			jobs = append(jobs, job{i, *src})
+		}
+	}
+	next := make(chan job)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), len(jobs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range next {
+				out[j.i] = extract(paths[j.i], j.src)
+			}
+		}()
+	}
+	for _, j := range jobs {
+		next <- j
+	}
+	close(next)
+	wg.Wait()
+	for _, j := range jobs {
+		if oid := x.blobs[paths[j.i]]; oid != "" {
+			symCache.put(lang(paths[j.i])+"\x00"+oid, out[j.i])
+		}
+	}
+	return out
 }
 
 // cached reports whether symbols(lang, p, …) would be served from the
