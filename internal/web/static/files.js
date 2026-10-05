@@ -6,7 +6,8 @@
 // Data comes from /api/sessions/{windowID}/files and /tree (gitfiles).
 // A changed file calls onOpenDiff(path) and a file in the tree onOpen(path);
 // the chat view opens an editor tab for either. Uses el() from common.js.
-// The graph's callbacks (onOpenCommitFile, onMention) are passed through.
+// The graph's callbacks (onOpenCommitFile, onMention, onSelectionChange,
+// onShowSelection) are passed through.
 
 const FILE_MARK_CLASS = { M: "is-mod", R: "is-mod", A: "is-add", "?": "is-add", D: "is-del", U: "is-del" };
 const FILES_POLL_MS = 3000;
@@ -55,7 +56,7 @@ function buildTree(paths) {
   return root;
 }
 
-function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention, onCount } = {}) {
+function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention, onCount, onSelectionChange, onShowSelection } = {}) {
   const tabs = pane.querySelectorAll(".files-tab");
   const countEl = pane.querySelector("#files-count");
   const list = pane.querySelector("#files-list");
@@ -65,6 +66,8 @@ function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention
     onOpenCommitFile,
     onMention,
     onShowChanges: () => setMode("changed"),
+    onSelectionChange,
+    onShowSelection,
   });
 
   let windowID = null;
@@ -250,6 +253,10 @@ function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention
   setInterval(() => refresh(false), FILES_POLL_MS);
 
   return {
+    // clearSelection empties the Git log tab's commit selection.
+    clearSelection: () => graph.clearSelection(),
+    // showGraph switches the panel to the Git log tab.
+    showGraph: () => setMode("graph"),
     // root is the checkout's repo root, once the first /files poll is in
     // (the editor's paths are relative to it).
     root() {

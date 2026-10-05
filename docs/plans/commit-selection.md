@@ -254,3 +254,64 @@ New file `handlers_selection_test.go`:
 - `SelectionError` → 422 with its message; `ErrUnknownCommit` → 404.
 - `/file?rev=sel-head` and `rev=sel-base` read the head and base (base under a rename's old path), are read-only, and a path outside the selection's files is a 404 with no `ReadAt`.
 - `ttlCache` pruning: past 128 keys, expired entries go and fresh ones stay.
+
+## Step 3 in detail: selecting in the Git log tab
+
+All in `static/graph.js` + `style.css`; `files.js` only passes the new callbacks and methods through. The Overview side (what "Show in Overview" does) is step 4. Until then, chat.js passes no handler, so the button is hidden.
+
+### State (inside `createGraphView`)
+
+- `selected`: a Set of hashes; `anchor`: the hash of the last row clicked without Shift (or `null`).
+- Cleared on `setWindow`. Kept across log polls and scope switches, but hashes no longer in `log.commits` are dropped on each new log (a rebase, or switching to "This branch" when the commit is only on another branch).
+- Part of `renderIfChanged`'s key, so a change redraws.
+
+### Pointer rules (the row's click handler gets the event)
+
+- **Plain click:** as today (expand/collapse; the pseudo row shows the changed files) and sets `anchor`. The selection is left alone.
+- **Ctrl/Cmd-click** (`ctrlKey || metaKey`): toggles the row in `selected`, sets `anchor`, doesn't expand.
+- **Shift-click:** replaces the selection with the commit rows from `anchor` to this row in display order (Ctrl/Cmd+Shift adds them instead). With no anchor, it selects just this row and makes it the anchor. Doesn't expand.
+- The "Uncommitted changes" row can't be selected: modified clicks on it are ignored, and ranges skip it.
+- `mousedown` with Shift or Ctrl/Cmd calls `preventDefault()`, so the browser doesn't select text across rows (and Firefox's Ctrl-click table selection stays out of it).
+
+### Keyboard (on a focused row)
+
+- ↑/↓ move focus to the previous/next row, so the list can be walked without Tab. Shift+↑/↓ also moves and selects from `anchor` to the newly focused row (setting the anchor first if there is none).
+- Ctrl/Cmd+Space toggles the focused row; plain Space/Enter keep expanding (they're the button's default).
+- Esc, with focus anywhere in the tab, clears the selection.
+
+### Accessibility
+
+The rows stay buttons (they expand), so `listbox`/`aria-selected` don't apply. A selected row gets `aria-pressed="true"` (a toggle state screen readers announce) next to `aria-expanded`, and the selection bar is an `aria-live="polite"` region that announces "3 commits selected".
+
+### Selection bar
+
+It sits between the scope switch and the rows, only while something is selected:
+
+```
+3 commits · 1a2b3c4..9f8e7d6            Show in Overview   Clear
+Not consecutive: 5d6e7f8 isn't selected
+```
+
+- The label is `1 commit · 1a2b3c4`, or `N commits · <oldest>..<newest>` in display order.
+- **Show in Overview** only appears when the view got an `onShowSelection` handler (step 4 provides it). It's disabled, with the reason on its own line below, while `selectionProblem` reports one.
+- **Clear** empties the selection.
+
+### `selectionProblem(commits, selected)`
+
+A pure, top-level function (testable later), mirroring the server's rules over the parents the log already has. The server stays the authority: commits beyond the log's limit are unknown here, and the browser only rejects what it can prove.
+
+1. A selected commit without parents → "the first commit can't be compared with anything before it".
+2. Tips (selected commits no other selected commit has as a parent): if several, walk parents from each tip through the loaded log. If no tip reaches all the others → "on different branches".
+3. Boundary = parents of selected commits that aren't selected. A boundary commit from which a selected commit is reachable sits between selected commits → "not consecutive: <short> isn't selected".
+4. More than one boundary → a merge whose other side isn't selected → "the merge <short> brings in <short>, which isn't selected".
+
+### Callbacks and methods
+
+- `onSelectionChange(selection)` after every change, including drops on poll; `onShowSelection(selection)` from the button. `selection` is `[{hash, subject}]` newest first (display order), so the Overview can name what it shows without its own log.
+- `clearSelection()` for the Overview's ×.
+- `createFilesPane` passes `onSelectionChange`/`onShowSelection` into the view and exposes `clearSelection()`, plus `showGraph()` (switch the panel to the Git log tab) for step 4.
+
+### Look (`style.css`, tokens only)
+
+- `.graph-row.is-selected`: background `--surface-2` and an inset 3px `--ink` left edge, so it differs from hover/open (`--surface`).
+- `.graph-selbar`: `--surface` background, 12px text, the reason in `--ink-3`. Buttons styled like `.graph-detail__action`.
