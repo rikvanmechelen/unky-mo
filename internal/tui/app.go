@@ -2549,7 +2549,11 @@ func (m Model) refreshSessions() tea.Cmd {
 				External:  isExternal,
 			}
 			if mgr != nil && st == StatusQuestion {
-				v.PendingQuestionTool, v.PendingQuestionInput, _ = mgr.PendingQuestion(s.SessionID)
+				// A question the hooks didn't deliver (TUI restarted while
+				// it was open, hook dropped) is read back from the transcript.
+				jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
+				v.PendingQuestionTool, v.PendingQuestionInput, _ = mgr.RecoverPendingQuestion(s.SessionID,
+					func() (string, json.RawMessage, bool) { return status.ReadPendingQuestion(jsonlPath) })
 			}
 
 			switch {
