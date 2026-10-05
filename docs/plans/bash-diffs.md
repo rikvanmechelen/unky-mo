@@ -1,6 +1,8 @@
 # Bash diffs in the chat view
 
-Status: steps 1–3 built on small-tasks (2026-10-05).
+Status: all four steps built on small-tasks (2026-10-05). Step 4 feeds the
+changed files into the trace without hunks, so `turnForRange` still ignores
+Bash-made lines.
 
 Claude often changes code through Bash: `sed -i`, `perl -pi`, `cat > f <<EOF`,
 a `python3 - <<EOF` script that rewrites files, `gofmt -w`, `go mod tidy`, a

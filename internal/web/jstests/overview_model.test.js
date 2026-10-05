@@ -364,3 +364,35 @@ test("origin of files no edit touched", () => {
   const M = m.buildModel({ ...inputs, trace: { ...inputs.trace, edits: inputs.trace.edits.filter((e) => !e.path.endsWith("overview.md")), commands: t.commands } });
   assert.deepEqual(M.E.get("file:docs/overview.md").origin, { n: 1, how: "Bash", command: "sed -i s/x/y/ docs/overview.md" });
 });
+
+test("a Bash call's recorded change counts as its edits", () => {
+  const t = m.createIntentTrace(() => ({ kind: "user" }));
+  t.add({ type: "user", uuid: "u1", message: { content: "rename it" } });
+  t.add({ type: "assistant", uuid: "a1", message: { content: [
+    { type: "text", text: "Renaming with sed." },
+    { type: "tool_use", id: "b1", name: "Bash", input: { command: "sed -i s/x/y/ docs/overview.md" } },
+    { type: "tool_use", id: "e1", name: "Edit", input: { file_path: ROOT + "/internal/web/server.go" } },
+  ] } });
+  assert.equal(t.edits.length, 1);
+  const v = t.version;
+  t.setBashChanges({ b1: { root: ROOT, files: [{ path: "docs/overview.md" }, { path: "internal/tui/badge.go" }] }, gone: { root: ROOT, files: [{ path: "x" }] } });
+  assert.ok(t.version > v);
+  assert.deepEqual(t.edits.map((e) => [e.turn, e.path, e.tool, e.note]), [
+    [1, ROOT + "/internal/web/server.go", "Edit", "Renaming with sed."],
+    [1, ROOT + "/docs/overview.md", "Bash", "Renaming with sed."],
+    [1, ROOT + "/internal/tui/badge.go", "Bash", "Renaming with sed."],
+  ]);
+  assert.equal(t.edits, t.edits, "merged once per version");
+  // The same listing again changes nothing.
+  const v2 = t.version;
+  t.setBashChanges({ b1: { root: ROOT, files: [{ path: "docs/overview.md" }, { path: "internal/tui/badge.go" }] }, gone: { root: ROOT, files: [{ path: "x" }] } });
+  assert.equal(t.version, v2);
+  // The model then traces those files to prompt 1 instead of guessing.
+  const inputs = alarmInputs();
+  const M = m.buildModel({ ...inputs, trace: { ...inputs.trace, edits: t.edits, commands: t.commands } });
+  const fe = M.E.get("file:docs/overview.md");
+  assert.equal(fe.outside ?? false, false);
+  assert.deepEqual(fe.prompts.map((p) => [p.n, p.tools]), [[1, ["Bash"]]]);
+  t.reset();
+  assert.equal(t.edits.length, 0);
+});

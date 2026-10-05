@@ -1279,6 +1279,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
       trace.add(line);
       scheduleTrace();
     },
+    // setBashChanges passes what the session's Bash calls changed
+    // (createBashChanges in chat.js) to the intent trace.
+    setBashChanges(changes) {
+      trace.setBashChanges(changes);
+      scheduleTrace();
+    },
     resetTranscript() {
       trace.reset();
       agentsRead.clear();

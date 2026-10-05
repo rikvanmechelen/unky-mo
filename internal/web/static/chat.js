@@ -613,6 +613,7 @@ function createBashChanges() {
       timers = [setTimeout(load, 300), setTimeout(load, 1800)];
     },
     get: (id) => changes[id] || null,
+    all: () => changes,
     subscribe: (fn) => subs.add(fn),
     async diff(id) {
       const res = await fetch(`${base()}/${encodeURIComponent(id)}`);
@@ -1135,6 +1136,7 @@ function main() {
   const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
     (msg) => { sendError.textContent = msg; });
   const bashChanges = createBashChanges();
+  bashChanges.subscribe(() => overview.setBashChanges(bashChanges.all()));
   const onOpenDiff = (path) => editor.open(path, "diff");
   // A subagent's Bash calls are recorded under the session that spawned it.
   const subagents = createSubagents(document.getElementById("agent-strip"), { bashChanges, onOpenDiff });

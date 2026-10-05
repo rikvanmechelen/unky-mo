@@ -62,13 +62,18 @@ function scopeRequestFrom(files, trace, root) {
 // a prompt here is exactly what the transcript shows as one. Lines are
 // folded in file order whatever branch they're on: an edit made on an
 // abandoned branch still changed the file. Subagent lines are added with
-// addAgent and land on the turn whose Agent call spawned them.
+// addAgent and land on the turn whose Agent call spawned them. A Bash call
+// whose snapshots recorded a change (setBashChanges, from /bash-changes)
+// counts as an edit of each file it changed, with tool "Bash".
 function createIntentTrace(describeUser) {
-  let turns, edits, commands, agentTurns, seen, lastNote, version;
+  let turns, edits, commands, agentTurns, seen, lastNote, version, bashFiles, bashKey, merged;
   function reset() {
     turns = []; // [{n, uuid, text}]
     edits = []; // [{turn, path (absolute), tool, id, note, agent, hunks}]
-    commands = []; // [{turn, command, id, agent}]: Bash calls, for files no edit touched
+    commands = []; // [{turn, command, id, agent, note}]: Bash calls
+    bashFiles = new Map(); // Bash tool_use id → absolute paths it changed
+    bashKey = "";
+    merged = null; // [version, edits with the Bash ones]
     agentTurns = new Map(); // Agent tool_use id → turn
     seen = new Set(); // line uuids already folded (a reconnect replays them)
     lastNote = new Map(); // "" (main) or agent id → the last assistant text
@@ -124,7 +129,7 @@ function createIntentTrace(describeUser) {
       if (b.type !== "tool_use") continue;
       if (!agent && (b.name === "Agent" || b.name === "Task")) agentTurns.set(b.id, turnNow());
       if (b.name === "Bash" && typeof b.input?.command === "string") {
-        commands.push({ turn: agent ? agentTurn : turnNow(), command: b.input.command, id: b.id, agent: agent || null });
+        commands.push({ turn: agent ? agentTurn : turnNow(), command: b.input.command, id: b.id, agent: agent || null, note: lastNote.get(noteKey) || "" });
         version++;
         continue;
       }
@@ -142,8 +147,28 @@ function createIntentTrace(describeUser) {
     addAgent: (agentID, turn, lines) => { for (const m of lines) fold(m, agentID, turn); },
     agentTurn: (toolUseID) => agentTurns.get(toolUseID),
     hasAgents: () => agentTurns.size > 0,
+    // setBashChanges takes /bash-changes' listing ({id: {root, files}}).
+    setBashChanges(changes) {
+      const next = new Map();
+      for (const [id, c] of Object.entries(changes || {})) {
+        if (typeof c?.root !== "string" || !Array.isArray(c.files)) continue;
+        next.set(id, c.files.map((f) => c.root.replace(/\/$/, "") + "/" + f.path));
+      }
+      const key = JSON.stringify([...next]);
+      if (key === bashKey) return;
+      bashFiles = next;
+      bashKey = key;
+      version++;
+    },
     get turns() { return turns; },
-    get edits() { return edits; },
+    get edits() {
+      if (!bashFiles.size) return edits;
+      if (merged?.[0] === version) return merged[1];
+      const fromBash = commands.flatMap((c) => (bashFiles.get(c.id) || []).map((path) => (
+        { turn: c.turn, path, tool: "Bash", id: c.id, note: c.note, agent: c.agent, command: c.command })));
+      merged = [version, edits.concat(fromBash)];
+      return merged[1];
+    },
     get commands() { return commands; },
     get version() { return version; },
   };

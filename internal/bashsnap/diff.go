@@ -25,7 +25,7 @@ type FileStat struct {
 // Change is one Bash call's change: the checkout it ran in, when it ran,
 // and its files.
 type Change struct {
-	Root  string     `json:"-"`
+	Root  string     `json:"root"`
 	Start time.Time  `json:"start"`
 	End   time.Time  `json:"end"`
 	Files []FileStat `json:"files"`
