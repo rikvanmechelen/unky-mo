@@ -898,7 +898,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     } else if (!calls.repo) {
       return el("div");
     } else if (!calls.languages?.length) {
-      parts.push(el("div", { class: "overview__note", text: "No functions in this change in a language the call graph reads (Go so far)." }));
+      parts.push(el("div", { class: "overview__note", text: "No functions in this change in a language the call graph reads (Go, Ruby, JavaScript/TypeScript, Python, Kotlin/Java, Swift)." }));
     } else {
       const sum = callsSummary(calls);
       if (sum) parts.push(el("div", { class: "overview__muted", text: sum }));
