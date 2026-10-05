@@ -56,7 +56,12 @@ func WriteCallsText(w io.Writer, cg *CallGraph) {
 		}
 		fmt.Fprintln(w, label)
 		fs := byUnit[u]
-		sort.Slice(fs, func(i, j int) bool { return fs[i].Name < fs[j].Name })
+		sort.Slice(fs, func(i, j int) bool {
+			if fs[i].Name != fs[j].Name {
+				return fs[i].Name < fs[j].Name
+			}
+			return fs[i].ID < fs[j].ID // reopened classes share a name
+		})
 		for _, f := range fs {
 			line := fmt.Sprintf("  %s %s  %s:%d", callMark[f.Status], f.Name, f.Path, f.Line)
 			if f.Status == FuncRenamed {
