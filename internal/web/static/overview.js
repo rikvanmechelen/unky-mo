@@ -89,7 +89,7 @@ function callsSkeleton() {
 // createOverview builds the tab in panel. The chat view points it at a
 // session (setWindow); the reviewer view at a branch (setTarget, without a
 // transcript), and learns what the branch resolved to through onTarget.
-function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget, onClearSelection } = {}) {
+function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget, onClearSelection } = {}) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // its endpoint prefix
   let withTranscript = true; // false in the reviewer view: no trace, no strip
@@ -356,6 +356,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       section("foot", "Footprint", sums.foot, () => el("div", { class: "ov-sec__stack" }, [noiseBar(), body(sum)])),
       ...(traced ? [section("trace", "Intent", sums.trace, () => traceBox)] : []),
       ...(mode !== "commits" ? [section("scope", "Scope", sums.scope, () => scopeBody())] : []),
+      // The Review list, for where the Files panel isn't shown (CSS).
+      ...(reviewList ? [section("review", "Review", reviewSummary(M), () => { const box = el("div", { class: "ov-review" }); reviewList(box); return box; })] : []),
     ];
     root.replaceChildren(pageHead(M), ...secs);
     if (isOpen("foot")) drawTreemap();
@@ -368,11 +370,20 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
 
   let manual = {}; // section key → open, set by its head; cleared by a new selection
   let caveatsOpen = false;
+  let reviewOpen = true;
 
   function isOpen(key) {
     if (key in manual) return manual[key];
+    if (key === "review") return reviewOpen; // the list to pick from: a selection doesn't fold it
     const cur = selCurrent(hist);
     return cur ? key === ovSection(getModel(), cur) : true;
+  }
+
+  function reviewSummary(M) {
+    const q = ovReviewQueue(M, { area: areaFilter, hidden });
+    const needs = q.find((g) => g.key === "needs")?.ids.length || 0;
+    const logic = q.find((g) => g.key === "logic")?.ids.length || 0;
+    return { summary: `${needs} need${needs === 1 ? "s" : ""} eyes · ${pl(logic, "logic file")}`, flag: needs ? "yellow" : null };
   }
 
   function section(key, title, { summary, flag }, body) {
@@ -383,7 +394,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       el("span", { class: "ov-sec__sum", text: summary }),
       ...(flag ? [el("span", { class: `ov-sec__flag is-${flag}`, title: flag === "red" ? "Something here breaks" : "Worth a look" })] : []),
     ]);
-    head.addEventListener("click", () => { manual[key] = !open; render(); });
+    head.addEventListener("click", () => {
+      manual[key] = !open;
+      // The Review section keeps its own state across selections.
+      if (key === "review") reviewOpen = !open;
+      render();
+    });
     return el("section", { class: "ov-sec" + (open ? " is-open" : ""), "data-sec": key }, [head, ...(open ? [el("div", { class: "ov-sec__body" }, [body()])] : [])]);
   }
 

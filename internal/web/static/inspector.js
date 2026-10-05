@@ -41,6 +41,8 @@ function createInspector(host, overview) {
     const M = overview.model();
     renderBar(M);
     const id = sel.current();
+    // On a phone the inspector is a bottom sheet, up while something is selected.
+    host.classList.toggle("has-sel", !!id);
     if (!M) {
       body.replaceChildren(el("div", { class: "insp-note", text: overview.hasData() ? "" : "Nothing to show yet." }));
       return;

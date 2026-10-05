@@ -788,6 +788,25 @@ it over. A step gets its detailed plan in this doc before coding
 - **F13. Phone**: the inspector as a bottom sheet while something is
   selected; map boxes stack in one column. Review becomes a section under
   the page (the design has no right rail on a phone).
+
+  **F13 detail.**
+  - **Inspector as a bottom sheet (≤ 760px, where the nav is hidden):**
+    in Overview mode the nav becomes a fixed sheet at the bottom, 62% of
+    the viewport high, holding only the inspector (no wordmark, sessions or
+    usage). It slides up while something is selected (the inspector marks
+    itself `has-sel`) and down when the selection clears (the bar's Clear,
+    or Esc).
+  - **A Review section** (key `review`) in the Overview page, after
+    Scope. It renders the same queue (`createOverview` takes
+    `reviewList(container)`; `chat.js` and `branch.js` pass the queue's
+    `review`). It shows only where the Files panel doesn't: below 1100px,
+    or with the right rail hidden (`.hide-files`). It doesn't follow the
+    selection's open / close (it's the list you pick from), only its head.
+    Its summary: "N need eyes · M logic files".
+  - **Smaller type:** the verdict at 20px (17px compact), section padding
+    16px, the map at the panel's width (`ovLayoutMap` already puts one box
+    per line below ~530px).
+
 - **F14. Docs**: CLAUDE.md (Overview paragraph), testing.md, this plan's
   status.
 
@@ -862,4 +881,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F12 built 2026-10-05; next: F13.
+backend) F1–F13 built 2026-10-05; next: F14.

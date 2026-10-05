@@ -105,7 +105,7 @@ function createMap(overview) {
   function drawLens(M, fid) {
     const lens = ovLens(M, fid);
     const current = sel.current();
-    const W = Math.max(480, (width || scroll.clientWidth || 900) - 20);
+    const W = Math.max(300, (width || scroll.clientWidth || 900) - 20);
     const CW = Math.min(260, Math.floor((W - 80) / 3)), GAP = Math.max(40, Math.floor((W - 3 * CW) / 2)), RH = 46, Y0 = 26, BH = 38;
     const XS = [0, CW + GAP, 2 * (CW + GAP)];
     const n = Math.max(lens.callers.length, lens.right.length, 1);
@@ -190,7 +190,7 @@ function createMap(overview) {
     if (!M || !scroll.isConnected) return;
     const fid = sel.focus();
     if (fid && M.E.get(fid)?.type === "fn") { drawLens(M, fid); return; }
-    const w = Math.max(480, width || scroll.clientWidth || 900);
+    const w = Math.max(280, width || scroll.clientWidth || 900);
     const set = relatedSet(M);
     const current = sel.current();
     const L = ovLayoutMap(M, { width: w - 20, set, fold, foldUnrelated: prefs.foldUnrelated, existing: prefs.existing });

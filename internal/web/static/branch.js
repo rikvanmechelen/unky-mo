@@ -27,8 +27,11 @@ function branchMain() {
   document.title = `Unky Mo — ${pr ? "#" + pr : branch} (${project})`;
 
   let sessionWindow = null;
+  let queue = null;
   const overview = createOverview(document.getElementById("overview-panel"), {
     onOpenDiff: (path, kind, line) => editor.reveal(path, line, kind),
+    onOpenFile: (path, line) => editor.reveal(path, line, "file"),
+    reviewList: (box) => queue?.review(box),
     onTarget: showTarget,
   });
   const editor = createEditorTabs({
@@ -67,7 +70,8 @@ function branchMain() {
   const shell = document.getElementById("chat-shell");
   createRails(shell);
   createInspector(document.getElementById("inspector"), overview);
-  reviewPane(document.getElementById("files-pane"), createReviewQueue(overview));
+  queue = createReviewQueue(overview);
+  reviewPane(document.getElementById("files-pane"), queue);
   reviewNav(document.getElementById("review-nav"), { project, branch, pr });
 
   overview.setTarget({ key, api, transcript: false });

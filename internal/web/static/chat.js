@@ -588,6 +588,7 @@ function main() {
   const overview = createOverview(document.getElementById("overview-panel"), {
     onOpenDiff: (path, kind, line, hash) => editor.reveal(path, line, kind, hash),
     onOpenFile: (path, line) => editor.reveal(path, line, "file"),
+    reviewList: (box) => reviewQueue.review(box),
     // While the Overview shows, the left rail holds its inspector.
     onVisible: (v) => {
       shell.classList.toggle("is-overview", v);
