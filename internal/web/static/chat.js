@@ -798,10 +798,19 @@ function createTranscriptView(container, scrollEl, opts = {}) {
 
   function setCardOpen(entry, open, preview = false) {
     entry.body.style.display = open ? "flex" : "none";
-    if (open) runHighlights(entry.body);
+    if (open) highlightIfOpen(entry);
     entry.action.textContent = open ? "Hide" : "Show";
     entry.card.classList.toggle("is-preview", open && preview);
     entry.card.classList.toggle("is-open", open);
+  }
+
+  // highlightIfOpen highlights a card's deferred blocks a frame later, if
+  // it's still open then: replaying a backlog previews (opens, then closes)
+  // every diff in turn, and only the cards left open need the work.
+  function highlightIfOpen(entry) {
+    requestAnimationFrame(() => {
+      if (entry.body.style.display !== "none") runHighlights(entry.body);
+    });
   }
 
   // Like Claude Code's terminal, the most recent edit's diff (or command's
@@ -845,7 +854,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
         box.replaceChildren(el("div", { class: "tool-card__loading", text: "Couldn't load the changes: " + err.message }));
       }
     });
-    if (entry.body.style.display !== "none") runHighlights(entry.body);
+    highlightIfOpen(entry);
     if (!previewed || previewed === entry || previewed.seq < entry.seq) previewToolCard(entry);
   }
 
