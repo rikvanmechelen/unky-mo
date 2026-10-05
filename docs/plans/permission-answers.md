@@ -171,3 +171,73 @@ The plan dialog has a second full-width rule between the plan and the question; 
 - `status_test.go`: renamed calls. An agents-sourced permission has no content.
 - `pending_test.go`: `ReadPendingTool` with `interactiveOnly=false` finds an open Bash call, ignores answered ones, picks the newest of two parallel open calls, finds nothing for ExitPlanMode's transcript (only an answered ToolSearch), and `interactiveOnly=true` still skips Bash. `RecoverPending` reads for a permission too.
 - `answer_test.go`: fixture field names.
+
+## Step 3 in detail: web endpoints (`internal/web/permission.go`)
+
+### Reading the dialog: `parsePermissionDialog(screen) permView`
+
+- **Question block:** the lines after the screen's **last** full-width rule (a line of only `─`, at least 20 of them). In an idle session that's the prompt box's lower border, followed by the mode footer, which has no rows, so nothing is found.
+- **Rows:** lines matching `^\s*(❯)?\s*(\d+)\.\s+(.+)$`. A following non-blank line indented at least as far as the row's label (column 6 in the captures) belongs to the row. The "shift+tab to approve with this feedback" hint sets `hint`; any other line is a wrapped label, joined with a space. The first line indented less is the footer, and parsing stops there.
+- **Question:** the last non-blank line before the first row, after the rule. It's required: AskUserQuestion's last rule is followed by "N. Chat about this" with nothing above it, so it doesn't parse. The trust dialog has no numbered rows.
+- **found** = rows, a question, and the `❯` on one of the rows.
+- **Preview** (to check the content against): the lines between the rule above the question and the question. For the plan dialog those are empty, so it uses the lines between the two last rules (title "Ready to code?" and the plan). **title** = the first non-blank line of the preview.
+- **Footer:** `tabAmend` = it contains "Tab to amend". `planFile` = a `~/.claude/plans/<name>.md` (or absolute `…/.claude/plans/<name>.md`) path in it.
+- **Row kinds** (`text`):
+  - `"amend"`: `tabAmend` and the label is exactly "Yes" or "No" (the rows probed). Other Yes rows weren't probed, so they get no text.
+  - `"feedback"`: the row has the shift+tab hint (plan approval's "Tell Claude what to change").
+  - `""`: otherwise.
+- **sig:** hex SHA-256 of the question plus each row's number and label. An amended or half-typed row changes its label, and so the sig.
+
+### Matching the content: `pendingMatches(tool, input, view)`
+
+The state file's pending tool is shown only if the dialog is about it. All comparisons ignore whitespace, since wrapping adds line breaks and indentation:
+- **Bash:** the command's first line (up to 80 characters) appears in the preview.
+- **Edit / MultiEdit / Write / NotebookEdit / Read:** the path's base name appears in the question or preview.
+- **WebFetch:** the URL's host appears in the preview.
+- **ExitPlanMode:** `planFile` is set, or the title is "Ready to code?".
+- **Anything else:** accepted. It's an unknown layout, and a wrong pick needs parallel open calls of that tool.
+
+When nothing matches and `planFile` is set, `readPlanFile` serves `{plan, planFilePath}` as ExitPlanMode. The name must match `^[A-Za-z0-9._-]+\.md$`, and the file must sit directly in `$HOME/.claude/plans`. It's opened with `O_NOFOLLOW`, must be a regular file, and is capped at 512 KB.
+
+### `GET /api/sessions/{windowID}/permission`
+
+- 404 for no session in the window. 409 unless the state file's status is `permission`.
+- Captures `claudeTarget(windowID)` and answers `{tool, input, dialog}`, where `dialog` is `{title, question, rows: [{n, label, text}], sig}` or `null` when nothing parses. `tool`/`input` are empty when unknown or unmatched.
+
+### `POST /api/sessions/{windowID}/permission` `{sig, row, text, approve}`
+
+- 400 before anything else: `row` not 1–9, `text` over 2000 bytes after `stripControl` and collapsing whitespace (newlines become spaces), or `approve` without text.
+- 409 unless the status is `permission`. Then, holding `modeMu`: capture and parse. A missing dialog or a different `sig` is a 409 (`errPermissionLost`) with no keys.
+- 400: the row isn't in the dialog, or text is given for a row whose `text` is `""`.
+- A `"feedback"` row without text is also a 400, since its digit only moves the cursor.
+- **No text:** press the row's digit.
+- **`"amend"` + text:**
+  1. Move the cursor to the row one Up/Down at a time, waiting each time for the `❯` to move, as `answerOne` does.
+  2. Press Tab and wait for the row's label to change from "Yes"/"No".
+  3. Type the text literally and wait for the label to change again (it shows the text).
+  4. Press Enter.
+- **`"feedback"` + text:**
+  1. Press the digit and wait for the cursor there.
+  2. Check the label is still the original (the terminal user hasn't typed into it), or 409.
+  3. Type the text and wait for the label to change.
+  4. Press Enter, or BTab when `approve` is set.
+- Every wait is `waitPermission` (re-capture until a condition holds, `answerSettleTries` × `modeSettle`, else `errPermissionLost`). There's no wait after the final key: the answer was checked just before it, and the next dialog can look identical (the same command again).
+- Answers `{}`. A capture or tmux failure is a 502.
+
+### Tests (`permission_test.go`)
+
+- **Fixtures:**
+  - Each capture parses to the expected title, question, rows (labels with wrapped lines joined), kinds, cursor, `tabAmend` and `planFile`.
+  - `bash-amend-yes` shows the amended label with no "Tab to amend".
+  - `trust-folder`, an idle screen and a `fakeDialog` AskUserQuestion screen don't parse.
+  - A synthetic plan dialog with the scroll box ("↓") parses like `plan`.
+- **`pendingMatches`:** a Bash command wrapped over two lines matches. Another command (parallel calls) doesn't. Edit by base name, WebFetch by host, ExitPlanMode by `planFile`.
+- **`readPlanFile`:** under a temp `HOME`, a plan is read. A symlink, a name with `/` or `..`, and a non-`.md` file are refused.
+- **Handlers:** a `fakePermission` pane draws the bash fixture's layout (or the plan's) and reacts to keys as probed: digit, Up/Down, Tab to amend, text, Enter, BTab. Then:
+  - GET returns the dialog plus the matched content, and leaves out an unmatched one.
+  - GET serves the plan file when nothing is pending.
+  - A digit answer presses one key.
+  - An amend on "No" walks down three rows, Tabs, types and Enters.
+  - A feedback answer types and then presses BTab when approving.
+  - A stale sig, the wrong status, or a dialog the terminal user already amended is a 409 with no keys.
+  - A bad row, text on a plain row, approve without text, or text that's too long is a 400 with no keys.
