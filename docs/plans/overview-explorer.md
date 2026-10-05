@@ -1,0 +1,350 @@
+# Overview Explorer (design 9a, "Overview Explorer v3")
+
+Source: Claude Design project `3c743cfe-be90-4bc6-bd2e-6ee1eb44a0b5`,
+`Overview Explorer v3.dc.html` + `overview-model.js` (mock data: Alarm,
+Healthy, Huge and Reviewer states). v3 is v2 (8a) with most of what v2
+dropped put back. This plan maps v3 onto the code we have, lists what it
+needs that doesn't exist yet, and what today's Overview (or the chat view
+around it) does that v3 still leaves out.
+
+## What the design is
+
+The Overview stays a tab in the middle pane. While it's the active tab it
+takes over both side rails, and everything selects by entity id.
+
+- **Left rail (340px)**: compact session switcher (28px rows: status
+  square, project, branch, "here"/"working"/"needs you"), then a **nav bar**
+  (back / forward, breadcrumbs of the last 4 selections, Clear), then the
+  **inspector**, which shows whatever is selected. Usage meter at the
+  bottom. With nothing selected it shows **Start here**: the kinds bar and a
+  Checks list (lines of logic, areas, layer rules, call findings, contract
+  changes, files changed outside the conversation, each clickable). In the
+  reviewer view the session list becomes a list of the project's open PRs
+  ("viewing" on the current one).
+- **Middle**: a scrolling page.
+  - **Header**: PR line in the reviewer view (`#231 title · Not checked out
+    (read-only) · Open on GitHub`). A **Branch / Uncommitted N / Selected
+    (N) ×** switch. What's compared (`left vs right @ sha (merge base) · N
+    files · +a −d`). "Reviewed X of Y" progress bar. Notes (stale base +
+    Fetch, "no merge base, compares against HEAD~5", "file list
+    truncated"). The **verdict sentence** with linked phrases, plus "N of M
+    changed lines are logic". **Chips**: files, lines, areas, dependencies
+    "+a −r · b bumped", contract changes. A **Caveats N** disclosure: rules
+    file (or its parse error), approximate languages, unparsed files,
+    "packages start folded", unresolved calls. Once something is selected
+    the header **shrinks to a sticky strip**: smaller verdict, no sub-line,
+    no chips.
+  - **Four collapsible sections**, each with a one-line summary and a
+    red/yellow flag when collapsed:
+    - **Map**: packages in layer rows. Each box lists its changed (and
+      context) functions with marks (+ − ~ sig ↦ ctx). Import edges run
+      between boxes and call edges between function rows. Each box folds
+      from its arrow ("+12 functions"). Toggles: Existing imports, All
+      calls, **Fold unrelated** (on by default), Isolate selection. Legend:
+      new, breaks a rule, dropped, approximate (dotted), passed as a value
+      (dashed), interface, existing. Over 60 functions, packages start
+      folded and open when the selection touches them. **Focus** on a
+      function swaps the map for a one-hop lens (callers | function |
+      callees or implementations, route labels, unresolved notes) with an
+      "All packages › Focus: X · Exit" breadcrumb.
+    - **Footprint**: kinds bar (click a kind to hide it from the list and
+      the treemap), a treemap of areas → files (area = lines changed,
+      coloured mostly added / removed / mixed / noise), and Files by area.
+      Clicking an area **filters the Review list**, which shows an "Area: x
+      ×" chip.
+    - **Intent**: the files × prompts matrix (square = edit count, purple =
+      subagent, yellow = outside the conversation). Selecting a cell
+      (`cell:<path>|<n>`) shows that edit's reason in the inspector.
+      Hidden in Uncommitted / Selected and in the reviewer view.
+    - **Scope**: Check scope (idle / running / done), when it ran and what
+      it was checked against, ticket fetch errors, "Out of date … Run
+      again", the drift list, "Ask Claude to split these out".
+  - **Adjusting to the selection**: selecting something opens the section it
+    belongs to (fn/call/imp/pkg/con/find → Map, file → Footprint,
+    prompt/cell → Intent), collapses the others to their one-line summary
+    and scrolls there. A manual open or close holds until the next
+    selection.
+- **Right rail (320px)**: the Files panel's tabs become **Review N /
+  Changed N / All files / Git log · N** (reviewer view: Review / Files).
+  We build them as **Review / Changed / Branch files / Git log**: in
+  Overview mode the rail shows only the change, so "All files" becomes the
+  branch's changed files (flat, by path) instead of the repo tree. The
+  Git log tab stays ours (see "What v3 still leaves out", 1).
+  - **Review** groups: Needs eyes (red findings, rule-breaking imports,
+    warnings, drift files with their reason), Contracts, Logic to read
+    (biggest first, with tick boxes), then collapsed Tests (plus `untested`
+    findings), Docs, Generated and noise.
+  - **Changed** is uncommitted files only, as today.
+  - Filter chips (area, hidden kinds) sit above the list.
+  - Footer: the keys, plus the sync line ("1 commit to push").
+- **Reading code at three depths**: an inspector row shows the call line.
+  **Peek** unfolds a few lines around it, and **Diff** / **File** open the
+  whole file as an editor tab next to Overview at that line. Editor tabs
+  carry a diff/file label, and inside the tab there's a **Diff | File**
+  switch plus **Show in Overview**.
+- **Keys** (Overview active, focus not in a field): j/k or ↑/↓ walk the
+  Review list, x ticks reviewed, o opens the diff, f the file, `[` `]` go
+  back / forward. Esc leaves an editor tab, then exits Focus, then clears.
+  **Decided:** `[` / `]` keep toggling the side rails; back / forward are
+  **Alt+← / Alt+→** plus the nav bar's buttons (titles say so).
+- **Phone**: no rails. The inspector is a bottom sheet (62% high) that
+  opens while something is selected.
+
+Entities: `pkg:`, `file:`, `fn:`, `call:`, `imp:`, `con:`, `find:`,
+`prompt:`, `cell:`. `related(id)` drives hover and selection highlighting
+in the map, the Review list and the inspector.
+
+## Where the data comes from
+
+| Design element | Today | Gap |
+|---|---|---|
+| files, kinds, areas, +/−, mode switch, stale base, fallback, truncated | `/overview` | — |
+| packages, import edges, existing imports, surface/contracts | `/architecture` | layer of each package (B3) |
+| functions, marks, calls, findings, implementations, labels, unresolved | `/calls` | test that reaches a function, signature text (B2); `/calls` is only loaded for the Functions view today (F1) |
+| caller rows with the call's code line, Peek, inspector code blocks | — | **excerpt endpoint** (B1) |
+| contract → function | `surface` has `path` + `line` | match inside a func's `line..end`, client side |
+| "Why it changed", matrix cells, prompt → files | `createIntentTrace`, `turnForRange`, `buildTraceRows` | — |
+| "git rm (Bash)", "another session" origins | "not edited in this conversation" | optional heuristic (F10) |
+| scope verdicts, ran-at, against, ticket error, staleness | scope check (localStorage) | — |
+| caveats | rules/presets note, lang `exact`, unparsed, truncated, analyzer errors | — (collected client side) |
+| dependency chip | surface `Dependencies` items | count +/−/~ client side |
+| reviewed ticks + progress | — | new, localStorage (F6) |
+| reviewer PR list in left rail | dashboard's PR list (`PRClient`, cached) | small endpoint or reuse `/api/projects/{name}` (F11) |
+| PR header line | reviewer target already has PR title | — |
+| sync line ("1 commit to push") | Files panel ahead/behind | — |
+
+### Backend steps (unchanged from the v2 plan)
+
+- **B1. Excerpts.** `GET …/excerpt?path=&line=&ctx=3&side=new|old` (same
+  `?base=` modes and selection params as `/file`, same `listedPath` +
+  `gitfiles.Resolve` rules). Context functions in unchanged files must be
+  readable too, so "listed" widens to "in the tree at that side". It
+  answers rows `[{ln, oldLn, sign, text}]`: the file's diff against the
+  overview's base, cut to `line ± ctx`, so a changed region shows its +/−
+  rows and an unchanged one plain lines. One `git diff -U<n>` per file,
+  cached with the overview's key. A removed function asks `side=old`.
+  Tests: `handlers_excerpt_test.go` (refusals before any git call, a
+  rename's old path) + a `gitfiles` real-git test.
+
+  **B1 detail.** One shape covers every target: an `Overview` compares
+  `Rev` (empty without commits) with `Head` (a commit) or, when `Head` is
+  empty, the working tree. So:
+  - `gitfiles.Annotate(ctx, cmd, o, path) (*Annotated, error)` returns the
+    whole file as rows `{ln, oldLn, sign, text}` (`ln` 0 on a `-` row,
+    `oldLn` 0 on a `+` row). For a file in `o.Files` (by `Path`, or by
+    `OldPath` for the old side of a rename):
+    - untracked (`?`) or no `Rev`: the new side, all `+`;
+    - deleted (`D`): `ReadAt(Rev, path)`, all `-`;
+    - otherwise one `git diff -M --no-color --no-ext-diff --no-textconv
+      -U<huge> Rev [Head] -- [oldPath] path`, parsed by a pure
+      `parseFullDiff` (handles `\ No newline`, rename headers, binary).
+
+    A file the change doesn't list (a context caller) is read from the new
+    side (`ReadAt(Head)` or `ReadFile`, so `Resolve` + `O_NOFOLLOW`) as
+    plain rows with `ln == oldLn`. Binary and over-`MaxContentBytes` come
+    back flagged, without rows.
+  - `(*Annotated).Cut(line, end, side, ctx)`: anchor on the row whose `ln`
+    (side `new`) or `oldLn` (side `old`) is `line`, through `end` (default
+    `line`), widened by `ctx` rows (0–20, default 3), at most 400 rows
+    (`truncated`). A line that isn't there gives no rows.
+  - `GitFiles.Annotate(o, path)` (mock regenerated). The handlers cache the
+    `*Annotated` in `excerptCache` (10 min, the 128-key prune), keyed by
+    `Root`, `Rev`, `Head` and the path, plus, for a working-tree side, the
+    file's size and mtime, so an edit is never served stale.
+  - Routes: `GET /api/sessions/{windowID}/excerpt` (same `base` /
+    `commits` / `worktree` params, read through `s.change`) and `GET
+    …/branches/{branch}/excerpt` / `…/pulls/{pr}/excerpt` (through
+    `targetOverview`). Params `path`, `line` (≥1), optional `end` (≥ line,
+    ≤ line+400), `side` (`new` default, `old`), `ctx`. Bad params → 400
+    before any git call.
+  - The path must be listed: in the overview's files (`Path`/`OldPath`), or
+    else in the new side's tree (`listedPath` for a checkout; `refTree`
+    for a ref target). Otherwise 404 and no `Annotate` call.
+    `ErrOutsideRoot` → 403.
+  - Answer: `{path, side, rows, binary?, tooLarge?, truncated?}` through
+    `writeHashed` (ETag + 304).
+  - Tests: `gitfiles/excerpt_test.go` (parser fixtures, `Cut` edges, real
+    git with modified / renamed+modified / deleted / untracked / unchanged
+    files, a commit head vs the working tree, a symlinked unchanged path
+    refused) and `web/handlers_excerpt_test.go` (refusals before git, a
+    listed path through each route, the old path of a rename, a ref
+    target's tree, the cache key changing on a write, 304).
+- **B2. Calls additions.** `Func.TestedBy`: the first test function
+  `reachedByTest` found, so the inspector can say "Reached by
+  TestHandleOverview". `Func.Sig` / `Func.OldSig` for `signature` (Go: the
+  types-only signature the exported API diff already computes; heuristic
+  languages: the definition's first line).
+- **B3. Layers.** `Package.Layer` (from `ruleSet.layerOf`) and
+  `Rules.Order` (layer names top to bottom), so the map can lay rows out by
+  the repo's layers. Packages with no layer fall back to import depth
+  (`layoutArchGraph`).
+- **B4. Unit names.** Check that `/calls` `Func.Unit` equals
+  `/architecture` `Package.Path` for every language (Go's `pkgDir` vs
+  `goarch` paths especially), and fix it at the source if not: the map nests
+  functions in packages by that key.
+
+### Frontend steps
+
+Each step is one commit, and the old Overview keeps working until F9 swaps
+it over. A step gets its detailed plan in this doc before coding
+([[plan-each-step-first]]).
+
+- **F1. Entity model** (`static/overview-model.js`, pure, no DOM). It
+  builds `{E, order, layers}` from `/overview` + `/architecture` + `/calls`
+  + the trace + the scope result + reviewed ticks, in the shape of the
+  mock's `build()`. It also provides `related(id)`, `where(id)` →
+  `[path, line, side]`, `verdict(M)` → segments, `checks(M)`, `caveats(M)`,
+  `chips(M)`, `reviewQueue(M, {area, hiddenKinds})` and `sectionOf(id)`.
+  Load `/calls` whenever the tab is visible: the map, verdict, Review list
+  and badge all need it. Until it lands, the map shows packages from
+  `/architecture` with function-row skeletons. Unit-tested the way the
+  graph layout is.
+- **F2. Selection store** in `overview.js`: `select(id)`, history (30),
+  back/forward, `hover(id)`, Focus. Listeners re-render the inspector, map,
+  Review list and sections. Selection and history are kept per target in
+  sessionStorage.
+- **F3. Page shell + header.** Every section keeps a skeleton while its
+  data loads (decided): today's `overviewSkeleton` / `archSkeleton` /
+  `surfaceSkeleton` / `callsSkeleton` move into their sections, the
+  inspector and the Review list get one too, and all fade in after 150 ms. The scrolling page, the sticky compact
+  header, the mode switch (today's Branch / Uncommitted / Selected (N) ×,
+  including `worktree=1`), the compare line, notes (stale base + Fetch,
+  fallback, truncated), verdict, chips, Caveats. The four section frames
+  with summaries, flags, open/collapse-on-select and scroll-to. Bodies are
+  today's parts moved in, untouched for now: architecture graph + Functions
+  view → Map, chips/noise/treemap/files by area → Footprint, trace table →
+  Intent, scope check → Scope.
+- **F4. Left rail in Overview mode.** `.chat-shell.is-overview`:
+  `renderNav` gets a compact mode, `--nav-w` widens to 340px, and
+  `#inspector` (nav bar + body) fills the rest. Switching session keeps the
+  Overview tab active there. Start here: kinds bar + Checks. The rail
+  tabs and `[` / `]` work as today.
+- **F5. Inspector per entity** (`static/inspector.js`): function, call,
+  import, file, package, contract, finding, prompt, cell, following the
+  mock's `inspector()`. Code blocks use B1, and Peek toggles per
+  (selection, site). Actions: Diff / File, Focus, Mention in prompt, "Ask
+  Claude to fix" (drafts, never sends, like `onDraftPrompt`), Jump to prompt
+  in Chat (`revealTurn`), Mark reviewed. It keeps today's extras:
+  Implementations / Implements, unresolved count, a reference's `label`,
+  "N more callers", subagent edits.
+- **F6. Review tab** in the Files panel (`files.js` gets a `review` mode,
+  rows from `reviewQueue`). It exists **only while the Overview tab is
+  active** (decided). Opening the Overview switches the panel to Review, and
+  leaving brings back the panel's previous tab. In Overview mode the panel's
+  tabs are Review / Changed / Branch files / Git log: the repo tree ("All
+  files") isn't offered there, since the rail only shows the change. Quick
+  open (Ctrl+P) still reads `/tree` and works everywhere. The gutter
+  review-comments button in the tab strip is renamed **Comments (N)** in
+  the same commit, so "Review" means one thing. Filter chips (area, hidden kinds). Reviewed ticks
+  live in `mo.overview.reviewed.<key>` as `{path: sig}`, where sig is the
+  file's `+added −removed status` (or a blob id if `/overview` gets one), so
+  a file that changes after you ticked it un-ticks itself. Keys
+  j/k/x/o/f/Esc and Alt+← / Alt+→. The progress bar goes in the header.
+- **F7. Map** (`static/overview-map.js`) replaces the Map section's body:
+  layer rows of package boxes with function rows, `edgePath` curves, the
+  four toggles (remembered like `allImports`), the legend, per-box fold,
+  auto-fold past 60 functions, and related-set dimming. Call edge styles
+  stay as today: `dynamic` = open arrowhead, `ref` = dashed, `approx` =
+  dotted. Box headers keep today's per-unit new/removed call counts.
+- **F8. Focus lens**: `calls.js`'s one-hop layout, re-skinned as the Map's
+  Focus mode (callers | function | callees or implementations), with
+  breadcrumb and Exit. **Decided:** the Packages | Functions switch stays
+  in the Map section's toolbar: Packages is the new map (F7), Functions is
+  today's `calls.js` view (re-skinned, unit collapse past 60, per-unit
+  +/− counts), useful for very large changes. Clicking a node there
+  selects the `fn:` entity like the map does.
+- **F9. Footprint, Intent, Scope restyled** to the design. Footprint:
+  hide-by-kind applies to the Review list too, and an area click sets the
+  Review filter. Intent: matrix cells become selectable entities. Scope:
+  ran-at / against / error / stale / drift / split. Then remove the old
+  bodies (chips row, noise bar, trace table). `calls.js` stays (F8).
+- **F10. (Optional) Origin of untraced files**: scan the trace's Bash
+  tool_use commands for the path, `git rm`, `go generate`/`go get`/`make
+  mocks`, to say "git rm (Bash)" instead of "not edited in this
+  conversation". It's a heuristic, so it's worded as "probably".
+- **F11. Editor tab Diff | File switch** + "Show in Overview": swaps a tab
+  between `bdiff`/`range`/`sdiff` and `file` in place (same path, same
+  line), and Show in Overview selects `file:<path>`. In Selected mode,
+  File shows the selection's head side read-only.
+- **F12. Reviewer view** (`branch.html`) gets the three columns. Left: the
+  project's open PRs (switching re-targets the page), nav bar and
+  inspector. Middle: the PR header line. Right: Review + Files. No Intent
+  section; Scope stays.
+- **F13. Phone**: the inspector as a bottom sheet while something is
+  selected; map boxes stack in one column. Review becomes a section under
+  the page (the design has no right rail on a phone).
+- **F14. Docs**: CLAUDE.md (Overview paragraph), testing.md, this plan's
+  status.
+
+## What v3 still leaves out (and how to keep it)
+
+v3 brings back most of what v2 dropped: the mode switch, the stale-base
+Fetch, notes, caveats, the dependency count, the treemap, hide-by-kind,
+files by area, the matrix and its cell detail, the full scope check, Focus,
+unit folding past 60, implementations, labels, unresolved counts and
+Changed as uncommitted-only. What's still missing:
+
+1. **Git log tab**: the design draws a tick-list of commits. Today's tab is
+   a lane graph with expandable commits, read-only `commit` tabs,
+   Ctrl/Shift-click ranges, keyboard selection, the "Uncommitted changes"
+   row and the consecutive-run check. → **Decided:** keep ours unchanged,
+   including the selection → "Show in Overview" → Selected (N) flow.
+2. **Selected + uncommitted** (`worktree=1`): the design's Selected is
+   commits only. → Keep it in the switch ("Selected (N) + uncommitted").
+3. **All files** in the design is a flat list of *changed* files. Today it's
+   the whole repo tree. → **Decided:** in Overview mode the rail shows only
+   the change ("Branch files"); the tree comes back with the normal panel
+   when you leave the Overview. Quick open still covers the tree.
+4. **Intent in Uncommitted mode**: v3 hides Intent outside Branch mode. The
+   trace still makes sense for uncommitted edits (today it shows). → Show
+   it in Uncommitted, hide it only in Selected.
+5. **Name clash**: the tab strip already has **Review (N)** for gutter
+   review comments ("Send to Claude"). A second "Review" in the Files panel
+   would be confusing. → Rename the comments button **Comments (N)**: it
+   holds notes you send to Claude, while the Files panel's Review is the
+   reading queue the design is built around (F6).
+6. **`[` / `]`** toggle the side rails today, and v3 makes them back /
+   forward. → **Decided:** they keep toggling the rails; back / forward are
+   Alt+← / Alt+→.
+7. **Loading states**: the design has none. → **Decided:** keep the
+   shimmering skeletons per section (F3), since `/calls` can take seconds.
+8. **Contract cap**: today it shows 40 per category + "N more"; the Review
+   Contracts group has no cap. → Keep the cap inside the group.
+9. **`#overview-strip`** above the composer and the Overview tab badge
+   aren't drawn (the design never shows Chat). → Unchanged.
+10. **Phone Review list**: v3 hides the right rail on a phone, so there's no
+    review queue there at all. → F13 adds it as a section.
+11. **Layer rows** assume every package has a layer. Repos with no rules
+    file (or only presets for one language) need the import-depth fallback
+    (B3).
+12. **Analyzer errors / timeouts** (a timed-out analysis is an error today):
+    not drawn. → An alert in Caveats and on the Map section's summary.
+
+## New things the design adds
+
+Inspector + selection history, a page that adjusts to the selection
+(section focus + sticky header), verdict sentence, Caveats disclosure,
+reviewed ticks and progress, Review queue with keys and area filter,
+combined package + function map with related-set highlighting, Fold
+unrelated and Isolate, Peek excerpts, the call's code line in caller rows,
+positive test coverage ("Reached by …"), signature before/after, contract →
+function → callers, Diff | File switch inside an editor tab, "Ask Claude to
+fix" on findings and broken imports, selectable matrix cells, PR switcher
+in the reviewer view, phone bottom-sheet inspector.
+
+## Decisions (2026-10-05)
+
+1. The Packages | Functions switch stays (F8).
+2. `[` / `]` keep toggling the side rails; back / forward are Alt+← / →.
+3. The tab strip's review-comments button becomes "Comments (N)"; "Review"
+   is the Files panel's reading queue.
+4. The Review tab exists only while the Overview tab is active.
+5. Our Git log tab stays as is, with its commit selection.
+6. In Overview mode the right rail shows only the change (Review, Changed,
+   Branch files, Git log); no repo tree there.
+7. Skeletons stay for every loading part.
+
+## Status
+
+Revised for v3 on 2026-10-05 (the v2 version was never built). B1 built
+2026-10-05; next: B2.

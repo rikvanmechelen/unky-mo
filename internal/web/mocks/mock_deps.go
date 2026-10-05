@@ -592,6 +592,21 @@ func (m *MockGitFiles) EXPECT() *MockGitFilesMockRecorder {
 	return m.recorder
 }
 
+// Annotate mocks base method.
+func (m *MockGitFiles) Annotate(o *gitfiles.Overview, path string) (*gitfiles.Annotated, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Annotate", o, path)
+	ret0, _ := ret[0].(*gitfiles.Annotated)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Annotate indicates an expected call of Annotate.
+func (mr *MockGitFilesMockRecorder) Annotate(o, path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Annotate", reflect.TypeOf((*MockGitFiles)(nil).Annotate), o, path)
+}
+
 // Branch mocks base method.
 func (m *MockGitFiles) Branch(dir string) string {
 	m.ctrl.T.Helper()

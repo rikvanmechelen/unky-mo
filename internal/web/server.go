@@ -30,6 +30,9 @@ type Server struct {
 	overviewCache *ttlCache
 	archCache     *ttlCache
 	callCache     *fingerprintCache
+	// excerptCache keeps annotated files for the Overview's code excerpts,
+	// keyed by the change's revisions (and a working-tree file's stamp).
+	excerptCache *ttlCache
 	// selectionCache resolves Git log selections (see changeQuery).
 	selectionCache *ttlCache
 	// Reviewer view: a branch's head commit (localCache) or a PR branch's,
@@ -84,6 +87,7 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		overviewCache:  newTTLCache(2 * time.Second),
 		archCache:      newTTLCache(3 * time.Second),
 		callCache:      newFingerprintCache(),
+		excerptCache:   newTTLCache(10 * time.Minute),
 		selectionCache: newTTLCache(10 * time.Minute),
 		localRefCache:  newTTLCache(5 * time.Second),
 		fetchCache:     newTTLCache(5 * time.Minute),
@@ -113,6 +117,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/overview", s.handleOverview)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/architecture", s.handleArchitecture)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/calls", s.handleCalls)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/excerpt", s.handleExcerpt)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/scope", s.handleScope)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/fetch-base", s.handleFetchBase)
 	// The reviewer view: a branch, or a pull request (resolved by number).
@@ -120,6 +125,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET "+prefix+"/overview", s.handleBranchOverview)
 		s.mux.HandleFunc("GET "+prefix+"/architecture", s.handleBranchArchitecture)
 		s.mux.HandleFunc("GET "+prefix+"/calls", s.handleBranchCalls)
+		s.mux.HandleFunc("GET "+prefix+"/excerpt", s.handleBranchExcerpt)
 		s.mux.HandleFunc("GET "+prefix+"/file", s.handleBranchFile)
 		s.mux.HandleFunc("PUT "+prefix+"/file", s.handleBranchSaveFile)
 		s.mux.HandleFunc("GET "+prefix+"/tree", s.handleBranchTree)

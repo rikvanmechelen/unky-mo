@@ -153,6 +153,10 @@ type GitFiles interface {
 	// selection that includes the uncommitted changes.
 	HeadCommit(dir string) (root, head string, err error)
 	OverviewWorktree(root, base string) (*gitfiles.Overview, error)
+	// Annotate reads one file of o's change as rows of both versions (see
+	// gitfiles.Annotate): a file o lists, or an unchanged one read from the
+	// new side. path must already be one the caller lists.
+	Annotate(o *gitfiles.Overview, path string) (*gitfiles.Annotated, error)
 }
 
 // ChangeAnalyzer works out a change's architecture delta (package imports
@@ -575,6 +579,12 @@ func (g realGitFiles) OverviewWorktree(root, base string) (*gitfiles.Overview, e
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.GetOverviewWorktree(ctx, g.cmd, root, base)
+}
+
+func (g realGitFiles) Annotate(o *gitfiles.Overview, path string) (*gitfiles.Annotated, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.Annotate(ctx, g.cmd, o, path)
 }
 
 func (g realGitFiles) FetchBase(root, base string) error {
