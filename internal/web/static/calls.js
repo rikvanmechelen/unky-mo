@@ -113,8 +113,10 @@ function callsSummary(cg) {
 
 // createCallsView renders a call graph. onOpen(path, line, before) opens a
 // file at a line (before: the line is in the base version); onMention, if
-// given, puts text into the composer.
-function createCallsView({ onOpen, onMention } = {}) {
+// given, puts text into the composer; changedIn(f), if given, names the
+// conversation turn ({n, uuid, text}) that changed f, which onRevealTurn
+// scrolls to.
+function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
   const root = el("div", { class: "calls" });
   let cg = null, ix = null;
   let focus = []; // focus stack: function IDs, innermost last
@@ -322,6 +324,14 @@ function createCallsView({ onOpen, onMention } = {}) {
       ]),
       el("div", { class: "overview__muted calls__id", text: f.id + (f.from ? ` (was ${f.from})` : "") }),
     ];
+    const turn = changedIn?.(f);
+    if (turn) {
+      const text = turn.text.replace(/\s+/g, " ").trim();
+      parts.push(el("div", { class: "calls__turn" }, [
+        document.createTextNode(`Changed in turn ${turn.n}: `),
+        link(text.length > 90 ? text.slice(0, 89) + "…" : text || "(image)", () => onRevealTurn?.(turn.uuid), "Show this prompt in the chat"),
+      ]));
+    }
     const section = (title, rows) => rows.length ? el("div", { class: "calls__list" }, [el("div", { class: "calls__list-title", text: title }), ...rows]) : null;
     const opMark = (c) => (c.op === "+" ? " (new)" : c.op === "-" ? " (removed)" : "");
     const rows = (list, end) => list.map((c) => {

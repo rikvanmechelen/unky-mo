@@ -86,7 +86,7 @@ function createIntentTrace(describeUser) {
   let turns, edits, agentTurns, seen, lastNote, version;
   function reset() {
     turns = []; // [{n, uuid, text}]
-    edits = []; // [{turn, path (absolute), tool, id, note, agent}]
+    edits = []; // [{turn, path (absolute), tool, id, note, agent, hunks}]
     agentTurns = new Map(); // Agent tool_use id → turn
     seen = new Set(); // line uuids already folded (a reconnect replays them)
     lastNote = new Map(); // "" (main) or agent id → the last assistant text
@@ -109,6 +109,16 @@ function createIntentTrace(describeUser) {
             const n = edits.length;
             edits = edits.filter((e) => e.id !== b.tool_use_id);
             if (edits.length !== n) version++;
+          } else if (b.type === "tool_result" && msg.toolUseResult && typeof msg.toolUseResult === "object") {
+            // Which lines the edit wrote: [newStart, newLines, oldStart,
+            // oldLines] per hunk; a created file is all of it.
+            const e = edits.find((x) => x.id === b.tool_use_id);
+            const r = msg.toolUseResult;
+            if (e && Array.isArray(r.structuredPatch)) {
+              e.hunks = r.type === "create" ? [[1, Infinity, 1, 0]]
+                : r.structuredPatch.map((h) => [h.newStart, h.newLines, h.oldStart, h.oldLines]);
+              version++;
+            }
           }
         }
       }
@@ -148,6 +158,30 @@ function createIntentTrace(describeUser) {
     get edits() { return edits; },
     get version() { return version; },
   };
+}
+
+// turnForRange is the turn whose edit last wrote any of lines from..to of
+// file rel (repo-relative) as it is now, from the edits' hunks. A hunk's
+// lines move with every later edit to the same file above it, so each is
+// shifted by those edits' line deltas first: approximate, but right for the
+// usual run of edits. Null when no edit with hunks touched those lines.
+function turnForRange(trace, root, rel, from, to) {
+  const abs = root.replace(/\/$/, "") + "/" + rel;
+  const edits = trace.edits.filter((e) => e.path === abs && e.hunks);
+  let best = null;
+  edits.forEach((e, i) => {
+    for (const [start, count] of e.hunks) {
+      let a = start, b = count === Infinity ? Infinity : start + Math.max(count, 1) - 1;
+      for (const later of edits.slice(i + 1)) {
+        for (const [ns, nl, os, ol] of later.hunks) {
+          if (nl === Infinity) { a = -1; break; } // rewritten whole: these lines are gone
+          if (os + ol <= a) { const d = nl - ol; a += d; if (b !== Infinity) b += d; }
+        }
+      }
+      if (a > 0 && a <= to && b >= from) best = e;
+    }
+  });
+  return best ? trace.turns[best.turn - 1] || null : null;
 }
 
 // buildTraceRows lays an overview's files against the turns that edited
@@ -327,6 +361,9 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     // without a line.
     onOpen: (path, line, before) => openDiff({ path }, before ? undefined : line),
     onMention,
+    // The prompt whose edit last changed a function (chat view only).
+    changedIn: (f) => (withTranscript && data?.root && f.status && !f.before ? turnForRange(trace, data.root, f.path, f.line, f.end || f.line) : null),
+    onRevealTurn: revealTurn,
   });
   let lastLoad = 0;
   let fetching = false; // a fetch of origin's base is running
