@@ -1182,6 +1182,17 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     model: getModel,
     selection,
     open: openEntity,
+    // diffKind is the editor tab kind (and hash) that shows a file's change
+    // the way the tab compares it.
+    diffKind() {
+      if (!data) return { kind: "diff" };
+      if (data.mode === "commits") return { kind: data.worktree ? "sdiff" : "range", hash: selIDs() };
+      return { kind: data.mode === "branch" ? "bdiff" : "diff" };
+    },
+    // showFile selects a file the change lists, if it does.
+    showFile(path) {
+      if (getModel()?.E.has("file:" + path)) selection.select("file:" + path);
+    },
     excerpt,
     peekExcerpt,
     // What the inspector can do beyond showing: each null where the page

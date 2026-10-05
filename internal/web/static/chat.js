@@ -616,6 +616,8 @@ function main() {
     chatPanel: document.getElementById("chat-panel"),
     editorPanel: document.getElementById("editor-panel"),
     overview,
+    diffKind: () => overview.diffKind(),
+    onShowInOverview: (path) => { editor.showOverview(); overview.showFile(path); },
   });
   const rails = createRails(shell);
   createInspector(inspectorEl, overview);

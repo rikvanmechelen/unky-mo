@@ -674,6 +674,10 @@ h1, h2 {
 .editor-pane__status { flex: none; color: var(--ink-4); }
 .editor-pane__kind { flex: none; padding: 1px 6px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
 .editor-pane__btn { all: unset; cursor: pointer; flex: none; color: var(--ink-2); border-bottom: 1px solid var(--line); }
+.editor-pane__seg { flex: none; display: inline-flex; box-shadow: inset 0 0 0 1px var(--ink); }
+.editor-pane__segbtn { all: unset; cursor: pointer; padding: 3px 9px; font-size: 12px; line-height: 1.2; }
+.editor-pane__segbtn.is-active { background: var(--ink); color: var(--paper); cursor: default; }
+.editor-pane__segbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .editor-pane__btn:hover { color: var(--ink); border-bottom-color: currentColor; }
 .editor-pane__btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .editor-pane__btn:disabled { cursor: default; color: var(--ink-4); border-bottom-color: transparent; }

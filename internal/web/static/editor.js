@@ -194,7 +194,7 @@ function clockTime() {
 
 // createEditorTabs builds the tab strip. Without a chatPanel (the reviewer
 // view) there's no Chat tab and the Overview is the home tab.
-function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
+function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = () => ({ kind: "diff" }), onShowInOverview }) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // the target's API prefix, e.g. /api/sessions/@3
   let available = false;
@@ -318,12 +318,23 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     const buttons = kind !== "file" ? [
       barButton("Previous change", withView((v) => { CM.goToPreviousChunk(v); v.focus(); })),
       barButton("Next change", withView((v) => { CM.goToNextChunk(v); v.focus(); })),
-      barButton("Open file", () => open(path, "file")),
     ] : [
       barButton("Find", withView((v) => CM.openSearchPanel(v))),
       barButton("Go to line", withView((v) => CM.gotoLine(v))),
-      barButton("Changes", () => open(path, "diff")),
     ];
+    // Diff | File: the same file as the change the Overview shows, or as
+    // it is, in place of this tab.
+    if (kind !== "commit") {
+      const seg = el("span", { class: "editor-pane__seg", role: "group", "aria-label": "Show as" });
+      for (const [k, label, title] of [["diff", "Diff", "The change, as the Overview compares it"], ["file", "File", "The whole file"]]) {
+        const on = k === "file" ? kind === "file" : kind !== "file";
+        const b = el("button", { class: "editor-pane__segbtn" + (on ? " is-active" : ""), type: "button", "aria-pressed": String(on), title, text: label });
+        b.addEventListener("click", () => { if (!on) switchKind(tab, k); });
+        seg.appendChild(b);
+      }
+      buttons.unshift(seg);
+    }
+    if (onShowInOverview) buttons.push(barButton("Show in Overview", () => onShowInOverview(path)));
     tab.banner = el("div", { class: "editor-pane__banner", hidden: "" });
     tab.info = el("div", { class: "editor-pane__info", hidden: "" });
     tab.host = el("div", { class: "editor-pane__host" + (kind !== "file" ? " is-diff" : "") });
@@ -362,6 +373,17 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
       tabs.splice(at, 0, tab);
     }
     activate(tab);
+  }
+
+  // switchKind shows tab's file the other way (its change, or the file),
+  // at the cursor's line, in the tab's place: the old tab closes unless it
+  // has unsaved edits.
+  function switchKind(tab, to) {
+    const v = tab.view;
+    const line = v ? v.state.doc.lineAt(v.state.selection.main.head).number : 0;
+    const target = to === "file" ? { kind: "file" } : diffKind(tab.path) || { kind: "diff" };
+    reveal(tab.path, line > 1 ? line : undefined, target.kind, target.hash);
+    if (!tab.dirty && active !== tab && tabs.includes(tab)) closeTab(tab);
   }
 
   async function closeTab(tab) {

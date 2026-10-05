@@ -741,6 +741,26 @@ it over. A step gets its detailed plan in this doc before coding
   between `bdiff`/`range`/`sdiff` and `file` in place (same path, same
   line), and Show in Overview selects `file:<path>`. In Selected mode,
   File shows the selection's head side read-only.
+
+  **F11 detail.**
+  - **Diff | File switch:** every editor tab but a `commit` one gets a
+    two-button switch in its bar. It replaces today's "Open file" (diff
+    tabs) and "Changes" (file tabs) buttons.
+    - **File** opens the plain file tab at the line the cursor is on (a
+      diff tab's editable side is the working copy, so its line numbers
+      are the file's).
+    - **Diff** opens the change the Overview shows, at that line:
+      `overview.diffKind()` gives `bdiff` (branch), `diff` (uncommitted)
+      or `range` / `sdiff` with the selection's ids (Selected). Without an
+      Overview it's `diff`.
+    - The switch takes the tab's place: the new tab opens next to it, and
+      the old one closes unless it has unsaved edits.
+  - **Show in Overview** (when the page has an Overview) shows the
+    Overview tab and selects `file:<path>`. A file the change doesn't list
+    just shows the Overview.
+  - Wiring: `createEditorTabs` takes `diffKind()` and
+    `onShowInOverview(path)`; `chat.js` and `branch.js` pass them.
+
 - **F12. Reviewer view** (`branch.html`) gets the three columns. Left: the
   project's open PRs (switching re-targets the page), nav bar and
   inspector. Middle: the PR header line. Right: Review + Files. No Intent
@@ -822,4 +842,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F10 built 2026-10-05; next: F11.
+backend) F1–F11 built 2026-10-05; next: F12.

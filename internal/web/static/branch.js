@@ -36,6 +36,8 @@ function branchMain() {
     chatPanel: null,
     editorPanel: document.getElementById("editor-panel"),
     overview,
+    diffKind: () => overview.diffKind(),
+    onShowInOverview: (path) => { editor.showOverview(); overview.showFile(path); },
   });
 
   // showTarget fills the header from what the server resolved the branch
