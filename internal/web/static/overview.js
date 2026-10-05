@@ -337,6 +337,86 @@ function layoutArchGraph(nodes, edges) {
   return { rows: rows.filter(Boolean), depth };
 }
 
+// Skeletons stand in for the parts of the tab still loading: shimmering
+// boxes laid out with the real sections' classes, so the page doesn't jump
+// when the answer lands. They fade in after a moment (CSS), so a fast load
+// never flashes one.
+
+// bone is one shimmering box; w is a CSS width, h a height in px.
+function bone(w, h = 12, cls = "") {
+  const b = el("span", { class: "skel" + (cls ? " " + cls : ""), "aria-hidden": "true" });
+  b.style.width = w;
+  b.style.height = h + "px";
+  return b;
+}
+
+// skelWrap marks a skeleton for assistive tech and the fade-in.
+function skelWrap(cls, label, children) {
+  return el("div", { class: "skel-wrap " + cls, role: "status", "aria-busy": "true" }, [el("span", { class: "skel-label", text: label }), ...children]);
+}
+
+function skelHead(title, extra = []) {
+  return el("div", { class: "overview-section__head" }, [title ? el("h3", { text: title }) : bone("90px", 11), ...extra]);
+}
+
+// overviewSkeleton is the whole tab before its first /overview answer.
+function overviewSkeleton() {
+  const NAMES = ["62%", "48%", "71%", "40%", "55%", "66%", "45%"];
+  const files = [el("div", { class: "overview-group" }, [bone("120px", 10), bone("50px", 10)])];
+  NAMES.forEach((w, i) => {
+    if (i === 4) files.push(el("div", { class: "overview-group" }, [bone("90px", 10), bone("50px", 10)]));
+    files.push(el("div", { class: "skel-file" }, [bone("12px", 12), bone(w, 12), bone("56px", 12, "skel-push")]));
+  });
+  return skelWrap("overview-skel", "Loading the overview…", [
+    el("div", { class: "overview-head" }, [bone("min(340px, 70%)", 16), bone("170px", 26)]),
+    el("div", { class: "overview-chips" }, ["70%", "45%", "60%", "50%"].map((w) => el("div", { class: "overview-chip" }, [bone(w, 26), bone("85%", 12)]))),
+    el("div", { class: "overview-section" }, [
+      skelHead(null, [bone("150px", 10)]),
+      bone("100%", 14),
+      el("div", { class: "overview-legend" }, ["60px", "50px", "70px", "56px"].map((w) => bone(w, 12))),
+    ]),
+    el("div", { class: "overview-body" }, [archSkeleton(null), surfaceSkeleton()]),
+    el("div", { class: "overview-body" }, [
+      el("div", { class: "overview-section" }, [
+        skelHead(null, [bone("110px", 10)]),
+        el("div", { class: "overview-treemap skel-treemap" }, [bone("auto", 0, "skel-tm-a"), bone("auto", 0), bone("auto", 0), bone("auto", 0), bone("auto", 0)]),
+      ]),
+      el("div", { class: "overview-section" }, [skelHead(null), el("div", { class: "overview-files" }, files)]),
+    ]),
+  ]);
+}
+
+// archSkeleton is the import graph's box: rows of package nodes. head is
+// the section head to keep (its view switch works while loading).
+function archSkeleton(head) {
+  const rows = [["90px", "120px"], ["110px", "70px", "130px"], ["100px"]];
+  return el("div", { class: "overview-section" }, [
+    head || skelHead(null, [bone("130px", 22)]),
+    skelWrap("skel-graph", "Reading imports and contracts…", rows.map((r) => el("div", { class: "skel-graph__row" }, r.map((w) => bone(w, 24))))),
+  ]);
+}
+
+function surfaceSkeleton() {
+  return el("div", { class: "overview-section" }, [
+    skelHead("Contract surface"),
+    skelWrap("overview-surface", "Reading the contract surface…", ["80%", "55%", "68%"].map((w) => el("div", { class: "overview-surface__row" }, [
+      el("div", { class: "overview-surface__kind" }, [bone("70px", 12)]),
+      el("div", { class: "overview-surface__items skel-items" }, [bone(w, 12), bone("40%", 12)]),
+    ]))),
+  ]);
+}
+
+// callsSkeleton is the Functions view's graph: callers, the changed
+// functions grouped in a unit, callees.
+function callsSkeleton() {
+  const col = (ws) => el("div", { class: "skel-calls__col" }, ws.map((w) => bone(w, 22)));
+  return skelWrap("skel-calls", "Reading functions and calls…", [
+    col(["70%", "85%", "60%"]),
+    el("div", { class: "skel-calls__unit" }, [bone("50%", 11), ...["90%", "75%", "82%", "68%"].map((w) => bone(w, 22))]),
+    col(["80%", "65%"]),
+  ]);
+}
+
 // createOverview builds the tab in panel. The chat view points it at a
 // session (setWindow); the reviewer view at a branch (setTarget, without a
 // transcript), and learns what the branch resolved to through onTarget.
@@ -407,7 +487,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     storageSet(OVERVIEW_MODE_KEY, m);
     data = null; etag = null; arch = null; archEtag = null; areaFilter = null; gen++;
     resetCalls();
-    note("Loading…");
+    render();
     load();
   }
 
@@ -445,7 +525,12 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   function render() {
     renderBadge();
-    if (!data) { note(error || (available ? "Loading…" : "No live session.")); return; }
+    if (!data) {
+      if (error || !available) note(error || "No live session.");
+      // Rebuilt only when not already shown, so the fade-in doesn't restart.
+      else if (!root.firstChild?.classList.contains("overview-skel")) root.replaceChildren(overviewSkeleton());
+      return;
+    }
     if (!data.repo) { note("This session isn't in a git checkout."); return; }
     const sum = summarizeOverview(data);
     const files = data.files || [];
@@ -831,7 +916,14 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // contracts is the architecture graph and the contract surface, side by
   // side. Until the first /architecture answer it's a placeholder.
   function contracts() {
-    if (!arch) return el("div", { class: "overview__note", text: "Reading imports and contracts…" });
+    if (!arch) {
+      const stacked = archView === "functions";
+      const head = skelHead(stacked ? "Calls" : "Architecture", [viewSwitch()]);
+      return el("div", { class: "overview-body" + (stacked ? " is-stacked" : "") }, [
+        stacked ? el("div", { class: "overview-section" }, [head, callsSkeleton()]) : archSkeleton(head),
+        surfaceSkeleton(),
+      ]);
+    }
     if (!arch.repo) return el("div");
     // The call graph needs the width: the surface goes under it.
     return el("div", { class: "overview-body" + (archView === "functions" ? " is-stacked" : "") }, [architecture(), surfaceSection()]);
@@ -898,7 +990,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     if (callsError && !calls) {
       parts.push(el("div", { class: "overview-rules is-error", text: `Couldn't read the calls: ${callsError}` }));
     } else if (!calls) {
-      parts.push(el("div", { class: "overview__note", text: "Reading functions and calls…" }));
+      parts.push(callsSkeleton());
     } else if (!calls.repo) {
       return el("div");
     } else if (!calls.languages?.length) {

@@ -1223,6 +1223,40 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-violation__files { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .overview-violation__file { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
 
+/* Overview skeletons (overview.js: overviewSkeleton & co.): shimmering
+   boxes in the real sections' layout while a part loads. The gradient is
+   fixed to the viewport, so every box shows one sweep moving across the
+   page. They fade in after 150ms, so a fast answer never flashes one. */
+.skel {
+  display: block; flex: none; max-width: 100%;
+  background: linear-gradient(100deg, var(--surface-2) 40%, color-mix(in srgb, var(--surface-2), var(--paper) 65%) 50%, var(--surface-2) 60%) fixed 0 0 / 300% 100%;
+  animation: spinner-shimmer 1.6s linear infinite;
+}
+.skel-wrap { animation: skel-in 0.25s ease-out 0.15s both; }
+@keyframes skel-in { from { opacity: 0; } }
+.skel-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.overview-skel { display: grid; gap: 20px; align-content: start; }
+.overview-skel .overview-chip { gap: 6px; }
+.overview-skel .overview-legend { gap: 8px 14px; }
+.overview-skel .overview-group { gap: 12px; }
+.skel-treemap { display: grid; grid-template-columns: 5fr 3fr 2fr; grid-template-rows: 3fr 2fr; gap: 3px; padding: 3px; }
+.skel-treemap .skel { width: auto !important; height: auto !important; }
+.skel-treemap .skel-tm-a { grid-row: span 2; }
+.skel-file { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
+.skel-push { margin-left: auto; }
+.skel-graph { display: grid; align-content: space-evenly; gap: 30px; height: 200px; padding: 8px; border: 1px solid var(--line); background: var(--paper); box-sizing: border-box; }
+.skel-graph__row { display: flex; justify-content: center; gap: 14px; min-width: 0; }
+.skel-graph__row .skel { flex: 0 1 auto; }
+.skel-items { gap: 6px; padding: 8px 10px; }
+.skel-calls { display: grid; grid-template-columns: 1fr 1.3fr 1fr; gap: 40px; align-items: center; height: 240px; padding: 12px 16px; border: 1px solid var(--line); box-sizing: border-box; }
+.skel-calls__col, .skel-calls__unit { display: grid; gap: 12px; justify-items: center; }
+.skel-calls__unit { padding: 10px; gap: 8px; border: 1px solid var(--line); background: var(--surface); justify-items: stretch; }
+.skel-calls .skel { justify-self: center; }
+.skel-calls__unit > .skel:first-of-type { justify-self: start; }
+@media (prefers-reduced-motion: reduce) {
+  .skel { animation: none; background: var(--surface-2); }
+}
+
 /* Overview: the Functions view (calls.js). Nodes follow the architecture
    graph's, so the two views read as one tool. */
 .calls { display: grid; gap: 8px; min-width: 0; }
@@ -1361,7 +1395,12 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-section__head .btn { margin-left: auto; }
 .overview-scope { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); font-size: 13px; }
 .overview-scope.is-drift { border-color: var(--claude); }
-.overview-scope.is-busy { color: var(--ink-3); font-style: italic; }
+.overview-scope.is-busy { position: relative; overflow: hidden; color: var(--ink-3); font-style: italic; }
+.overview-scope.is-busy::after {
+  content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;
+  background: var(--claude); animation: attachment-upload 1.2s ease-in-out infinite alternate; transform-origin: left;
+}
+@media (prefers-reduced-motion: reduce) { .overview-scope.is-busy::after { animation: none; } }
 .overview-scope.is-error { border-color: var(--red); color: var(--red); }
 .overview-scope__list { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
 
