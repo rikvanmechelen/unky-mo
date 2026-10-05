@@ -23,9 +23,6 @@ type rbCalls struct {
 	// Per resolver: constant path → the files defining it, Zeitwerk's first.
 	r       *hResolver
 	classes map[string][]string
-	// lastPath is the path of the last id call, for display: hCalls names a
-	// function right after giving it its ID, and a view's name is its path.
-	lastPath string
 }
 
 const (
@@ -66,10 +63,8 @@ func (l *rbCalls) fileOf(string, hImport) string { return "" }
 func (l *rbCalls) id(p string, d *hDef) string {
 	switch d.Name {
 	case rbViewName:
-		l.lastPath = p
 		return "view:" + p
 	case rbMainName:
-		l.lastPath = p
 		return "main:" + p
 	}
 	if d.IsClass {
@@ -93,7 +88,7 @@ func (l *rbCalls) id(p string, d *hDef) string {
 	return owner + "#" + d.Name
 }
 
-func (l *rbCalls) display(d *hDef) string {
+func (l *rbCalls) display(p string, d *hDef) string {
 	last := func(c string) string {
 		if i := strings.LastIndex(c, "::"); i >= 0 {
 			return c[i+2:]
@@ -102,12 +97,12 @@ func (l *rbCalls) display(d *hDef) string {
 	}
 	switch {
 	case d.Name == rbViewName:
-		if i := strings.Index("/"+l.lastPath, "/app/views/"); i >= 0 {
-			return l.lastPath[i+len("app/views/"):]
+		if i := strings.Index("/"+p, "/app/views/"); i >= 0 {
+			return p[i+len("app/views/"):]
 		}
-		return path.Base(l.lastPath)
+		return path.Base(p)
 	case d.Name == rbMainName:
-		return path.Base(l.lastPath)
+		return path.Base(p)
 	case d.IsClass:
 		return last(d.Name)
 	case strings.HasSuffix(d.Owner, rbSelf):

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"path"
 	"regexp"
 	"strings"
 )
@@ -23,7 +24,10 @@ func (l *pyCalls) setup(idx *index) bool {
 
 func (l *pyCalls) id(p string, d *hDef) string { return p + ":" + qualify(d.Owner, d.Name) }
 
-func (l *pyCalls) display(d *hDef) string {
+func (l *pyCalls) display(p string, d *hDef) string {
+	if d.Name == "<module>" {
+		return path.Base(p) + " (top level)"
+	}
 	parts := strings.Split(qualify(d.Owner, d.Name), ".")
 	if len(parts) > 2 {
 		parts = parts[len(parts)-2:]

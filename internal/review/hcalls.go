@@ -95,8 +95,9 @@ type hLang interface {
 	fileOf(p string, imp hImport) string
 	// id is a definition's ID: stable across versions for the same code.
 	id(p string, d *hDef) string
-	// display is a short name for the graph ("User.save").
-	display(d *hDef) string
+	// display is a short name for the graph ("User.save"); p is the
+	// definition's file.
+	display(p string, d *hDef) string
 	// resolve finds a call's target ID (one definition), or returns the
 	// IDs it would have had (want) when there's none.
 	resolve(r *hResolver, p string, d *hDef, c hCall) (to string, want []string)
@@ -130,7 +131,7 @@ func (h *hCalls) funcs(idx *index, files []string, full bool) (*callSet, error) 
 		test := isTest(p)
 		for i := range f.Defs {
 			d := &f.Defs[i]
-			fn := &fn{Func: Func{ID: h.l.id(p, d), Name: h.l.display(d), Path: p, Line: d.Line, End: d.End,
+			fn := &fn{Func: Func{ID: h.l.id(p, d), Name: h.l.display(p, d), Path: p, Line: d.Line, End: d.End,
 				Unit: h.l.unit(p), Lang: h.l.name(), Test: test}, body: d.Body, sig: d.Sig, req: d.Req,
 				entry: d.IsClass || strings.HasPrefix(d.Name, "<")} // pseudo-definitions are named "<…>"
 			for _, c := range d.Calls {

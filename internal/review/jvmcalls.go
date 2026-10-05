@@ -58,7 +58,7 @@ func (l *jvmCalls) id(p string, d *hDef) string {
 	return qualify(l.pkg[p], qualify(d.Owner, d.Name))
 }
 
-func (l *jvmCalls) display(d *hDef) string {
+func (l *jvmCalls) display(_ string, d *hDef) string {
 	if recv := jvmExtRecv(d); recv != "" {
 		return lastSegment(recv) + "." + d.Name
 	}

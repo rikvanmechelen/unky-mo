@@ -39,8 +39,17 @@ func (l *jsCalls) id(p string, d *hDef) string {
 	return strings.TrimSuffix(p, path.Ext(p)) + "#" + qualify(d.Owner, d.Name)
 }
 
-func (l *jsCalls) display(d *hDef) string {
+func (l *jsCalls) display(p string, d *hDef) string {
+	if d.Name == "<module>" {
+		return path.Base(p) + " (top level)"
+	}
 	parts := strings.Split(qualify(d.Owner, d.Name), ".")
+	// An anonymous default export (a Stimulus controller, a component) is
+	// known by its file's name.
+	if parts[0] == "default" {
+		base := path.Base(p)
+		parts[0] = strings.TrimSuffix(base, path.Ext(base))
+	}
 	if len(parts) > 2 {
 		parts = parts[len(parts)-2:]
 	}

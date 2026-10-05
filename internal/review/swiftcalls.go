@@ -124,7 +124,7 @@ func (l *swiftCalls) id(p string, d *hDef) string {
 	return l.moduleOf(p) + "." + qualify(d.Owner, d.Name)
 }
 
-func (l *swiftCalls) display(d *hDef) string {
+func (l *swiftCalls) display(_ string, d *hDef) string {
 	if d.Name == swiftTop {
 		return "top level"
 	}

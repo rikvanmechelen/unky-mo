@@ -250,3 +250,18 @@ func TestJSRemovedImported(t *testing.T) {
 		t.Errorf("missing %s in %v", w, findingKeys(cg))
 	}
 }
+
+// An anonymous default export is named after its file.
+func TestJSDisplayDefault(t *testing.T) {
+	l := &jsCalls{}
+	p := "app/javascript/controllers/show_more_controller.js"
+	if got := l.display(p, &hDef{Name: "connect", Owner: "default"}); got != "show_more_controller.connect" {
+		t.Errorf("method = %q", got)
+	}
+	if got := l.display(p, &hDef{Name: "default", IsClass: true}); got != "show_more_controller" {
+		t.Errorf("class = %q", got)
+	}
+	if got := l.display(p, &hDef{Name: "save", Owner: "Cart"}); got != "Cart.save" {
+		t.Errorf("named = %q", got)
+	}
+}
