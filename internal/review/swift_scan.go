@@ -8,8 +8,19 @@ import (
 // Swift scanning: swiftCode blanks comments (they nest), strings
 // ("…" with \( ) interpolation, """multi-line""", #"raw"#) and keeps line
 // numbers.
-func swiftCode(src string) string {
+func swiftCode(src string) string { return swiftBlank(src, true) }
+
+// swiftNoComments blanks only the comments, keeping strings: for body
+// hashes, where a changed string is a change but a changed comment isn't.
+func swiftNoComments(src string) string { return swiftBlank(src, false) }
+
+func swiftBlank(src string, strs bool) string {
 	b := []byte(src)
+	str := func(i, j int) {
+		if strs {
+			blank(b, i, j)
+		}
+	}
 	n := len(b)
 	for i := 0; i < n; {
 		c := b[i]
@@ -55,7 +66,7 @@ func swiftCode(src string) string {
 			if end >= 0 {
 				j = k + 1 + end + len(closer)
 			}
-			blank(b, i, j)
+			str(i, j)
 			i = j
 		case c == '"' && i+2 < n && b[i+1] == '"' && b[i+2] == '"':
 			end := strings.Index(string(b[i+3:]), `"""`)
@@ -63,7 +74,7 @@ func swiftCode(src string) string {
 			if end >= 0 {
 				j = i + 3 + end + 3
 			}
-			blank(b, i, j)
+			str(i, j)
 			i = j
 		case c == '"':
 			j := i + 1
@@ -84,7 +95,7 @@ func swiftCode(src string) string {
 				}
 				j++
 			}
-			blank(b, i, min(n, j+1))
+			str(i, min(n, j+1))
 			i = j + 1
 		default:
 			i++
