@@ -1134,7 +1134,7 @@ button.file-row.graph-file:hover { background: var(--surface-2); }
 
 /* Overview tab (overview.js): the shape of the branch's change. */
 .overview-panel { overflow-y: auto; }
-.overview { padding: 16px 20px 32px; display: grid; gap: 20px; align-content: start; }
+.overview { padding: 0 0 32px; display: grid; align-content: start; }
 .overview__note { font-size: 13px; color: var(--ink-3); font-style: italic; }
 .overview__muted { color: var(--ink-3); font-size: 12px; }
 .overview .mono { font-family: var(--font-mono); font-size: 12px; }
@@ -1257,6 +1257,61 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-violation__files { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .overview-violation__file { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
 
+/* Overview page (overview.js: pageHead, section): a header with the
+   verdict, then sections that open where the selection is. Once something
+   is selected the header shrinks to a sticky strip. */
+.ov-head { display: grid; gap: 10px; padding: 16px 20px 14px; background: var(--paper); border-bottom: 2px solid var(--ink); }
+.ov-head.is-compact { position: sticky; top: 0; z-index: 4; gap: 6px; padding: 10px 20px; }
+.ov-head .overview-head__what { flex: 1; min-width: 200px; }
+.ov-note { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; background: var(--yellow); color: var(--on-yellow); font-size: 13px; line-height: 1.3; }
+.ov-note__text { flex: 1; }
+.ov-note__act { all: unset; cursor: pointer; font-weight: 700; border-bottom: 1px solid currentColor; }
+.ov-note__act:disabled { cursor: default; opacity: 0.6; }
+.ov-note__act:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ov-verdict { margin: 0; font-size: 26px; line-height: 28px; font-weight: 700; letter-spacing: -0.02em; text-wrap: pretty; }
+.ov-head.is-compact .ov-verdict { font-size: 19px; line-height: 22px; }
+.ov-verdict .skel { margin: 2px 0; }
+.ov-verdict__seg.is-link { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.16em; }
+.ov-verdict__seg.is-red { color: var(--red); }
+.ov-verdict__seg.is-warn { background: var(--yellow); color: var(--on-yellow); padding: 0 0.12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.ov-verdict__seg.is-on { background: var(--warn-bg); outline: 2px solid var(--yellow); }
+.ov-verdict__seg.is-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ov-verdict__sub { font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--ink-2); }
+.ov-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ov-chip { all: unset; cursor: pointer; font-size: 12px; line-height: 1; padding: 5px 8px; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); }
+.ov-chip:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--ink); }
+.ov-chip:disabled { cursor: default; }
+.ov-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ov-caveats { display: grid; gap: 6px; justify-items: start; }
+.ov-caveats__toggle { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; line-height: 1; color: var(--ink-3); }
+.ov-caveats__toggle::before { content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.ov-caveats__toggle.is-open::before { transform: rotate(45deg); }
+.ov-caveats__toggle:hover { color: var(--ink); }
+.ov-caveats__toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ov-caveats__list { display: grid; gap: 5px; width: 100%; }
+.ov-caveat { all: unset; cursor: pointer; display: grid; grid-template-columns: 9px 1fr; column-gap: 8px; align-items: baseline; font-size: 12.5px; line-height: 1.35; color: var(--ink-2); }
+.ov-caveat:disabled { cursor: default; }
+.ov-caveat:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
+.ov-caveat__sq { width: 7px; height: 7px; background: var(--ink-4); }
+.ov-caveat.is-red .ov-caveat__sq { background: var(--red); }
+.ov-caveat.is-warn .ov-caveat__sq { background: var(--yellow); }
+.ov-empty { padding: 16px 20px; }
+.ov-sec { border-bottom: 1px solid var(--line); }
+.ov-sec__head { all: unset; cursor: pointer; display: flex; align-items: center; gap: 12px; width: 100%; box-sizing: border-box; padding: 12px 20px; }
+.ov-sec__head:hover { background: var(--surface); }
+.ov-sec__head:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.ov-sec__head.is-skel { cursor: default; }
+.ov-sec__head.is-skel:hover { background: none; }
+.ov-sec__chev { flex: none; width: 6px; height: 6px; border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink); transform: rotate(-45deg); }
+.ov-sec__chev.is-open { transform: rotate(45deg); }
+.ov-sec__title { font-size: 15px; line-height: 1; font-weight: 700; letter-spacing: -0.01em; }
+.ov-sec__sum { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.3; color: var(--ink-3); }
+.ov-sec__flag { flex: none; width: 10px; height: 10px; }
+.ov-sec__flag.is-red { background: var(--red); }
+.ov-sec__flag.is-yellow { background: var(--yellow); }
+.ov-sec__body { padding: 0 20px 20px; display: grid; gap: 20px; min-width: 0; }
+.ov-sec__stack { display: grid; gap: 20px; min-width: 0; }
+
 /* Overview skeletons (overview.js: overviewSkeleton & co.): shimmering
    boxes in the real sections' layout while a part loads. The gradient is
    fixed to the viewport, so every box shows one sweep moving across the
@@ -1269,7 +1324,7 @@ button.file-row.overview-file { padding: 3px 12px; }
 .skel-wrap { animation: skel-in 0.25s ease-out 0.15s both; }
 @keyframes skel-in { from { opacity: 0; } }
 .skel-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.overview-skel { display: grid; gap: 20px; align-content: start; }
+.overview-skel { display: grid; align-content: start; }
 .overview-skel .overview-chip { gap: 6px; }
 .overview-skel .overview-legend { gap: 8px 14px; }
 .overview-skel .overview-group { gap: 12px; }

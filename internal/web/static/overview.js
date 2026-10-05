@@ -53,30 +53,17 @@ function skelHead(title, extra = []) {
   return el("div", { class: "overview-section__head" }, [title ? el("h3", { text: title }) : bone("90px", 11), ...extra]);
 }
 
-// overviewSkeleton is the whole tab before its first /overview answer.
+// overviewSkeleton is the whole tab before its first /overview answer: the
+// header (mode row, verdict, chips) and the section heads.
 function overviewSkeleton() {
-  const NAMES = ["62%", "48%", "71%", "40%", "55%", "66%", "45%"];
-  const files = [el("div", { class: "overview-group" }, [bone("120px", 10), bone("50px", 10)])];
-  NAMES.forEach((w, i) => {
-    if (i === 4) files.push(el("div", { class: "overview-group" }, [bone("90px", 10), bone("50px", 10)]));
-    files.push(el("div", { class: "skel-file" }, [bone("12px", 12), bone(w, 12), bone("56px", 12, "skel-push")]));
-  });
+  const secHead = (w) => el("div", { class: "ov-sec" }, [el("div", { class: "ov-sec__head is-skel" }, [bone("6px", 6), bone("70px", 14), bone(w, 11)])]);
   return skelWrap("overview-skel", "Loading the overview…", [
-    el("div", { class: "overview-head" }, [bone("min(340px, 70%)", 16), bone("170px", 26)]),
-    el("div", { class: "overview-chips" }, ["70%", "45%", "60%", "50%"].map((w) => el("div", { class: "overview-chip" }, [bone(w, 26), bone("85%", 12)]))),
-    el("div", { class: "overview-section" }, [
-      skelHead(null, [bone("150px", 10)]),
-      bone("100%", 14),
-      el("div", { class: "overview-legend" }, ["60px", "50px", "70px", "56px"].map((w) => bone(w, 12))),
+    el("div", { class: "ov-head" }, [
+      el("div", { class: "overview-head" }, [bone("170px", 26), bone("min(340px, 50%)", 14)]),
+      el("div", { class: "ov-verdict" }, [bone("min(620px, 90%)", 24), bone("min(420px, 60%)", 24)]),
+      el("div", { class: "ov-chips" }, ["60px", "110px", "70px", "150px"].map((w) => bone(w, 22))),
     ]),
-    el("div", { class: "overview-body" }, [archSkeleton(null), surfaceSkeleton()]),
-    el("div", { class: "overview-body" }, [
-      el("div", { class: "overview-section" }, [
-        skelHead(null, [bone("110px", 10)]),
-        el("div", { class: "overview-treemap skel-treemap" }, [bone("auto", 0, "skel-tm-a"), bone("auto", 0), bone("auto", 0), bone("auto", 0), bone("auto", 0)]),
-      ]),
-      el("div", { class: "overview-section" }, [skelHead(null), el("div", { class: "overview-files" }, files)]),
-    ]),
+    secHead("220px"), secHead("180px"), secHead("240px"), secHead("120px"),
   ]);
 }
 
@@ -368,14 +355,133 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     if (!data.repo) { note("This session isn't in a git checkout."); return; }
     const sum = summarizeOverview(data);
     const files = data.files || [];
-    root.replaceChildren(
-      header(),
-      ...(files.length
-        ? [chips(sum), noiseBar(), contracts(), ...(mode === "commits" ? [] : [withTranscript ? traceBox : scopeSection()]), body(sum)]
-        : [el("div", { class: "overview__note", text: data.mode === "commits" ? "These commits don't change any files." : data.mode === "branch" ? `No changes against ${data.base}.` : "No uncommitted changes." })]),
-    );
-    if (files.length) { drawTreemap(); if (withTranscript && mode !== "commits") renderTrace(); }
+    if (!files.length) {
+      root.replaceChildren(pageHead(null), el("div", { class: "overview__note ov-empty", text: data.mode === "commits" ? "These commits don't change any files." : data.mode === "branch" ? `No changes against ${data.base}.` : "No uncommitted changes." }));
+      renderStrip();
+      return;
+    }
+    const M = getModel();
+    const sums = ovSectionSummaries(M, { scope: scopeBusy ? "running" : scope?.result && scope.mode === data.mode ? "done" : "idle", stale: !!scope?.result && scope.mode === data.mode && scope.sig !== scopeSig(), hidden: hidden.size, area: areaFilter, focus: focusFn });
+    const traced = withTranscript && mode !== "commits";
+    const secs = [
+      section("map", "Map", sums.map, () => contracts()),
+      section("foot", "Footprint", sums.foot, () => el("div", { class: "ov-sec__stack" }, [noiseBar(), body(sum)])),
+      ...(traced ? [section("trace", "Intent", sums.trace, () => traceBox)] : []),
+      ...(mode !== "commits" ? [section("scope", "Scope", sums.scope, () => scopeBody())] : []),
+    ];
+    root.replaceChildren(pageHead(M), ...secs);
+    if (isOpen("foot")) drawTreemap();
+    if (traced && isOpen("trace")) renderTrace();
     renderStrip();
+  }
+
+  // --- The page: a header, then sections that open where the selection is ---
+
+  let manual = {}; // section key → open, set by its head; cleared by a new selection
+  let caveatsOpen = false;
+
+  function isOpen(key) {
+    if (key in manual) return manual[key];
+    const cur = selCurrent(hist);
+    return cur ? key === ovSection(getModel(), cur) : true;
+  }
+
+  function section(key, title, { summary, flag }, body) {
+    const open = isOpen(key);
+    const head = el("button", { class: "ov-sec__head", type: "button", "aria-expanded": String(open) }, [
+      el("span", { class: "ov-sec__chev" + (open ? " is-open" : ""), "aria-hidden": "true" }),
+      el("span", { class: "ov-sec__title", text: title }),
+      el("span", { class: "ov-sec__sum", text: summary }),
+      ...(flag ? [el("span", { class: `ov-sec__flag is-${flag}`, title: flag === "red" ? "Something here breaks" : "Worth a look" })] : []),
+    ]);
+    head.addEventListener("click", () => { manual[key] = !open; render(); });
+    return el("section", { class: "ov-sec" + (open ? " is-open" : ""), "data-sec": key }, [head, ...(open ? [el("div", { class: "ov-sec__body" }, [body()])] : [])]);
+  }
+
+  // revealSection scrolls the selection's section to just under the header.
+  function revealSection() {
+    const cur = selCurrent(hist);
+    if (!cur || !visible) return;
+    const sec = root.querySelector(`[data-sec="${ovSection(getModel(), cur)}"]`);
+    const head = root.querySelector(".ov-head");
+    if (!sec) return;
+    panel.scrollTop = Math.max(0, sec.offsetTop - (head?.offsetHeight || 0));
+  }
+
+  // The selection decides which sections are open, so a new one re-renders.
+  selection.subscribe((what) => {
+    if (what !== "select" && what !== "focus") return;
+    manual = {};
+    if (!data?.repo) return;
+    render();
+    requestAnimationFrame(revealSection);
+  });
+
+  // pageHead is the header: what's compared, notes, the verdict and the
+  // counts. Once something is selected it shrinks to a sticky strip.
+  function pageHead(M) {
+    const compact = !!selCurrent(hist);
+    const parts = [header(), ...headNotes()];
+    if (M) {
+      const cur = selCurrent(hist);
+      const segs = ovVerdict(M, { ticket: scope?.ticket?.id || ticketKey(), filtered: data.mode !== "branch" });
+      const verdict = el("div", { class: "ov-verdict" }, segs.map((sg) => {
+        const span = el("span", { class: "ov-verdict__seg" + (sg.tone ? ` is-${sg.tone}` : "") + (sg.target ? " is-link" : "") + (sg.target && sg.target === cur ? " is-on" : ""), text: sg.t });
+        if (sg.target) {
+          span.setAttribute("role", "button");
+          span.tabIndex = 0;
+          span.addEventListener("click", () => selection.select(sg.target));
+          span.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selection.select(sg.target); } });
+          span.addEventListener("mouseenter", () => selection.hover(sg.target));
+          span.addEventListener("mouseleave", () => selection.hover(null));
+        }
+        return span;
+      }));
+      if (!compact) verdict.append(" ", el("span", { class: "ov-verdict__sub", text: ovVerdictSub(M) }));
+      parts.push(verdict);
+      if (!compact) {
+        const chipEls = ovChips(M).map((c) => {
+          const b = el("button", { class: "ov-chip", type: "button", text: c.t });
+          if (c.target) b.addEventListener("click", () => selection.select(c.target));
+          else b.disabled = true;
+          return b;
+        });
+        if (!M.loaded.arch) chipEls.push(bone("140px", 22), bone("110px", 22));
+        parts.push(el("div", { class: "ov-chips" }, chipEls));
+      }
+      parts.push(caveatList(M));
+    }
+    return el("div", { class: "ov-head" + (compact ? " is-compact" : "") }, parts);
+  }
+
+  function caveatList(M) {
+    const items = ovCaveats(M);
+    const pending = !M.loaded.arch || !M.loaded.calls;
+    const toggle = el("button", { class: "ov-caveats__toggle" + (caveatsOpen ? " is-open" : ""), type: "button", "aria-expanded": String(caveatsOpen), text: `Caveats ${items.length}` + (pending ? "…" : "") });
+    toggle.addEventListener("click", () => { caveatsOpen = !caveatsOpen; render(); });
+    const list = caveatsOpen ? [el("div", { class: "ov-caveats__list" }, [
+      ...items.map((c) => {
+        const row = el("button", { class: `ov-caveat is-${c.tone}`, type: "button" }, [el("span", { class: "ov-caveat__sq", "aria-hidden": "true" }), el("span", { text: c.text })]);
+        if (c.target) row.addEventListener("click", () => selection.select(c.target));
+        else row.disabled = true;
+        return row;
+      }),
+      ...(pending ? [bone("60%", 12)] : []),
+    ])] : [];
+    return el("div", { class: "ov-caveats" }, [toggle, ...list]);
+  }
+
+  // headNotes are the yellow bars under the mode row: what makes this
+  // comparison less than it looks.
+  function headNotes() {
+    const out = [];
+    const bar = (text, action) => el("div", { class: "ov-note" }, [el("span", { class: "ov-note__text", text }), ...(action ? [action] : [])]);
+    if (mode === "branch" && data.fallback) out.push(bar(data.head ? "Nothing to compare: the branch is already part of its base." : "On the default branch, or no default branch found: showing uncommitted changes."));
+    if (data.truncated) out.push(bar("The file list is truncated."));
+    const stale = staleBase();
+    if (stale) out.push(stale);
+    if (error) out.push(bar(error));
+    return out;
   }
 
   // renderStrip fills the line above the composer: shown only when the
@@ -413,7 +519,6 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const head = el("div", { class: "overview-section__head" }, [
       el("h3", { text: "Intent trace" }),
       el("span", { class: "overview__muted", text: "files by the prompt that first edited them" }),
-      scopeButton(),
     ]);
     if (!data?.files?.length) { traceBox.replaceChildren(); return; }
     const files = data.files.filter((f) => !hidden.has(f.kind));
@@ -457,7 +562,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       }
     }
     const table = el("table", { class: "overview-trace" }, [el("thead", {}, [headRow]), body]);
-    traceBox.replaceChildren(head, ...scopeCard(), el("div", { class: "overview-trace-scroll" }, [table]), ...(selected ? [traceDetail(groups)] : []), el("div", { class: "overview-legend is-static" }, [
+    traceBox.replaceChildren(head, el("div", { class: "overview-trace-scroll" }, [table]), ...(selected ? [traceDetail(groups)] : []), el("div", { class: "overview-legend is-static" }, [
       el("span", {}, [el("i", { class: "overview-trace__mark is-legend" }), document.createTextNode("edited in that prompt")]),
       el("span", {}, [el("i", { class: "overview-trace__mark is-agent is-legend" }), document.createTextNode("by a subagent")]),
     ]));
@@ -541,7 +646,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     if (scopeBusy || !data) return;
     const g = gen, id = windowID, sig = scopeSig(), m = data.mode;
     scopeBusy = true; scopeError = "";
-    if (withTranscript) renderTrace(); else render();
+    render();
     try {
       const res = await fetch(`${api}/scope?base=${m}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -605,13 +710,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     return [el("div", { class: "overview-scope" + (drift.length ? " is-drift" : "") }, parts)];
   }
 
-  // scopeSection holds the scope check in the reviewer view, where there's
-  // no trace to put it in.
-  function scopeSection() {
+  // scopeBody is the Scope section: the check's button and its answer.
+  function scopeBody() {
     return el("div", { class: "overview-section" }, [
       el("div", { class: "overview-section__head" }, [
-        el("h3", { text: "Scope" }),
-        el("span", { class: "overview__muted", text: "does every file fit what the branch is for?" }),
+        el("span", { class: "overview__muted", text: "Does every file fit what " + (withTranscript ? "was asked" : "the branch is for") + "? The one part that asks a model; it only runs when you click." }),
         scopeButton(),
       ]),
       ...scopeCard(),
@@ -684,24 +787,22 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     }
     if (data.head && data.mode !== "commits") what.push(el("span", { class: "overview__muted", text: " · up to " }), el("span", { class: "mono", title: data.head, text: data.head.slice(0, 7) }));
     return el("div", { class: "overview-head" }, [
-      el("span", { class: "overview-head__what" }, what),
       seg,
-      ...(mode === "branch" && data.fallback ? [el("span", { class: "overview__muted", text: data.head ? "Nothing to compare: the branch is already part of its base." : "On the default branch, or no default branch found: showing uncommitted changes." })] : []),
-      ...(data.truncated ? [el("span", { class: "overview__muted", text: "File list truncated." })] : []),
-      ...staleBase(),
+      el("span", { class: "overview-head__what" }, what),
+      el("span", { class: "ov-progress-slot" }),
     ]);
   }
 
   // staleBase warns when origin's copy of the base is a week or more old:
   // the merge base is old too, and work already merged shows as changed.
   function staleBase() {
-    if (data.mode !== "branch" || !data.baseFetched) return [];
+    if (data.mode !== "branch" || !data.baseFetched) return null;
     const days = Math.floor((Date.now() / 1000 - data.baseFetched) / 86400);
-    if (days < 7) return [];
-    const btn = el("button", { class: "link-btn", type: "button", text: fetching ? "Fetching…" : "Fetch" });
+    if (days < 7) return null;
+    const btn = el("button", { class: "ov-note__act", type: "button", text: fetching ? "Fetching…" : "Fetch" });
     btn.disabled = fetching;
     btn.addEventListener("click", fetchBase);
-    return [el("span", { class: "overview-stale" }, [document.createTextNode(`${data.base} last fetched ${days} days ago · `), btn])];
+    return el("div", { class: "ov-note" }, [el("span", { class: "ov-note__text", text: `${data.base} was last fetched ${days} days ago, so work already merged may show as changed.` }), btn]);
   }
 
   async function fetchBase() {

@@ -246,3 +246,15 @@ test("selection history", () => {
   assert.ok(!m.selValid({ stack: [null], at: 1 }));
   assert.ok(!m.selValid(null));
 });
+
+test("section summaries", () => {
+  const M = alarm();
+  const s = m.ovSectionSummaries(M, { scope: "done", stale: true, hidden: 2, area: "internal/web", focus: "fn:internal/web.NewServer" });
+  assert.deepEqual(s.map, { summary: "2 packages · 4 changed functions · focus on NewServer", flag: "red" });
+  assert.deepEqual(s.foot, { summary: "3 areas · 120 lines of logic · 2 kinds hidden · internal/web", flag: null });
+  assert.deepEqual(s.trace, { summary: "2 prompts · 3 files outside the conversation", flag: null });
+  assert.deepEqual(s.scope, { summary: "1 file outside the ask · out of date", flag: "yellow" });
+  const bare = m.ovSectionSummaries(m.buildModel({ overview: alarmInputs().overview }));
+  assert.equal(bare.map.summary, "reading packages… · reading calls…");
+  assert.equal(bare.scope.summary, "Not checked yet");
+});

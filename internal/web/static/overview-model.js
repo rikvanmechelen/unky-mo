@@ -873,6 +873,35 @@ function ovProgress(M) {
   return { done: logic.filter((f) => f.reviewed).length, total: logic.length };
 }
 
+// ovSectionSummaries is each section's one-line summary and flag (red,
+// yellow or null), shown in its head whether it's open or not. scope is
+// "idle", "running" or "done" (with drift counted from the model); stale
+// marks a scope check the change moved on from; hidden is the number of
+// kinds hidden, area the area filter and focus the focused function's id.
+function ovSectionSummaries(M, { scope = "idle", stale = false, hidden = 0, area = null, focus = null } = {}) {
+  const units = ovByType(M, "pkg").filter((p) => p.status !== "context").length;
+  const fns = ovChangedFns(M);
+  const unresolved = fns.reduce((s, f) => s + f.unresolved, 0);
+  const red = M.order.imp.some((id) => M.E.get(id).kind === "broken") || M.order.find.some((id) => M.E.get(id).sev === "red");
+  const mapParts = [M.loaded.arch ? pl(units, "package") : "reading packages…", M.loaded.calls ? pl(fns.length, "changed function") : "reading calls…"];
+  if (unresolved) mapParts.push(`${unresolved} unresolved`);
+  if (focus && M.E.get(focus)) mapParts.push(`focus on ${M.E.get(focus).name}`);
+  const logic = M.overview?.kinds?.logic?.lines || 0;
+  const footParts = [pl(ovAreas(M).length, "area"), `${logic} ${logic === 1 ? "line" : "lines"} of logic`];
+  if (hidden) footParts.push(`${pl(hidden, "kind")} hidden`);
+  if (area) footParts.push(area);
+  const prompts = ovByType(M, "prompt").filter((p) => p.n > 0).length;
+  const drift = ovByType(M, "file").filter((f) => f.drift?.verdict === "drift").length;
+  const scopeText = scope === "running" ? "Checking…" : scope !== "done" ? "Not checked yet"
+    : (drift ? `${pl(drift, "file")} outside the ask` : "Fits the ask") + (stale ? " · out of date" : "");
+  return {
+    map: { summary: mapParts.join(" · "), flag: red ? "red" : null },
+    foot: { summary: footParts.join(" · "), flag: null },
+    trace: { summary: `${pl(prompts, "prompt")} · ${pl(M.orphans.length, "file")} outside the conversation`, flag: null },
+    scope: { summary: scopeText, flag: scope === "done" && drift ? "yellow" : null },
+  };
+}
+
 // ── Selection history ──────────────────────────────────────────
 // {stack, at}: the selections made, and where Back/Forward stand. null is
 // "nothing selected", a step of its own so Back can return to it.
@@ -927,6 +956,6 @@ if (typeof module === "object" && module.exports) {
     createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, archGraph, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
-    selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
+    ovSectionSummaries, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }

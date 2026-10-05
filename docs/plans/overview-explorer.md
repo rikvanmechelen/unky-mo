@@ -363,6 +363,53 @@ it over. A step gets its detailed plan in this doc before coding
   today's parts moved in, untouched for now: architecture graph + Functions
   view → Map, chips/noise/treemap/files by area → Footprint, trace table →
   Intent, scope check → Scope.
+
+  **F3 detail.**
+  - **The panel is one scrolling page.** `.overview` loses its padding:
+    the header runs edge to edge with a 2px ink rule under it, then the
+    sections, each with a 1px rule.
+  - **Header (`pageHead`):**
+    - The mode row: today's Branch / Uncommitted / Selected (N) × switch,
+      the compare text (today's `header()` content), and a hidden slot for
+      F6's progress.
+    - Notes as yellow bars: stale base + Fetch, the fallback, a truncated
+      list, a load error.
+    - The verdict sentence (`ovVerdict`, 26px bold): linked phrases select
+      their target on click and hover it on mouseover; red phrases in red
+      text, warn ones on yellow.
+    - The verdict sub-line, the chips (`ovChips`, clickable when they have
+      a target) and the Caveats N disclosure (`ovCaveats`, open state per
+      page).
+    - Once something is selected the header gets `is-compact`: sticky at
+      the top, a 19px verdict, no sub-line, no chips.
+    - While `/architecture` or `/calls` is out, the chips and caveats each
+      show a bone (skeleton) in their place.
+  - **Sections** (`section(key, title, body)`): a full-width head button
+    (chevron, title, `ovSectionSummaries` summary, flag square) and a body.
+    - **Map:** today's `contracts()` (architecture or functions + the
+      contract surface).
+    - **Footprint:** the noise bar + treemap + files by area.
+    - **Intent:** the trace table; chat view, not Selected mode.
+    - **Scope:** the scope button and card, moved out of the trace head;
+      both views, not Selected mode.
+  - **Open/closed:** `open(k) = manual[k] ?? (selected ? k ===
+    ovSection(selected) : true)`. A head click sets `manual[k]`; a new
+    selection (or Back/Forward/Focus) clears `manual`, re-renders and
+    scrolls the selection's section to just under the sticky header. The
+    treemap is drawn only while Footprint is open; the ResizeObserver
+    redraws it when it reopens.
+  - **`ovSectionSummaries(M, {scope, hidden, area, focus})`** in the model
+    file (unit-tested) gives each section's summary and flag:
+    - Map: packages · changed functions · unresolved · focus; red when an
+      import breaks a rule or a call won't work.
+    - Footprint: areas · lines of logic · kinds hidden · area filter.
+    - Intent: prompts · files outside the conversation.
+    - Scope: not checked / checking / N outside the ask / fits · out of
+      date; yellow when files drift.
+  - **Skeleton:** before the first `/overview` answer, `overviewSkeleton`
+    lays out the new head (mode row, a verdict bone, chips) and four
+    section heads.
+
 - **F4. Left rail in Overview mode.** `.chat-shell.is-overview`:
   `renderNav` gets a compact mode, `--nav-w` widens to 340px, and
   `#inspector` (nav bar + body) fills the rest. Switching session keeps the
@@ -496,4 +543,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1 and F2 built 2026-10-05; next: F3.
+backend) F1–F3 built 2026-10-05; next: F4.
