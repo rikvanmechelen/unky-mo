@@ -666,3 +666,66 @@ Both are heuristic (`exact() == false`, every edge `approx`), built as `twoPhase
 - **"Untested" is a grey hint**, never red.
 - **`/calls` is fetched only while the Functions view is visible.** Its cache is keyed by a fingerprint of the changed files, not a short TTL.
 - **Heuristic languages never guess between candidates:** an ambiguous call is counted as unresolved.
+
+---
+
+## Notes (2026-10-04, all phases built on `call-graph`)
+
+### Phase 1
+- The batch reader needed `Commander.OutputStdin` (`git cat-file --batch` reads ids from stdin). `edgeDelta` and the Kotlin/Swift indexes prefetch through it too.
+- **Bug found:** the working tree's index used `git ls-files -s` blob ids, which are the *staged* ids. A file modified since staging was served its old content's cached scan. Such files now have no blob id (`git ls-files -m`) and are read every time.
+- Interface implementations are found through a cached method-name index, not by loading the whole module: an implementation needn't import its interface's package (`store` implementing `svc.Store` in the fixture).
+- Callees in packages that were only type-checked (not walked) get synthetic context nodes with their real position.
+- Benchmark: unky-mo's own uncommitted change takes about 240 ms.
+
+### Phase 2
+- The Functions view takes the full width: the contract surface moves under it.
+- `untested` is folded into a disclosure. Two changes cut it from 132 to 95 on this branch:
+  - a hop from an interface method to its implementation is free (0-1 BFS);
+  - generated files are skipped.
+- The 400-function cap dropped interface nodes on big branches. It is now 1000, and the ends of added/removed calls are kept before other context.
+
+### Phase 3 and 4
+- Python was built first, with the shared framework (`hcalls.go`). JS/TS, Ruby, Kotlin/Java and Swift were then built in parallel by separate agents in worktrees, and merged.
+- Additions to the framework from that work:
+  - `hFile.Exports`/`Reexports` for JS barrels and default exports;
+  - `requiredParams` / `hDef.Req`, so `signature-callers` ignores a parameter added with a default (ViewModel constructors in the Android app were the noise);
+  - `commonMethods`: no unknown-receiver match for `append`, `map`, `get`…;
+  - `display(p, d)`: anonymous default exports (Stimulus controllers) and top-level code are named after their file.
+- Pseudo-definitions are named `<…>`. They, class bodies and Go's `init` are entry points that are never flagged `untested`.
+- Ruby scanner fixes from real code:
+  - indentation is read from the source line, not the blanked one (a line starting with a string);
+  - statement-start checks see strings (`x += "…" if y`);
+  - `rubyCode` now blanks `/regexp/` literals (an apostrophe in a regexp swallowed the file). This also fixes the architecture scanner.
+
+### Phase 5
+- `mo calls` covers text, JSON, dot and `--fail-on`.
+- The intent link uses `structuredPatch` hunks, shifted by later edits above them.
+- Go route labels come from a string literal passed next to a function value.
+- Not built: Rails routes → controller actions as callers; Stimulus `data-action` → controller methods.
+
+### Tuning (read-only runs over each repo's last N commits)
+
+| Repo | Language | Change | Time | Notes |
+|---|---|---|---|---|
+| moma.org.kubed | Go | 150 commits, 142 files | 73 ms | mage `mg.Deps(i.X)` shows as refs |
+| moma-python-utilities | Python | 15 commits, 45 files | 64 ms | |
+| moma-org-rails | Ruby + JS | 20 commits, 149 files | 350 ms | 0 unparsed after the fixes |
+| moma-chatbot | Ruby | 20 commits, 124 files | 485 ms | 0 unparsed after the fixes |
+| moma-app-ios | Swift | 20 commits, 480 files | 830 ms | `path.append` matched a repo `append` → `commonMethods` |
+| moma-app-android | Kotlin | 20 commits, 906 files | 816 ms | defaulted params flagged → `Req` |
+
+No language produced scanner range errors on these runs after the fixes, so phase 6 (tree-sitter, `x/tools`, Go fact caching) isn't needed yet.
+
+### Known limitations (from the language reports)
+- **Heuristic languages:**
+  - calls into interfaces and protocols show as `approx`, not `dynamic`;
+  - calls inside string interpolation and template literals aren't seen.
+- **JS:**
+  - removing a *named* default export isn't found for default importers;
+  - Vue options methods are flattened to `default.<name>`.
+- **Ruby:**
+  - instance variables (`@x = C.new`) don't type a receiver;
+  - `Struct.new do` bodies belong to the enclosing class.
+- **Kotlin/Java:** overloads across files of one package share a node.
+- **Swift:** every non-SwiftPM file is one app module (an app and its widget extension merge).
