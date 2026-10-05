@@ -394,7 +394,7 @@ h1, h2 {
  * Chat view — three columns: session nav | transcript | files
  * ============================================================ */
 .chat-shell {
-  --nav-w: 260px; --files-w: 0px;
+  --nav-w: 260px; --files-w: 0px; --ov-nav-w: 340px;
   height: 100vh;
   display: grid;
   grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--files-w);
@@ -483,10 +483,22 @@ h1, h2 {
 
 /* Overview mode (chat.js: .is-overview while the Overview tab shows): the
    nav widens and holds the inspector (inspector.js) under a compact
-   session list, and the Files panel widens a little. */
-.chat-shell.is-overview:not(.hide-nav) { --nav-w: 340px; }
+   session list, and the Files panel widens a little. Its width can be
+   dragged (rails.js sets --ov-nav-w). */
+.chat-shell.is-overview:not(.hide-nav) { --nav-w: var(--ov-nav-w); }
 .chat-shell.is-overview.has-files:not(.hide-files) { --files-w: 320px; }
-.chat-shell.is-overview .chat-nav > * { width: 340px; }
+.chat-shell.is-overview .chat-nav > * { width: var(--ov-nav-w); }
+.chat-shell.is-resizing-nav { transition: none; }
+.nav-resize { display: none; position: absolute; z-index: 1; top: 0; bottom: 0; left: -4px; width: 7px; cursor: col-resize; touch-action: none; }
+.chat-shell.is-overview:not(.hide-nav) .nav-resize { display: block; }
+.nav-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: var(--ink-4); opacity: 0; transition: opacity 120ms;
+}
+.nav-resize:hover::after, .nav-resize:active::after, .nav-resize:focus-visible::after { opacity: 1; }
+.nav-resize:focus-visible { outline: none; }
+@media (pointer: coarse) { .nav-resize { left: -8px; width: 16px; } .nav-resize::after { left: 7px; } }
+body.is-resizing-nav { cursor: col-resize; user-select: none; }
 .chat-shell.is-overview .chat-nav__brand { padding: 18px 20px 12px; flex-direction: row; align-items: baseline; flex-wrap: wrap; column-gap: 12px; }
 .chat-shell.is-overview .chat-nav__wordmark { font-size: 26px; line-height: 26px; flex-basis: 100%; }
 .chat-shell.is-overview .chat-nav__list { flex: 0 1 auto; max-height: 30%; gap: 0; padding-bottom: 10px; }
@@ -1818,6 +1830,7 @@ button.file-row.overview-file { padding: 3px 12px; }
 }
 @media (max-width: 760px) {
   .chat-shell.is-overview:not(.hide-nav) { --nav-w: 0px; }
+  .chat-shell.is-overview:not(.hide-nav) .nav-resize { display: none; }
   .chat-shell.is-overview .chat-nav {
     display: flex; position: fixed; left: 0; right: 0; bottom: 0; height: 62vh; z-index: 20;
     border-top: 2px solid var(--ink); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
