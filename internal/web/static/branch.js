@@ -28,7 +28,7 @@ function branchMain() {
 
   let sessionWindow = null;
   const overview = createOverview(document.getElementById("overview-panel"), {
-    onOpenDiff: (path, kind) => editor.open(path, kind),
+    onOpenDiff: (path, kind, line) => editor.reveal(path, line, kind),
     onTarget: showTarget,
   });
   const editor = createEditorTabs({

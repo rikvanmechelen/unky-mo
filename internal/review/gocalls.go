@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/rvanmech/unky-mo/internal/gitfiles"
 )
 
 // maxGoPackages caps how many of the module's packages one version's call
@@ -520,6 +522,7 @@ func (l *goLoader) walk(pkg *goPkg, set *callSet) {
 	for i, f := range pkg.files {
 		src, text := pkg.srcs[i], pkg.texts[i]
 		test := strings.HasSuffix(src, "_test.go")
+		generated := gitfiles.IsGenerated(text)
 		for _, d := range f.Decls {
 			switch d := d.(type) {
 			case *ast.FuncDecl:
@@ -532,6 +535,7 @@ func (l *goLoader) walk(pkg *goPkg, set *callSet) {
 				}
 				fn := &fn{Func: Func{ID: id, Name: name, Path: src, Line: l.fset.Position(d.Pos()).Line,
 					End: l.fset.Position(d.End()).Line, Unit: pkgDir(src), Lang: "go", Test: test}}
+				fn.generated = generated
 				if d.Body != nil {
 					fn.body = hashOf(goTokens(l.fset, text, d.Body))
 					l.calls(pkg, d.Body, fn)

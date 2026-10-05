@@ -38,7 +38,7 @@ const (
 )
 
 const (
-	maxCallFuncs   = 400 // functions in one answer; context goes first
+	maxCallFuncs   = 1000 // functions in one answer; context goes first
 	maxCallers     = 50  // context callers per function
 	untestedHops   = 2
 	maxCallSites   = 20 // sites kept per edge or finding
@@ -137,6 +137,8 @@ type fn struct {
 	// synthetic nodes (an interface method standing for its
 	// implementations) are never changed themselves.
 	synthetic bool
+	// generated code isn't flagged as untested.
+	generated bool
 }
 
 // callSet is one version's functions for one language: the changed files'
@@ -544,7 +546,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	if hasTests {
 		for _, id := range sortedKeys(status) {
 			st := status[id]
-			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test {
+			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated {
 				continue
 			}
 			if !reachedByTest(id, after, callers, untestedHops) {
@@ -556,25 +558,36 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 }
 
 // reachedByTest reports whether a test function calls id within hops calls.
+// Going from an interface method to its implementation is free: a test
+// calling through an interface reaches every implementation.
 func reachedByTest(id string, s *callSet, callers map[string][]callerRef, hops int) bool {
-	frontier := []string{id}
-	seen := map[string]bool{id: true}
-	for h := 0; h < hops && len(frontier) > 0; h++ {
-		var next []string
-		for _, to := range frontier {
-			for _, c := range callers[to] {
-				from := c.from
-				if seen[from] {
-					continue
-				}
-				seen[from] = true
-				if f := s.funcs[from]; f != nil && f.Test {
-					return true
-				}
-				next = append(next, from)
+	dist := map[string]int{id: 0}
+	queue := []string{id} // a 0-1 BFS: free steps go to the front
+	for len(queue) > 0 {
+		to := queue[0]
+		queue = queue[1:]
+		for _, c := range callers[to] {
+			cost := 1
+			if c.site.kind == CallImpl {
+				cost = 0
+			}
+			d := dist[to] + cost
+			if d > hops {
+				continue
+			}
+			if old, ok := dist[c.from]; ok && old <= d {
+				continue
+			}
+			dist[c.from] = d
+			if f := s.funcs[c.from]; f != nil && f.Test {
+				return true
+			}
+			if cost == 0 {
+				queue = append([]string{c.from}, queue...)
+			} else {
+				queue = append(queue, c.from)
 			}
 		}
-		frontier = next
 	}
 	return false
 }
@@ -695,7 +708,8 @@ func sortedUnique(s []string) []string {
 }
 
 // capCallGraph keeps at most maxCallFuncs functions: every changed one
-// first, then context, and drops calls whose ends were cut.
+// first, then the ends of calls the change adds or drops, then other
+// context. Calls whose ends were cut go too.
 func capCallGraph(cg *CallGraph) {
 	sort.SliceStable(cg.Findings, func(i, j int) bool {
 		return findingRank(cg.Findings[i].Kind) < findingRank(cg.Findings[j].Kind)
@@ -704,9 +718,22 @@ func capCallGraph(cg *CallGraph) {
 		return
 	}
 	cg.Truncated = true
-	sort.SliceStable(cg.Funcs, func(i, j int) bool {
-		return (cg.Funcs[i].Status != "") && (cg.Funcs[j].Status == "")
-	})
+	onChangedCall := map[string]bool{}
+	for _, c := range cg.Calls {
+		if c.Op != "" {
+			onChangedCall[c.From], onChangedCall[c.To] = true, true
+		}
+	}
+	rank := func(f Func) int {
+		switch {
+		case f.Status != "":
+			return 0
+		case onChangedCall[f.ID]:
+			return 1
+		}
+		return 2
+	}
+	sort.SliceStable(cg.Funcs, func(i, j int) bool { return rank(cg.Funcs[i]) < rank(cg.Funcs[j]) })
 	cg.Funcs = cg.Funcs[:maxCallFuncs]
 	kept := map[string]bool{}
 	for _, f := range cg.Funcs {

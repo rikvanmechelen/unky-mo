@@ -31,6 +31,8 @@ const OVERVIEW_KINDS = [
 const OVERVIEW_KIND_LABEL = Object.fromEntries(OVERVIEW_KINDS.map((k) => [k.kind, k.label]));
 const OVERVIEW_NOISE = new Set(["generated", "format", "renamed"]);
 const OVERVIEW_ALL_IMPORTS_KEY = "mo.overview.allImports";
+// Whether the architecture section shows packages or functions (calls.js).
+const OVERVIEW_ARCH_VIEW_KEY = "mo.overview.archView";
 
 // Contract surface categories, in display order.
 const SURFACE_KINDS = [
@@ -304,7 +306,7 @@ function layoutArchGraph(nodes, edges) {
 // createOverview builds the tab in panel. The chat view points it at a
 // session (setWindow); the reviewer view at a branch (setTarget, without a
 // transcript), and learns what the branch resolved to through onTarget.
-function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onTarget } = {}) {
+function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget } = {}) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // its endpoint prefix
   let withTranscript = true; // false in the reviewer view: no trace, no strip
@@ -315,6 +317,17 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   let arch = null; // the last /architecture response
   let archEtag = null;
   let allImports = storageGet(OVERVIEW_ALL_IMPORTS_KEY) === true;
+  let archView = storageGet(OVERVIEW_ARCH_VIEW_KEY) === "functions" ? "functions" : "packages";
+  let calls = null; // the last /calls response (fetched only for the Functions view)
+  let callsEtag = null;
+  let callsError = "";
+  let callsInflight = -1;
+  const callsView = createCallsView({
+    // A removed function's line is in the base version: open its diff
+    // without a line.
+    onOpen: (path, line, before) => openDiff({ path }, before ? undefined : line),
+    onMention,
+  });
   let lastLoad = 0;
   let fetching = false; // a fetch of origin's base is running
   const trace = createIntentTrace(describeUser);
@@ -356,6 +369,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     mode = m;
     storageSet(OVERVIEW_MODE_KEY, m);
     data = null; etag = null; arch = null; archEtag = null; areaFilter = null; gen++;
+    resetCalls();
     note("Loading…");
     load();
   }
@@ -366,11 +380,26 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     render();
   }
 
+  function resetCalls() {
+    calls = null; callsEtag = null; callsError = "";
+    callsView.reset();
+  }
+
+  // removedCalled counts removed functions something still calls, from the
+  // last /calls answer (only known once the Functions view was opened).
+  function removedCalled() {
+    return calls?.repo ? (calls.findings || []).filter((f) => f.kind === "removed-called").length : 0;
+  }
+
   function renderBadge() {
-    const n = arch?.violations || 0;
+    const v = arch?.violations || 0, r = removedCalled();
+    const n = v + r;
     badge.hidden = !n;
     badge.textContent = String(n);
-    badge.title = n === 1 ? "1 import breaks a layer rule" : `${n} imports break a layer rule`;
+    const parts = [];
+    if (v) parts.push(v === 1 ? "1 import breaks a layer rule" : `${v} imports break a layer rule`);
+    if (r) parts.push(r === 1 ? "1 removed function is still called" : `${r} removed functions are still called`);
+    badge.title = parts.join("; ");
   }
 
   function render() {
@@ -395,6 +424,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const parts = [];
     const v = arch?.repo ? arch.violations : 0;
     if (v) parts.push(el("span", { class: "overview-strip__bad", text: v === 1 ? "1 new import breaks a layer rule" : `${v} new imports break a layer rule` }));
+    const rc = removedCalled();
+    if (rc) parts.push(el("span", { class: "overview-strip__bad", text: rc === 1 ? "1 removed function is still called" : `${rc} removed functions are still called` }));
     const areas = data?.repo ? summarizeOverview(data).areas.filter((a) => !a.noise).length : 0;
     if (areas >= STRIP_AREAS) parts.push(el("span", { text: `${areas} areas touched` }));
     const drift = scope && scope.mode === data?.mode ? driftFiles().length : 0;
@@ -761,7 +792,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   function contracts() {
     if (!arch) return el("div", { class: "overview__note", text: "Reading imports and contracts…" });
     if (!arch.repo) return el("div");
-    return el("div", { class: "overview-body" }, [architecture(), surfaceSection()]);
+    // The call graph needs the width: the surface goes under it.
+    return el("div", { class: "overview-body" + (archView === "functions" ? " is-stacked" : "") }, [architecture(), surfaceSection()]);
   }
 
   function rulesNote() {
@@ -774,8 +806,27 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     return el("div", { class: "overview-rules", text: `Checked against ${own}` + (presets ? ` and the ${presets}.` : ".") });
   }
 
+  // viewSwitch flips the section between packages (imports) and functions
+  // (calls).
+  function viewSwitch() {
+    const seg = el("span", { class: "overview-seg", role: "group", "aria-label": "Show" });
+    for (const [v, label, title] of [["packages", "Packages", "Dependencies between parts of the code"], ["functions", "Functions", "Calls between functions"]]) {
+      const b = el("button", { class: "overview-seg__btn" + (archView === v ? " is-active" : ""), type: "button", title, text: label, "aria-pressed": String(archView === v) });
+      b.addEventListener("click", () => {
+        if (archView === v) return;
+        archView = v;
+        storageSet(OVERVIEW_ARCH_VIEW_KEY, v);
+        render();
+        if (v === "functions") loadCalls();
+      });
+      seg.appendChild(b);
+    }
+    return seg;
+  }
+
   function architecture() {
-    const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Architecture" })]);
+    if (archView === "functions") return functionsSection();
+    const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Architecture" }), viewSwitch()]);
     if (!arch.languages?.length) {
       return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "No supported language in this change (Go, Ruby on Rails, JavaScript/TypeScript, Python, Kotlin/Java, Swift)." })]);
     }
@@ -788,7 +839,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       storageSet(OVERVIEW_ALL_IMPORTS_KEY, allImports);
       render();
     });
-    head.appendChild(toggle);
+    head.insertBefore(toggle, head.lastChild);
     const changed = arch.edges.length;
     const parts = [head];
     parts.push(changed || allImports ? archSvg() : el("div", { class: "overview__note", text: `No dependencies between parts of the code added or removed (${plural(arch.packages.length, "part")} touched).` }));
@@ -800,10 +851,34 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     return el("div", { class: "overview-section" }, parts);
   }
 
+  function functionsSection() {
+    const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Calls" }), viewSwitch()]);
+    const parts = [head];
+    if (callsError && !calls) {
+      parts.push(el("div", { class: "overview-rules is-error", text: `Couldn't read the calls: ${callsError}` }));
+    } else if (!calls) {
+      parts.push(el("div", { class: "overview__note", text: "Reading functions and calls…" }));
+    } else if (!calls.repo) {
+      return el("div");
+    } else if (!calls.languages?.length) {
+      parts.push(el("div", { class: "overview__note", text: "No functions in this change in a language the call graph reads (Go so far)." }));
+    } else {
+      const sum = callsSummary(calls);
+      if (sum) parts.push(el("div", { class: "overview__muted", text: sum }));
+      parts.push(callsView.el);
+      const approx = calls.languages.filter((l) => !l.exact && l.units);
+      if (approx.length) parts.push(el("div", { class: "overview-rules", text: `${approx.map((l) => LANG_LABEL[l.name] || l.name).join(", ")}: calls are inferred from names, so they're approximate (dotted).` }));
+      if (calls.unparsed?.length) parts.push(el("div", { class: "overview-rules", text: `Not read (doesn't parse right now): ${calls.unparsed.join(", ")}` }));
+      if (calls.truncated) parts.push(el("div", { class: "overview-rules", text: "This change is large: only part of it, or of its callers, is shown." }));
+      for (const e of calls.errors || []) parts.push(el("div", { class: "overview-rules is-error", text: e }));
+    }
+    return el("div", { class: "overview-section" }, parts);
+  }
+
   function violationRow(e) {
     const files = e.files.map((f) => {
       const b = el("button", { class: "link-btn overview-violation__file", type: "button", text: `${f.path}:${f.line}`, title: "Show changes" });
-      b.addEventListener("click", () => openDiff({ path: f.path }));
+      b.addEventListener("click", () => openDiff({ path: f.path }, f.line));
       return b;
     });
     return el("div", { class: "overview-violation" + (e.fixed ? " is-fixed" : "") }, [
@@ -887,7 +962,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
           el("span", { class: "overview-contract__name", text: c.name }),
           ...(c.detail ? [el("span", { class: "overview-contract__detail", text: c.detail })] : []),
         ]);
-        b.addEventListener("click", () => openDiff({ path: c.path }));
+        b.addEventListener("click", () => openDiff({ path: c.path }, c.line));
         return b;
       });
       if (all.length > SURFACE_SHOWN) items.push(el("div", { class: "overview-group__hidden", text: `${all.length - SURFACE_SHOWN} more` }));
@@ -994,8 +1069,9 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     }));
   }
 
-  function openDiff(f) {
-    onOpenDiff?.(f.path, data.mode === "branch" ? "bdiff" : "diff");
+  // openDiff shows a file's changes, scrolled to line if given.
+  function openDiff(f, line) {
+    onOpenDiff?.(f.path, data.mode === "branch" ? "bdiff" : "diff", line);
   }
 
   // get fetches one endpoint with If-None-Match: null when unchanged.
@@ -1038,9 +1114,35 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
         changed = true;
       }
       if (changed) render();
+      loadCalls();
       if (visible && withTranscript) await syncAgents(g);
     } finally {
       if (inflight === g) inflight = -1;
+    }
+  }
+
+  // loadCalls polls /calls on its own, only while the Functions view is
+  // shown: it can take seconds, and the rest of the tab shouldn't wait.
+  async function loadCalls() {
+    if (archView !== "functions" || !visible || !windowID || !available || callsInflight === gen) return;
+    const g = gen;
+    callsInflight = g;
+    try {
+      const res = await get("calls", callsEtag);
+      if (g !== gen) return;
+      callsError = "";
+      if (res) {
+        calls = res.body;
+        callsEtag = res.etag;
+        if (calls.repo) callsView.update(calls);
+        render();
+      }
+    } catch (err) {
+      if (g !== gen) return;
+      callsError = err.message;
+      if (!calls) render();
+    } finally {
+      if (callsInflight === g) callsInflight = -1;
     }
   }
 
@@ -1063,6 +1165,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       api = apiBase;
       withTranscript = transcript;
       data = null; etag = null; arch = null; archEtag = null; areaFilter = null; error = ""; gen++;
+      resetCalls();
       scope = id ? storageGet(SCOPE_KEY + id) : null;
       scopeBusy = false; scopeError = "";
       if (strip) { strip.hidden = true; delete strip.dataset.sig; }

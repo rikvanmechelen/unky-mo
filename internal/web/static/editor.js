@@ -497,7 +497,9 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   // HEAD (tab.original).
   function buildDiff(tab, doc, exts) {
     const original = tab.original || "";
-    const collapse = { margin: 3, minSize: 6 };
+    // A tab opened at a line shows everything: the line could be in a
+    // folded stretch of unchanged code.
+    const collapse = tab.expanded ? undefined : { margin: 3, minSize: 6 };
     tab.layout = diffLayout(tab);
     if (tab.layout === "split") {
       tab.merge = new CM.MergeView({
@@ -792,15 +794,21 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
     }
   }
 
-  // reveal opens path's file tab scrolled to line (e.g. from the review
-  // list).
-  function reveal(path, line) {
-    const key = "file:" + path;
+  // reveal opens path's tab of kind ("file", "diff" or "bdiff") scrolled to
+  // line (from the review list, or the Overview's functions and sites).
+  function reveal(path, line, kind = "file") {
+    if (!line || kind === "commit") { open(path, kind); return; }
+    const key = tabKey(kind, path);
     const existing = tabs.find((t) => t.key === key);
     if (existing) existing.pendingLine = line;
-    open(path, "file");
+    open(path, kind);
     const tab = tabs.find((t) => t.key === key);
+    if (!tab) return;
     if (!existing) tab.pendingLine = line;
+    if (kind !== "file" && !tab.expanded) {
+      tab.expanded = true;
+      if (tab.view) { rebuildView(tab); return; } // viewReady applies the line
+    }
     if (tab.view) viewReady(tab);
   }
 
@@ -971,6 +979,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
 
   return {
     open,
+    reveal,
     showChat: () => activate(null),
     showOverview,
     // setWindow restores the window's remembered tabs; files load lazily

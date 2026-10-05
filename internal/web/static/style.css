@@ -1080,6 +1080,7 @@ button.file-row.graph-file:hover { background: var(--surface-2); }
 
 .overview-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 1100px) { .overview-body { grid-template-columns: minmax(0, 1fr); } }
+.overview-body.is-stacked { grid-template-columns: minmax(0, 1fr); }
 .overview-treemap { position: relative; height: 260px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
 .overview-area { position: absolute; box-sizing: border-box; border: 1px solid var(--ink-4); background: var(--paper); overflow: hidden; }
 .overview-area.is-selected { border: 2px solid var(--ink); }
@@ -1143,6 +1144,67 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-violation__edge { font-family: var(--font-mono); font-weight: 700; }
 .overview-violation__files { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .overview-violation__file { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
+
+/* Overview: the Functions view (calls.js). Nodes follow the architecture
+   graph's, so the two views read as one tool. */
+.calls { display: grid; gap: 8px; min-width: 0; }
+.calls__scroll { max-height: 560px; overflow: auto; }
+.calls__crumbs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; }
+.calls__sep { color: var(--ink-4); }
+.calls__col { font-family: var(--font-sans); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; fill: var(--ink-4); }
+.calls__unit rect { fill: var(--surface); stroke: var(--line); }
+.calls__unit text { font-family: var(--font-mono); font-size: 11px; font-weight: 700; fill: var(--ink-3); }
+.calls__unit.is-collapsed { cursor: pointer; }
+.calls__unit.is-collapsed:hover rect { stroke: var(--ink-3); }
+.calls__node { cursor: pointer; }
+.calls__node rect { fill: var(--paper); stroke: var(--line); stroke-width: 1; }
+.calls__node text { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); pointer-events: none; }
+.calls__node:hover rect { stroke: var(--ink-3); }
+.calls__node:focus { outline: none; }
+.calls__node:focus-visible rect { stroke: var(--blue); stroke-width: 2; }
+.calls__node.is-changed rect, .calls__node.is-renamed rect { stroke: var(--ink); }
+.calls__node.is-changed text, .calls__node.is-renamed text { fill: var(--ink); }
+.calls__node.is-signature rect { stroke: var(--ink); stroke-width: 1.5; }
+.calls__node.is-signature text { fill: var(--ink); font-weight: 700; }
+.calls__node.is-added rect { fill: var(--diff-add-bg); stroke: var(--green); stroke-width: 1.5; }
+.calls__node.is-added text { fill: var(--ink); font-weight: 700; }
+.calls__node.is-removed rect { fill: var(--diff-del-bg); stroke: var(--red); stroke-dasharray: 3 2; }
+.calls__node.is-removed text { fill: var(--ink-3); text-decoration: line-through; }
+.calls__node.is-test text { font-style: italic; }
+.calls__node.is-selected rect { stroke: var(--blue); stroke-width: 2; }
+.calls__edge { fill: none; stroke-width: 1.2; }
+.calls__edge.is-existing { stroke: var(--ink-5); }
+.calls__edge.is-new { stroke: var(--green); stroke-width: 2; }
+.calls__edge.is-removed { stroke: var(--red); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.8; }
+.calls__edge.is-ref { stroke-dasharray: 6 3; }
+.calls__edge.is-approx { stroke-dasharray: 1 3; stroke-linecap: round; }
+.overview-sw.calls-sw-ref { height: 0; border-top: 2px dashed var(--ink-3); }
+.overview-sw.calls-sw-dynamic { width: 8px; height: 8px; border: solid var(--ink-3); border-width: 2px 2px 0 0; transform: rotate(45deg); background: none; }
+
+.calls__detail { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; }
+.calls__detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.calls__detail-name { font-family: var(--font-mono); }
+.calls__actions { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto; }
+.calls__id { font-family: var(--font-mono); font-size: 11px; word-break: break-all; }
+.calls__chip { padding: 0 5px; border: 1px solid var(--line); font-size: 10.5px; line-height: 16px; color: var(--ink-2); background: var(--paper); }
+.calls__chip.is-added { border-color: var(--green); background: var(--diff-add-bg); }
+.calls__chip.is-removed { border-color: var(--red); background: var(--diff-del-bg); }
+.calls__chip.is-signature { border-color: var(--ink); font-weight: 700; }
+.calls__list { display: grid; gap: 2px; }
+.calls__list-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); }
+.calls__row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.calls__fn { font-family: var(--font-mono); }
+.calls__fn.is-added { color: var(--green); }
+.calls__fn.is-removed { color: var(--red); text-decoration: line-through; }
+.calls__sites { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; font-family: var(--font-mono); font-size: 11.5px; }
+.calls__sites .link-btn { font-weight: 400; }
+.calls__findings { display: grid; gap: 6px; }
+.calls__finding { display: grid; gap: 2px; padding: 6px 10px; border-left: 3px solid var(--line); background: var(--surface); font-size: 12.5px; }
+.calls__finding.is-removed-called { border-left-color: var(--red); background: var(--diff-del-bg); }
+.calls__finding.is-signature-callers { border-left-color: var(--yellow); }
+.calls__finding.is-untested { color: var(--ink-3); }
+.calls__finding.is-untested summary { cursor: pointer; }
+.calls__untested { padding-top: 4px; }
 
 .overview-surface { border: 1px solid var(--line); max-height: 420px; overflow-y: auto; }
 .overview-surface__row { display: grid; grid-template-columns: 120px minmax(0, 1fr); border-top: 1px solid var(--line); }

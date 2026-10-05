@@ -572,8 +572,21 @@ function main() {
   // The Overview tab opens branch diffs as editor tabs and jumps to turns
   // in the transcript; editor and view are defined below by the time a
   // click can happen. It reads prompts the way the transcript does.
+  // insertMention adds a reference (a commit, a function) at the cursor in
+  // the message box.
+  function insertMention(text) {
+    const { selectionStart: start, selectionEnd: end, value } = promptInput;
+    const before = value.slice(0, start);
+    const insert = (before && !/\s$/.test(before) ? " " : "") + text + " ";
+    promptInput.value = before + insert + value.slice(end);
+    promptInput.setSelectionRange(start + insert.length, start + insert.length);
+    promptInput.dispatchEvent(new Event("input"));
+    editor.showChat();
+    promptInput.focus();
+  }
   const overview = createOverview(document.getElementById("overview-panel"), {
-    onOpenDiff: (path, kind) => editor.open(path, kind),
+    onOpenDiff: (path, kind, line) => editor.reveal(path, line, kind),
+    onMention: insertMention,
     describeUser: describeUserString,
     revealTurn: (uuid) => {
       editor.showChat();
@@ -598,17 +611,7 @@ function main() {
     onOpen: (path) => editor.open(path, "file"),
     onOpenDiff: (path) => editor.open(path, "diff"),
     onOpenCommitFile: (hash, path) => editor.open(path, "commit", hash),
-    // Adds a commit reference at the cursor in the message box.
-    onMention: (text) => {
-      const { selectionStart: start, selectionEnd: end, value } = promptInput;
-      const before = value.slice(0, start);
-      const insert = (before && !/\s$/.test(before) ? " " : "") + text + " ";
-      promptInput.value = before + insert + value.slice(end);
-      promptInput.setSelectionRange(start + insert.length, start + insert.length);
-      promptInput.dispatchEvent(new Event("input"));
-      editor.showChat();
-      promptInput.focus();
-    },
+    onMention: insertMention,
   });
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));

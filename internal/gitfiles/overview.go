@@ -423,6 +423,15 @@ func readHeader(root, rel, status string) []byte {
 // test fixture's string literal.
 var generatedRe = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$|^\s*(?://|#|/?\*+|<!--)\s*@generated\b`)
 
+// IsGenerated reports whether a file's text starts like a generated file's
+// (a marker comment in its first 4 KB).
+func IsGenerated(text string) bool {
+	if len(text) > 4096 {
+		text = text[:4096]
+	}
+	return generatedRe.MatchString(text)
+}
+
 var lockfiles = map[string]bool{
 	"go.sum": true, "package-lock.json": true, "yarn.lock": true, "pnpm-lock.yaml": true, "Gemfile.lock": true,
 	"Cargo.lock": true, "poetry.lock": true, "composer.lock": true, "uv.lock": true, "bun.lockb": true,

@@ -271,10 +271,13 @@ func TestCapCallGraph(t *testing.T) {
 		}
 		cg.Funcs = append(cg.Funcs, f)
 	}
-	cg.Calls = []Call{{From: cg.Funcs[0].ID, To: cg.Funcs[len(cg.Funcs)-1].ID}}
+	// A context function at the end of an added call outranks other
+	// context; one only in an unchanged call may go.
+	last, other := cg.Funcs[len(cg.Funcs)-1].ID, cg.Funcs[len(cg.Funcs)-3].ID
+	cg.Calls = []Call{{From: cg.Funcs[0].ID, To: last, Op: OpAdded}, {From: cg.Funcs[0].ID, To: other}}
 	capCallGraph(cg)
-	if !cg.Truncated || len(cg.Funcs) != maxCallFuncs || len(cg.Calls) != 0 {
-		t.Fatalf("truncated=%v funcs=%d calls=%d", cg.Truncated, len(cg.Funcs), len(cg.Calls))
+	if !cg.Truncated || len(cg.Funcs) != maxCallFuncs || len(cg.Calls) != 1 || cg.Calls[0].To != last {
+		t.Fatalf("truncated=%v funcs=%d calls=%v", cg.Truncated, len(cg.Funcs), cg.Calls)
 	}
 	changed := 0
 	for _, f := range cg.Funcs {
@@ -284,5 +287,23 @@ func TestCapCallGraph(t *testing.T) {
 	}
 	if changed != (maxCallFuncs+10+1)/2 {
 		t.Errorf("kept %d changed functions", changed)
+	}
+}
+
+// A test reaching an interface method reaches its implementations at no
+// extra hop; generated functions are never flagged.
+func TestCallDeltaUntestedThroughInterface(t *testing.T) {
+	impl := tf("a.Impl", "a/a.go", 1, "i", "s")
+	gen := tf("a.Gen", "a/gen.go", 1, "g", "s")
+	gen.generated = true
+	after := set(
+		impl, gen,
+		&fn{Func: Func{ID: "(a.I).M", Path: "a/i.go"}, synthetic: true, calls: []callSite{{to: "a.Impl", kind: CallImpl}}},
+		tf("a.Mid", "a/m.go", 1, "m", "s", "(a.I).M@dynamic"),
+		tf("a.TestX", "a/a_test.go", 1, "t", "s", "a.Mid"),
+	)
+	cg := delta(set(), after, nil, []string{"a/a.go", "a/gen.go"}, nil)
+	if got := findingKeys(cg); len(got) != 0 {
+		t.Errorf("findings = %v, want none", got)
 	}
 }
