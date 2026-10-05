@@ -420,7 +420,7 @@ function callsSkeleton() {
 // createOverview builds the tab in panel. The chat view points it at a
 // session (setWindow); the reviewer view at a branch (setTarget, without a
 // transcript), and learns what the branch resolved to through onTarget.
-function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget } = {}) {
+function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user" }), revealTurn, strip, onShowOverview, onDraftPrompt, onMention, onTarget, onClearSelection } = {}) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // its endpoint prefix
   let withTranscript = true; // false in the reviewer view: no trace, no strip
@@ -442,7 +442,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     onOpen: (path, line, before) => openDiff({ path }, before ? undefined : line),
     onMention,
     // The prompt whose edit last changed a function (chat view only).
-    changedIn: (f) => (withTranscript && data?.root && f.status && !f.before ? turnForRange(trace, data.root, f.path, f.line, f.end || f.line) : null),
+    changedIn: (f) => (withTranscript && mode !== "commits" && data?.root && f.status && !f.before ? turnForRange(trace, data.root, f.path, f.line, f.end || f.line) : null),
     onRevealTurn: revealTurn,
   });
   let lastLoad = 0;
@@ -461,7 +461,13 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   let gen = 0; // bumped on window or mode switch; stale answers are dropped
   let areaFilter = null; // an area clicked in the treemap
   let error = "";
-  let mode = storageGet(OVERVIEW_MODE_KEY) === "head" ? "head" : "branch";
+  const storedMode = () => (storageGet(OVERVIEW_MODE_KEY) === "head" ? "head" : "branch");
+  // mode is "branch", "head" or "commits" (commits selected in the Git
+  // log, commitSel: [{hash, subject}] newest first). "commits" isn't
+  // remembered: leaving it goes back to the stored mode.
+  let mode = storedMode();
+  let commitSel = [];
+  const selIDs = () => commitSel.map((c) => c.hash).sort().join(",");
   const hidden = new Set(Array.isArray(storageGet(OVERVIEW_HIDDEN_KEY)) ? storageGet(OVERVIEW_HIDDEN_KEY) : []);
 
   // The tab strip shows the number of rule violations next to "Overview".
@@ -478,17 +484,37 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   }).observe(tm);
 
   function note(text) {
-    root.replaceChildren(el("div", { class: "overview__note", text }));
+    const back = el("button", { class: "link-btn", type: "button", text: "Back to Branch" });
+    back.addEventListener("click", () => setMode("branch"));
+    root.replaceChildren(el("div", { class: "overview__note" }, [document.createTextNode(text), ...(mode === "commits" ? [document.createTextNode(" "), back] : [])]));
   }
 
   function setMode(m) {
     if (m === mode) return;
     mode = m;
-    storageSet(OVERVIEW_MODE_KEY, m);
-    data = null; etag = null; arch = null; archEtag = null; areaFilter = null; gen++;
+    if (m !== "commits") storageSet(OVERVIEW_MODE_KEY, m);
+    reload();
+  }
+
+  // reload drops what's shown and reads the current mode afresh.
+  function reload() {
+    data = null; etag = null; arch = null; archEtag = null; areaFilter = null; error = ""; gen++;
     resetCalls();
     render();
     load();
+  }
+
+  // setSelection follows the Git log's selection: in commits mode a new set
+  // is reloaded and an empty one leaves the mode; otherwise only the
+  // header's Selected button changes.
+  function setSelection(sel) {
+    const before = selIDs();
+    commitSel = sel || [];
+    if (mode === "commits") {
+      if (!commitSel.length) { mode = storedMode(); reload(); return; }
+      if (selIDs() !== before) { reload(); return; }
+    }
+    if (data) render();
   }
 
   function toggleKind(kind) {
@@ -536,9 +562,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const files = data.files || [];
     root.replaceChildren(
       header(),
-      ...(files.length ? [chips(sum), noiseBar(), contracts(), withTranscript ? traceBox : scopeSection(), body(sum)] : [el("div", { class: "overview__note", text: data.mode === "branch" ? `No changes against ${data.base}.` : "No uncommitted changes." })]),
+      ...(files.length
+        ? [chips(sum), noiseBar(), contracts(), ...(mode === "commits" ? [] : [withTranscript ? traceBox : scopeSection()]), body(sum)]
+        : [el("div", { class: "overview__note", text: data.mode === "commits" ? "These commits don't change any files." : data.mode === "branch" ? `No changes against ${data.base}.` : "No uncommitted changes." })]),
     );
-    if (files.length) { drawTreemap(); if (withTranscript) renderTrace(); }
+    if (files.length) { drawTreemap(); if (withTranscript && mode !== "commits") renderTrace(); }
     renderStrip();
   }
 
@@ -547,6 +575,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // spread over many areas).
   function renderStrip() {
     if (!strip || !withTranscript) return;
+    // The strip is about the session's change, not a selection of commits.
+    if (mode === "commits") { strip.hidden = true; delete strip.dataset.sig; return; }
     const parts = [];
     const v = arch?.repo ? arch.violations : 0;
     if (v) parts.push(el("span", { class: "overview-strip__bad", text: v === 1 ? "1 new import breaks a layer rule" : `${v} new imports break a layer rule` }));
@@ -817,16 +847,31 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   function header() {
     // A branch that isn't checked out has no uncommitted changes to show.
-    const seg = el("span", { class: "overview-seg", role: "group", "aria-label": "Compare with", ...(data.head ? { hidden: "" } : {}) });
-    for (const [m, label, title] of [["branch", "Branch", "Everything since this branch split off the default branch"], ["head", "Uncommitted", "Only changes not committed yet"]]) {
+    const seg = el("span", { class: "overview-seg", role: "group", "aria-label": "Compare with", ...(data.head && data.mode !== "commits" ? { hidden: "" } : {}) });
+    const modes = [["branch", "Branch", "Everything since this branch split off the default branch"], ["head", "Uncommitted", "Only changes not committed yet"]];
+    if (commitSel.length) modes.push(["commits", `Selected (${commitSel.length})`, "The commits selected in the Git log:\n" + commitSel.map((c) => `${c.hash.slice(0, 7)} ${c.subject}`).join("\n")]);
+    for (const [m, label, title] of modes) {
       const b = el("button", { class: "overview-seg__btn" + (mode === m ? " is-active" : ""), type: "button", title, text: label, "aria-pressed": String(mode === m) });
       b.addEventListener("click", () => setMode(m));
       seg.appendChild(b);
     }
-    const what = data.mode === "branch"
-      ? [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" vs "), el("span", { class: "mono", text: data.base }), document.createTextNode(" @ "), el("span", { class: "mono", title: data.mergeBase, text: data.mergeBase.slice(0, 7) }), el("span", { class: "overview__muted", text: " (merge base)" })]
-      : [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" — uncommitted changes")];
-    if (data.head) what.push(el("span", { class: "overview__muted", text: " · up to " }), el("span", { class: "mono", title: data.head, text: data.head.slice(0, 7) }));
+    if (commitSel.length) {
+      const x = el("button", { class: "overview-seg__clear", type: "button", title: "Clear the Git log selection", "aria-label": "Clear the Git log selection", text: "×" });
+      x.addEventListener("click", () => onClearSelection?.());
+      seg.appendChild(x);
+    }
+    let what;
+    if (data.mode === "commits") {
+      const n = commitSel.length;
+      const range = n > 1 ? `${commitSel[n - 1].hash.slice(0, 7)}..${commitSel[0].hash.slice(0, 7)}` : commitSel[0]?.hash.slice(0, 7) || data.head.slice(0, 7);
+      what = [el("b", { text: n === 1 ? "1 commit" : `${n} commits` }), document.createTextNode(" · "), el("span", { class: "mono", text: range }),
+        ...(commitSel[0] ? [el("span", { class: "overview__muted", text: ` · ${commitSel[0].subject}` })] : [])];
+    } else if (data.mode === "branch") {
+      what = [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" vs "), el("span", { class: "mono", text: data.base }), document.createTextNode(" @ "), el("span", { class: "mono", title: data.mergeBase, text: data.mergeBase.slice(0, 7) }), el("span", { class: "overview__muted", text: " (merge base)" })];
+    } else {
+      what = [el("b", { text: data.branch || "HEAD" }), document.createTextNode(" — uncommitted changes")];
+    }
+    if (data.head && data.mode !== "commits") what.push(el("span", { class: "overview__muted", text: " · up to " }), el("span", { class: "mono", title: data.head, text: data.head.slice(0, 7) }));
     return el("div", { class: "overview-head" }, [
       el("span", { class: "overview-head__what" }, what),
       seg,
@@ -1204,12 +1249,14 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   // openDiff shows a file's changes, scrolled to line if given.
   function openDiff(f, line) {
-    onOpenDiff?.(f.path, data.mode === "branch" ? "bdiff" : "diff", line);
+    if (data.mode === "commits") onOpenDiff?.(f.path, "range", line, selIDs());
+    else onOpenDiff?.(f.path, data.mode === "branch" ? "bdiff" : "diff", line);
   }
 
   // get fetches one endpoint with If-None-Match: null when unchanged.
   async function get(what, tag) {
-    const res = await fetch(`${api}/${what}?base=${mode}`, {
+    const q = mode === "commits" ? `base=commits&commits=${selIDs()}` : `base=${mode}`;
+    const res = await fetch(`${api}/${what}?${q}`, {
       headers: tag ? { "If-None-Match": tag } : {}, cache: "no-store",
     });
     if (res.status === 304) return null;
@@ -1258,6 +1305,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // shown: it can take seconds, and the rest of the tab shouldn't wait.
   async function loadCalls() {
     if (archView !== "functions" || !visible || !windowID || !available || callsInflight === gen) return;
+    if (mode === "commits" && calls) return; // commits never change
     const g = gen;
     callsInflight = g;
     try {
@@ -1281,12 +1329,19 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   setInterval(() => {
     if (document.visibilityState !== "visible") return;
+    if (mode === "commits" && data) return; // commits never change
     if (visible || Date.now() - lastLoad >= OVERVIEW_BG_POLL_MS) load();
   }, OVERVIEW_POLL_MS);
   document.addEventListener("visibilitychange", () => { if (visible) load(); });
 
   return {
     badge,
+    setSelection,
+    // showSelection switches to the commits selected in the Git log.
+    showSelection(sel) {
+      setSelection(sel);
+      if (commitSel.length) setMode("commits");
+    },
     setWindow(id) {
       this.setTarget(id ? { key: id, api: `/api/sessions/${encodeURIComponent(id)}` } : { key: null });
     },
@@ -1297,6 +1352,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       windowID = id;
       api = apiBase;
       withTranscript = transcript;
+      commitSel = [];
+      if (mode === "commits") mode = storedMode();
       data = null; etag = null; arch = null; archEtag = null; areaFilter = null; error = ""; gen++;
       resetCalls();
       scope = id ? storageGet(SCOPE_KEY + id) : null;

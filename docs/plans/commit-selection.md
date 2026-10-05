@@ -315,3 +315,52 @@ A pure, top-level function (testable later), mirroring the server's rules over t
 
 - `.graph-row.is-selected`: background `--surface-2` and an inset 3px `--ink` left edge, so it differs from hover/open (`--surface`).
 - `.graph-selbar`: `--surface` background, 12px text, the reason in `--ink-3`. Buttons styled like `.graph-detail__action`.
+
+## Step 4 in detail: Overview mode and range tabs
+
+### `overview.js`
+
+- **State:** `selection` (`[{hash, subject}]`, newest first, from the Git log) and `mode` (which can now be `"commits"`). `"commits"` is never written to `OVERVIEW_MODE_KEY`; leaving the mode goes back to the stored one.
+- **API:**
+  - `setSelection(sel)`: called on every Git log change. In `commits` mode, a different set reloads (like `setMode`), and an empty one goes back to the stored mode. Otherwise only the header redraws (its third button appears or disappears).
+  - `showSelection(sel)`: `setSelection` + `setMode("commits")`.
+  - New option `onClearSelection` for the ×, which goes through the Files pane, so the Git log and the Overview can't disagree.
+  - `setTarget` (a window switch) drops the selection and leaves `commits` mode.
+- **Requests:** `query()` gives `base=commits&commits=<sorted ids>` or `base=<mode>`, used by `get` for /overview, /architecture and /calls.
+- **No polling in `commits` mode:** commits never change. The interval skips `load()` once `data` is in, and `loadCalls` skips once `calls` is in. That matters because the server recomputes an expired overview/analysis on every poll even when it answers 304.
+- **Header:**
+  - The switch is no longer hidden just because `data.head` is set (that check meant "reviewer view, ref target"; it becomes `data.head && data.mode !== "commits"`).
+  - While there's a selection, a third button, `Selected (N)`, sits next to Branch | Uncommitted. Its title lists `short subject` per commit, and a small × after it clears the selection.
+  - The description reads `N commits · <oldest>..<newest> · <newest subject>`, without "up to".
+- **Hidden in `commits` mode:**
+  - the trace and the scope section (`render` leaves both out);
+  - `changedIn` (`turnForRange`) returns null;
+  - the strip above the composer is hidden. **Change from the plan:** the plan wanted the strip to keep following the branch through its own polls. That's a second poll stream for a temporary mode, so the strip just hides while a selection is shown and comes back with the branch's data when you leave the mode.
+- **Errors:** a 422 ends up in `error` like any failed load. In `commits` mode the note gets a "Back to Branch" button.
+- **No files:** "These commits don't change any files."
+- **Files:** `openDiff` in `commits` mode calls `onOpenDiff(path, "range", line, ids)`, where `ids` is the sorted ids joined with ",".
+
+### `editor.js`: `range` tabs
+
+- A `range` tab is a commit tab whose `hash` is the comma-joined sorted ids. That reuses the `hash` field the tab list already saves and restores. The key is `range:<ids>:<path>`.
+- `loadSavedTabs` accepts `range` when `hash` is a comma-separated list of full ids.
+- **Loading:** `loadCommit` handles both kinds. A range tab GETs `/file?path=&rev=sel-base&base=commits&commits=<ids>` and the same with `rev=sel-head`. A missing side is an added/deleted file ("Added in these commits." / "Deleted in these commits."). A 404 → "This file isn't changed in the selected commits."; other failures show the server's message.
+- **Bar:** the same Previous/Next/Open file buttons as a commit tab, the kind note `selected commits` (title: how many), no Save. Strip label `± name`, title `Changes in <path> across the selected commits`.
+- **Review comments:** none, as for commit tabs (`updateState`/`viewReady` skip both kinds).
+- **Lines:** `reveal(path, line, kind, hash)` passes `hash` through, so "Open at line" works for range tabs.
+  - `buildCommitView` leaves unchanged ranges uncollapsed when `tab.expanded`, as diff tabs already do.
+  - `loadCommit`/`rebuildView` call `viewReady` after building, so a pending line is applied. This also fixes commit tabs ignoring a line.
+
+### `chat.js`
+
+- `createFilesPane(…, { onSelectionChange: overview.setSelection, onShowSelection: (sel) => { overview.showSelection(sel); editor.showOverview(); } })`.
+- `createOverview(…, { onClearSelection: () => filesPane.clearSelection(), onOpenDiff: (path, kind, line, hash) => editor.reveal(path, line, kind, hash) })`.
+
+### Checks (by hand, on this repo; there's no JS test harness)
+
+- Select 3 consecutive commits → Show in Overview: files, chips, treemap, architecture and Functions are all for those commits. No trace, no scope check, and the strip is hidden.
+- Ctrl-click one more commit: the tab reloads for 4 commits. Clear: back to Branch.
+- Select a gap from the browser console past the client check (or via a URL): the note shows the server's 422 text with "Back to Branch".
+- Open a file: a read-only range diff with the right sides; a renamed file's left side comes from its old path. Reload the page: the tab comes back.
+- Functions view → a function's "Open": the range tab opens at the line.
+- Switch window: the selection and `commits` mode are gone.

@@ -585,8 +585,10 @@ function main() {
     promptInput.focus();
   }
   const overview = createOverview(document.getElementById("overview-panel"), {
-    onOpenDiff: (path, kind, line) => editor.reveal(path, line, kind),
+    onOpenDiff: (path, kind, line, hash) => editor.reveal(path, line, kind, hash),
     onMention: insertMention,
+    // The × after "Selected (N)": through the Git log, which owns the selection.
+    onClearSelection: () => filesPane.clearSelection(),
     describeUser: describeUserString,
     revealTurn: (uuid) => {
       editor.showChat();
@@ -614,6 +616,11 @@ function main() {
     onOpenDiff: (path) => editor.open(path, "diff"),
     onOpenCommitFile: (hash, path) => editor.open(path, "commit", hash),
     onMention: insertMention,
+    onSelectionChange: (sel) => overview.setSelection(sel),
+    onShowSelection: (sel) => {
+      overview.showSelection(sel);
+      editor.showOverview();
+    },
   });
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
