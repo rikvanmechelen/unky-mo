@@ -896,6 +896,42 @@ html[data-focus-source="keyboard"] .cm-mo-composer__input:focus-visible { outlin
 .diff-line__text { white-space: pre-wrap; color: var(--ink-2); word-break: break-word; }
 .diff-line.is-add .diff-line__text, .diff-line.is-del .diff-line__text { color: var(--ink); }
 
+/* Syntax highlighting in diffs and commands (diffview.js), on the theme's
+   --syn-* tokens like the editor's. */
+.syn-k { color: var(--syn-keyword); }
+.syn-s { color: var(--syn-string); }
+.syn-n { color: var(--syn-number); }
+.syn-c { color: var(--ink-4); font-style: italic; }
+.syn-t { color: var(--syn-type); }
+.syn-f { color: var(--syn-function); }
+.syn-d { font-weight: 700; }
+.syn-p { color: var(--syn-property); }
+.syn-g { color: var(--syn-tag); }
+.syn-m { color: var(--ink-3); }
+.syn-x { color: var(--red); }
+
+/* A Bash command, with heredoc bodies set off as blocks. */
+.tool-card__field pre.tool-card__command { color: var(--ink); }
+.cmd-heredoc { display: block; background: var(--surface); margin: 2px -12px; padding: 2px 12px; }
+
+/* Per-file diffs a command printed or made. */
+.tool-card__files { display: flex; flex-direction: column; gap: 8px; }
+.tool-card__filediff { display: flex; flex-direction: column; }
+.tool-card__filediff .tool-card__diff { border-top: 0; }
+.tool-card__file {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border: 1px solid var(--line); background: var(--surface);
+  font-family: var(--font-mono); font-size: 12px;
+}
+.tool-card__file-path { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.tool-card__file-tag { flex: none; font-size: 11px; color: var(--ink-3); }
+.tool-card__file-stat { flex: none; }
+.tool-card__file-stat .is-add { color: var(--green); }
+.tool-card__file-stat .is-del { color: var(--red); }
+.tool-card.is-preview .tool-card__files { max-height: 360px; overflow-y: auto; }
+.tool-card.is-preview .tool-card__files .tool-card__diff { max-height: none; overflow: visible; }
+.tool-card.is-preview.has-diff .tool-card__field.is-output { display: none; }
+
 
 /* ── Composer ───────────────────────────────────────────────── */
 .chat-footer { flex: none; padding: 12px 32px 16px; display: flex; flex-direction: column; gap: 8px; }

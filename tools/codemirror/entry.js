@@ -20,7 +20,7 @@ export {
   syntaxHighlighting, HighlightStyle, indentOnInput, bracketMatching, foldGutter,
   foldKeymap, StreamLanguage, LanguageSupport,
 } from "@codemirror/language";
-export { tags } from "@lezer/highlight";
+export { tags, tagHighlighter, highlightTree } from "@lezer/highlight";
 export {
   MergeView, unifiedMergeView, getChunks, acceptChunk, rejectChunk,
   goToNextChunk, goToPreviousChunk, getOriginalDoc, originalDocChangeEffect, updateOriginalDoc,

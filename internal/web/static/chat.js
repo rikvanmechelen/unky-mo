@@ -446,33 +446,130 @@ function renderAnswerDetail(qa) {
   ].filter(Boolean))));
 }
 
+// Highlighting runs when a block is first shown (a tool card opening), not
+// when it's built: a long backlog holds hundreds of hidden diffs.
+const pendingHighlights = new WeakMap(); // element -> fn
+
+function deferHighlight(node, fn) {
+  pendingHighlights.set(node, fn);
+  node.classList.add("has-pending-hl");
+}
+
+// runHighlights highlights every deferred block under root.
+function runHighlights(root) {
+  for (const node of root.querySelectorAll(".has-pending-hl")) {
+    const fn = pendingHighlights.get(node);
+    pendingHighlights.delete(node);
+    node.classList.remove("has-pending-hl");
+    if (fn) fn();
+  }
+}
+
+// fillSegments replaces a span's text with highlighted segments.
+function fillSegments(span, segs) {
+  span.replaceChildren(...segs.map((s) => s.cls ? el("span", { class: s.cls, text: s.text }) : document.createTextNode(s.text)));
+}
+
 // renderDiff turns an Edit tool's structuredPatch (array of unified-diff
 // hunks, each with a "lines" array of already-prefixed +/-/space strings)
 // into colored diff rows — no diffing algorithm needed, the hunks are
-// already computed.
-function renderDiff(structuredPatch) {
+// already computed. path picks the syntax highlighting.
+function renderDiff(structuredPatch, path) {
   const wrap = el("div", { class: "tool-card__diff" });
+  const hunkSpans = [];
   let ln = null;
   (structuredPatch || []).forEach((hunk, i) => {
     // Mark skipped, unchanged lines between hunks.
     if (i > 0) wrap.appendChild(el("div", { class: "diff-line diff-gap" }, [el("span", { class: "diff-line__ln", text: "⋯" })]));
     ln = hunk.newStart;
+    const spans = [];
     for (const line of hunk.lines || []) {
       const sign = line[0];
       const text = line.slice(1);
       const cls = sign === "+" ? "is-add" : sign === "-" ? "is-del" : "";
+      const span = el("span", { class: "diff-line__text", text });
+      spans.push(span);
       const row = el("div", { class: "diff-line" + (cls ? " " + cls : "") }, [
         el("span", { class: "diff-line__ln", text: sign === "-" ? "" : String(ln) }),
         el("span", { class: "diff-line__sign", text: sign === " " ? "" : sign }),
-        el("span", { class: "diff-line__text", text }),
+        span,
       ]);
       wrap.appendChild(row);
       if (sign !== "-") ln++;
     }
+    hunkSpans.push([hunk.lines || [], spans]);
   });
+  if (path) {
+    deferHighlight(wrap, () => {
+      for (const [lines, spans] of hunkSpans) {
+        const hi = highlightHunk(lines, path);
+        if (hi) spans.forEach((span, k) => fillSegments(span, hi[k]));
+      }
+    });
+  }
   return wrap;
 }
 
+// renderAdded shows a new file's content as one all-added hunk, capped.
+function renderAdded(content, path, max = 400) {
+  const lines = content.replace(/\n$/, "").split("\n");
+  const wrap = renderDiff([{ newStart: 1, lines: lines.slice(0, max).map((l) => "+" + l) }], path);
+  if (lines.length > max) {
+    wrap.appendChild(el("div", { class: "diff-line diff-gap" }, [
+      el("span", { class: "diff-line__ln", text: "⋯" }), el("span"),
+      el("span", { class: "diff-line__text", text: `${lines.length - max} more lines` }),
+    ]));
+  }
+  return wrap;
+}
+
+// renderFileDiffs renders several files' hunks ([{path, oldPath, hunks,
+// added, deleted, binary}]), each under a header naming the file. onOpen
+// (repo-relative path), when given, adds an "Open" button.
+function renderFileDiffs(files, onOpen) {
+  return el("div", { class: "tool-card__files" }, files.map((f) => {
+    const name = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+    const tag = f.binary ? "binary" : f.added ? "new" : f.deleted ? "deleted" : "";
+    const head = el("div", { class: "tool-card__file" }, [
+      el("span", { class: "tool-card__file-path", text: name }),
+      ...(tag ? [el("span", { class: "tool-card__file-tag", text: tag })] : []),
+      ...(typeof f.added === "number" ? [el("span", { class: "tool-card__file-stat" }, [
+        el("span", { class: "is-add", text: `+${f.added}` }), el("span", { class: "is-del", text: ` −${f.removed}` }),
+      ])] : []),
+    ]);
+    if (onOpen && !f.deleted && !f.binary) {
+      const open = el("button", { class: "tool-card__open", type: "button", title: `Open ${f.path}`, text: "Open" });
+      open.addEventListener("click", () => onOpen(f.path));
+      head.appendChild(open);
+    }
+    return el("div", { class: "tool-card__filediff" }, [head, ...(f.hunks?.length ? [renderDiff(f.hunks, f.path)] : [])]);
+  }));
+}
+
+// renderCommand shows a Bash command highlighted as shell, with each
+// heredoc body highlighted in its own language (the file it's written to,
+// or the interpreter it feeds), set off from the shell around it.
+function renderCommand(command) {
+  const pre = el("pre", { class: "tool-card__command" });
+  const parts = splitCommand(command);
+  parts.forEach((part) => {
+    const span = el("span", { class: part.body ? "cmd-heredoc" : "cmd-shell", text: part.text });
+    if (part.body && part.path && part.write) span.title = part.path;
+    pre.appendChild(span); // a heredoc is a block, so no newline goes between parts
+    if (part.path) {
+      deferHighlight(span, () => {
+        const hi = highlightText(part.text, part.path);
+        if (!hi) return;
+        span.replaceChildren();
+        hi.forEach((segs, k) => {
+          if (k) span.appendChild(document.createTextNode("\n"));
+          for (const s of segs) span.appendChild(s.cls ? el("span", { class: s.cls, text: s.text }) : document.createTextNode(s.text));
+        });
+      });
+    }
+  });
+  return pre;
+}
 
 // navGroups groups the state file's live sessions by project for the left
 // nav, keeping state-file order; external (stray) sessions come last.
@@ -507,7 +604,8 @@ function isAgentTool(name) {
 // ("You" by default); opts.onToolCard(entry, block) is called for every
 // tool card it creates, so the caller can decorate it. With
 // opts.onOpenFile(absPath), file tools (Read/Edit/Write/…) get an "Open"
-// button that calls it.
+// button that calls it; opts.onOpenDiff(path) opens a repo-relative path
+// from a diff a command printed or made.
 function createTranscriptView(container, scrollEl, opts = {}) {
   const transcript = container;
   const transcriptScroll = scrollEl;
@@ -625,7 +723,9 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     const card = el("div", { class: "tool-card" }, [head, body]);
     const entry = {
       card, body, action, name: block.name, rawInput: block.input,
-      input: el("pre", { text: JSON.stringify(block.input, null, 2) }),
+      input: block.name === "Bash" && typeof block.input?.command === "string"
+        ? renderCommand(block.input.command)
+        : el("pre", { text: JSON.stringify(block.input, null, 2) }),
     };
     toggle.addEventListener("click", () => {
       withPin(() => {
@@ -643,6 +743,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
 
   function setCardOpen(entry, open, preview = false) {
     entry.body.style.display = open ? "flex" : "none";
+    if (open) runHighlights(entry.body);
     entry.action.textContent = open ? "Hide" : "Show";
     entry.card.classList.toggle("is-preview", open && preview);
     entry.card.classList.toggle("is-open", open);
@@ -677,10 +778,17 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       }
     }
 
-    // A Write that creates a file carries an empty structuredPatch — show its
-    // input/output instead of an empty diff box.
-    if (toolUseResult && typeof toolUseResult === "object" && toolUseResult.structuredPatch?.length) {
-      body.appendChild(renderDiff(toolUseResult.structuredPatch));
+    const tur = toolUseResult && typeof toolUseResult === "object" ? toolUseResult : null;
+    const path = tur && typeof tur.filePath === "string" ? tur.filePath : null;
+    if (tur?.structuredPatch?.length) {
+      body.appendChild(renderDiff(tur.structuredPatch, path));
+      previewToolCard(entry);
+      return;
+    }
+    // A Write that creates a file carries an empty structuredPatch: show
+    // its content as added lines.
+    if (tur?.type === "create" && typeof tur.content === "string" && !block.is_error) {
+      body.appendChild(renderAdded(tur.content, path));
       previewToolCard(entry);
       return;
     }
@@ -695,6 +803,12 @@ function createTranscriptView(container, scrollEl, opts = {}) {
             ? block.content.filter((b) => b.type === "text").map((b) => b.text).join("\n\n")
             : JSON.stringify(block.content);
 
+    // A command whose output is a diff (git diff, git show) shows it as one.
+    const diffs = entry.name === "Bash" ? parseUnifiedDiff(text) : null;
+    if (diffs) {
+      card.classList.add("has-diff");
+      body.appendChild(renderFileDiffs(diffs, opts.onOpenDiff));
+    }
     body.appendChild(el("div", { class: "tool-card__field" }, [
       el("span", { class: "tool-card__field-label", text: "Input" }),
       entry.input,
@@ -937,6 +1051,7 @@ function main() {
   const view = createTranscriptView(transcript, transcriptScroll, {
     onToolCard: subagents.decorateCard,
     onOpenFile: openAbsFile,
+    onOpenDiff: (path) => editor.open(path, "diff"),
   });
 
   // Per-session state — reset by resetSession when the nav switches to
