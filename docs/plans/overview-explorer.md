@@ -574,6 +574,70 @@ it over. A step gets its detailed plan in this doc before coding
   auto-fold past 60 functions, and related-set dimming. Call edge styles
   stay as today: `dynamic` = open arrowhead, `ref` = dashed, `approx` =
   dotted. Box headers keep today's per-unit new/removed call counts.
+
+  **F7 detail.**
+  - **Pure layout in the model file (Node-tested):**
+    - **`ovMapUnits(M, {existing})`:** the packages to draw. Every changed
+      one, every unit that holds a changed function or a function called
+      by or calling one, and both ends of the change's imports (and of
+      existing imports with `existing`).
+    - **`ovMapFns(M, unit)`:** a box's functions: changed ones first,
+      ordered so callers come before what they call
+      (`layoutArchGraph`), then context ones by name.
+    - **`ovLayoutMap(M, {width, set, fold, foldUnrelated, existing})`:**
+      - **Rows:** each layer (`pkg.layer`; a unit with none is a group of
+        its own) is a node, placed by `layoutArchGraph` over the imports and
+        calls between layers, so importers sit above what they import. A
+        row holds the units of the layers at that depth, by
+        `Rules.Order`, then path. A line holds as many 240–300px boxes as
+        fit, then wraps.
+      - **Folding** (as the design): a box folds when the user folded it
+        (`fold[unit] === false`), or when more than 60 functions changed
+        and it isn't related to the selection, or with Fold unrelated on
+        and something selected that it isn't related to.
+      - **Rows per box:** an open box shows at most 12 functions, plus any
+        the selection relates to, unless opened in full (`"all"`).
+      - Returns `{W, H, boxes: Map(unit → {x, y, w, h, collapsed, shown,
+        rest})}` and `rowY(fnId)` (a hidden function's edges end at its
+        box's head).
+  - **`static/overview-map.js`, `createMap(overview)`:** boxes are HTML,
+    absolutely placed over one SVG of edges (as the design).
+    - **A box:** a fold chevron, its name (selects the package), a "new" /
+      "context" tag, the layer as a muted second line; dashed when context,
+      green when new. Rows show the mark, the name and a red / yellow
+      square for a finding. A last row reads "+N more — show all", or for a
+      folded box "N functions · M changed — open".
+    - **Edges:**
+      - imports between boxes: new green, breaks a rule red and thick,
+        removed red dashed, fixed green dashed, existing grey (only with
+        Existing imports on);
+      - calls between function rows: new green, removed red dashed,
+        existing grey; `dynamic` gets an open arrowhead, `ref` is dashed,
+        `approx` dotted.
+      - Calls shown: with nothing selected, those carrying a red finding
+        (as the design: drawing every new call buried a 50-function change
+        in green curves); with a selection, the related ones; with All
+        calls on, every call between visible rows.
+      - Each edge has a wide invisible hit path, a tooltip and a
+        click-to-select; the selected one gets a halo.
+    - **Highlighting:** `ovRelated(hover || selection)`; the rest dims
+      (0.3 boxes, 0.35 rows, 0.14 edges; Isolate selection takes them
+      almost to 0). A click on the background clears the selection.
+    - **Toolbar:** the Packages | Functions switch (kept), then Existing
+      imports, All calls, Fold unrelated (on by default) and Isolate
+      selection, remembered in localStorage `mo.overview.map`. Then the
+      legend and "N calls couldn't be resolved".
+    - It redraws on select / hover (one per frame) / model and on a width
+      change (ResizeObserver).
+  - **The Map section's body** becomes toolbar + map (Packages) or
+    toolbar + today's `calls.js` view (Functions). The contract surface
+    and the violation rows leave it: contracts are in Review and the
+    inspector, violations in Needs eyes and the import inspector, the rules
+    note in Caveats.
+  - **Skeleton:** `archSkeleton` until `/architecture` lands; then boxes
+    with bone rows until `/calls` lands.
+  - No supported language: the note from today's Architecture section.
+
 - **F8. Focus lens**: `calls.js`'s one-hop layout, re-skinned as the Map's
   Focus mode (callers | function | callees or implementations), with
   breadcrumb and Exit. **Decided:** the Packages | Functions switch stays
@@ -675,4 +739,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F6 built 2026-10-05; next: F7.
+backend) F1–F7 built 2026-10-05; next: F8.

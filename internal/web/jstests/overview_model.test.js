@@ -279,3 +279,51 @@ test("inspector helpers", () => {
   assert.equal(m.ovFirstChange([{ sign: " " }, { sign: "-" }, { sign: "+" }]), 1);
   assert.equal(m.ovFirstChange([{ sign: " " }]), -1);
 });
+
+test("map layout", () => {
+  const M = alarm();
+  assert.deepEqual(m.ovMapUnits(M).sort(), ["cmd/mo", "internal/tui", "internal/web"]);
+  assert.ok(m.ovMapUnits(M, { existing: true }).includes("cmd/mo"));
+  // Changed first, callers before callees; context functions after, by name.
+  assert.deepEqual(m.ovMapFns(M, "internal/tui"), ["fn:internal/tui.RenderBadge", "fn:(internal/tui.Theme).ColorFor", "fn:(internal/tui.dark).ColorFor"]);
+  const L = m.ovLayoutMap(M, { width: 900 });
+  const y = (u) => L.boxes.get(u).y;
+  assert.ok(y("cmd/mo") < y("internal/web") && y("internal/web") < y("internal/tui"), "callers and importers above");
+  assert.equal(L.boxes.get("internal/web").shown.length, 3);
+  const i = L.boxes.get("internal/web").shown.indexOf("fn:internal/web.handleOverview");
+  assert.equal(L.rowY("fn:internal/web.handleOverview"), y("internal/web") + 34 + i * 22 + 11);
+
+  // Folding: by hand, and unrelated packages while something is selected.
+  assert.equal(m.ovLayoutMap(M, { fold: { "internal/tui": false } }).boxes.get("internal/tui").collapsed, true);
+  const set = m.ovRelated(M, "fn:internal/web.NewServer");
+  const sel = m.ovLayoutMap(M, { set });
+  assert.equal(sel.boxes.get("internal/tui").collapsed, true);
+  assert.equal(sel.boxes.get("internal/web").collapsed, false);
+  assert.equal(m.ovLayoutMap(M, { set, foldUnrelated: false }).boxes.get("internal/tui").collapsed, false);
+  assert.equal(sel.rowY("fn:internal/tui.RenderBadge"), sel.boxes.get("internal/tui").y + 15, "a hidden function's edges end at its box's head");
+
+  // The cap: 12 rows, plus any the selection relates to; "all" shows every one.
+  const funcs = [];
+  for (let i = 0; i < 20; i++) funcs.push({ id: `p.F${String(i).padStart(2, "0")}`, name: `F${String(i).padStart(2, "0")}`, path: "p/p.go", line: i + 1, unit: "p", lang: "go", status: "changed" });
+  const big = m.buildModel({ overview: { root: "/r", files: [] }, calls: { funcs, calls: [], findings: [] } });
+  const bl = m.ovLayoutMap(big, {});
+  assert.equal(bl.boxes.get("p").shown.length, 12);
+  assert.equal(bl.boxes.get("p").rest, 8);
+  const withSel = m.ovLayoutMap(big, { set: new Set(["pkg:p", "fn:p.F19"]), foldUnrelated: false });
+  assert.equal(withSel.boxes.get("p").shown.length, 13);
+  assert.equal(m.ovLayoutMap(big, { fold: { p: "all" } }).boxes.get("p").rest, 0);
+
+  // Past 60 changed functions, boxes start folded.
+  const many = [];
+  for (let i = 0; i < 61; i++) many.push({ id: `q.G${i}`, name: `G${i}`, unit: "q", lang: "go", status: "added" });
+  const huge = m.buildModel({ overview: { root: "/r", files: [] }, calls: { funcs: many, calls: [], findings: [] } });
+  assert.equal(m.ovLayoutMap(huge, {}).boxes.get("q").collapsed, true);
+  assert.equal(m.ovLayoutMap(huge, { fold: { q: true } }).boxes.get("q").collapsed, false);
+
+  // A narrow map wraps a row's boxes.
+  const wide = m.buildModel({ overview: { root: "/r", files: [] }, calls: { funcs: ["a", "b", "c"].map((u) => ({ id: u + ".X", name: "X", unit: u, lang: "go", status: "added" })), calls: [], findings: [] } });
+  const narrow = m.ovLayoutMap(wide, { width: 480 });
+  assert.equal(new Set([...narrow.boxes.values()].map((b) => b.y)).size, 3, "one box per line at 480px");
+  assert.equal(new Set([...m.ovLayoutMap(wide, { width: 900 }).boxes.values()].map((b) => b.y)).size, 1);
+  assert.equal(new Set([...m.ovLayoutMap(wide, { width: 520 }).boxes.values()].map((b) => b.y)).size, 2, "two 248px boxes fit at 520px");
+});

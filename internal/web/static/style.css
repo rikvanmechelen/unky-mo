@@ -1494,6 +1494,84 @@ button.file-row.overview-file { padding: 3px 12px; }
 .ov-sec__body { padding: 0 20px 20px; display: grid; gap: 20px; min-width: 0; }
 .ov-sec__stack { display: grid; gap: 20px; min-width: 0; }
 
+/* The Overview's Map (overview-map.js): package boxes in layer rows with
+   their functions, imports between boxes and calls between rows. */
+.map { display: grid; gap: 10px; min-width: 0; }
+.map__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 12.5px; }
+.map__spacer { flex: 1; }
+.map__toggle { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.map__toggle:hover { color: var(--ink); }
+.map__toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.map__box { width: 10px; height: 10px; box-sizing: border-box; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.map__toggle.is-on .map__box { background: var(--ink); }
+.map__legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 11.5px; color: var(--ink-3); }
+.map__key { display: inline-flex; align-items: center; gap: 6px; }
+.map__unres { color: var(--ink-3); font-style: italic; }
+.map__scroll { overflow: auto; max-height: 72vh; border: 1px solid var(--line); background: var(--paper); }
+.map__canvas { position: relative; }
+.map__edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.map__boxes { position: absolute; inset: 0; }
+.map__empty { position: relative; display: grid; gap: 8px; padding: 16px; }
+.map-box { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; background: var(--paper); border: 1px solid var(--ink); transition: opacity 120ms linear; }
+.map-box.is-context { background: var(--surface); border: 1px dashed var(--line); }
+.map-box.is-added { border: 2px solid var(--green); }
+.map-box.is-removed { border: 1px dashed var(--red); }
+.map-box.is-selected { border: 2px solid var(--ink); }
+.map-box.is-dim { opacity: 0.3; }
+.map__canvas.is-isolate .map-box.is-dim { opacity: 0.06; }
+.map-box__head { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 26px; }
+.map-box.is-added .map-box__head { background: var(--diff-add-bg); }
+.map-box.is-selected .map-box__head { background: var(--ink); color: var(--paper); }
+.map-box__fold { all: unset; cursor: pointer; width: 14px; height: 18px; display: flex; align-items: center; justify-content: center; }
+.map-box__fold::before { content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.map-box__fold.is-open::before { transform: rotate(45deg); }
+.map-box__name { all: unset; cursor: pointer; flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+.map-box__label { font-family: var(--font-mono); font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-box__tag { flex: none; font-size: 10.5px; color: var(--ink-3); }
+.map-box__tag.is-new { color: var(--green); font-weight: 700; }
+.map-box.is-selected .map-box__tag { color: var(--paper); }
+.map-box__layer { padding: 0 8px 2px 28px; margin-top: -4px; height: 8px; font-size: 10px; line-height: 8px; color: var(--ink-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-box__fold:focus-visible, .map-box__name:focus-visible, .map-fn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.map-fn { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; height: 22px; padding: 0 8px 0 6px; font-family: var(--font-mono); font-size: 11.5px; transition: opacity 120ms linear; }
+.map-fn:hover { background: var(--surface); }
+.map-fn.is-ctx { color: var(--ink-3); font-style: italic; }
+.map-fn.is-removed .map-fn__name { text-decoration: line-through; }
+.map-fn.is-related { background: var(--warn-bg); }
+.map-fn.is-selected, .map-fn.is-selected:hover { background: var(--ink); color: var(--paper); }
+.map-fn.is-dim { opacity: 0.35; }
+.map-fn.is-rest { grid-template-columns: 1fr; padding-left: 32px; color: var(--ink-3); font-family: var(--font-sans); font-size: 11.5px; font-style: normal; }
+.map-fn.is-rest:hover { color: var(--ink); text-decoration: underline; }
+.map-fn.is-bone { cursor: default; grid-template-columns: 1fr; padding-left: 28px; }
+.map-fn__mark { font-weight: 700; text-align: center; font-style: normal; font-size: 10.5px; }
+.map-fn.is-added .map-fn__mark { color: var(--green); }
+.map-fn.is-removed .map-fn__mark { color: var(--red); }
+.map-fn.is-selected .map-fn__mark { color: var(--paper); }
+.map-fn__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-fn__flag { width: 8px; height: 8px; margin-left: 6px; }
+.map-fn__flag.is-red { background: var(--red); }
+.map-fn__flag.is-warn { background: var(--yellow); }
+.map__e { pointer-events: auto; cursor: pointer; transition: opacity 120ms linear; }
+.map__e.is-dim { opacity: 0.14; }
+.map__canvas.is-isolate .map__e.is-dim { opacity: 0.04; }
+.map__hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; }
+.map__halo { fill: none; stroke: var(--ink); stroke-width: 7; opacity: 0.18; pointer-events: none; }
+.map__edge { fill: none; stroke: var(--ink-5); stroke-width: 1; pointer-events: none; }
+.map__edge.is-new, .map__edge.is-fixed { stroke: var(--green); stroke-width: 2; }
+.map__edge.is-fixed { stroke-dasharray: 5 3; }
+.map__edge.is-removed { stroke: var(--red); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.map__edge.is-broken { stroke: var(--red); stroke-width: 3; }
+.map__edge.is-call.is-ctx { stroke: var(--ink-4); stroke-width: 1.2; }
+.map__edge.is-ref { stroke-dasharray: 5 3; }
+.map__edge.is-approx { stroke-dasharray: 1.5 3; }
+.map__edge.is-dynamic { stroke-width: 2; }
+.map__sw .map__edge.is-ctx { stroke: var(--ink-4); }
+.map__sw .map__edge.is-ref, .map__sw .map__edge.is-dynamic { stroke: var(--ink-3); }
+.map__sw .map__edge.is-approx { stroke: var(--green); stroke-width: 2; }
+.map__arrow { fill: var(--ink-4); }
+.map__arrow.is-new { fill: var(--green); }
+.map__arrow.is-removed { fill: var(--red); }
+.map__arrow.is-open { fill: none; stroke: var(--ink-3); stroke-width: 1.6; }
+
 /* Overview skeletons (overview.js: overviewSkeleton & co.): shimmering
    boxes in the real sections' layout while a part loads. The gradient is
    fixed to the viewport, so every box shows one sweep moving across the

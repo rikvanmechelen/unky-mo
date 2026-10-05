@@ -19,10 +19,8 @@ const OVERVIEW_POLL_MS = 3000;
 const OVERVIEW_HIDDEN_KEY = "mo.overview.hidden";
 const OVERVIEW_MODE_KEY = "mo.overview.mode";
 
-const OVERVIEW_ALL_IMPORTS_KEY = "mo.overview.allImports";
 // Whether the architecture section shows packages or functions (calls.js).
 const OVERVIEW_ARCH_VIEW_KEY = "mo.overview.archView";
-const SURFACE_SHOWN = 40; // entries shown per category before "N more"
 const OVERVIEW_BG_POLL_MS = 15000; // while the tab is hidden, for the strip
 const AGENT_REFRESH_MS = 15000; // a running subagent's transcript is re-read this often
 const STRIP_AREAS = 4; // a change this spread out shows in the strip
@@ -77,16 +75,6 @@ function archSkeleton(head) {
   ]);
 }
 
-function surfaceSkeleton() {
-  return el("div", { class: "overview-section" }, [
-    skelHead("Contract surface"),
-    skelWrap("overview-surface", "Reading the contract surface…", ["80%", "55%", "68%"].map((w) => el("div", { class: "overview-surface__row" }, [
-      el("div", { class: "overview-surface__kind" }, [bone("70px", 12)]),
-      el("div", { class: "overview-surface__items skel-items" }, [bone(w, 12), bone("40%", 12)]),
-    ]))),
-  ]);
-}
-
 // callsSkeleton is the Functions view's graph: callers, the changed
 // functions grouped in a unit, callees.
 function callsSkeleton() {
@@ -111,7 +99,6 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
   let etag = null;
   let arch = null; // the last /architecture response
   let archEtag = null;
-  let allImports = storageGet(OVERVIEW_ALL_IMPORTS_KEY) === true;
   let archView = storageGet(OVERVIEW_ARCH_VIEW_KEY) === "functions" ? "functions" : "packages";
   let calls = null; // the last /calls response (fetched while the tab is visible)
   let callsEtag = null;
@@ -247,6 +234,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     subscribe(f) { selSubs.add(f); return () => selSubs.delete(f); },
   };
 
+  const map = createMap({ model: getModel, selection, rerender: () => render() });
+
   // Alt+←/→ go back and forward, Esc leaves Focus and then clears the
   // selection, while the tab is showing and the keyboard isn't in a field.
   document.addEventListener("keydown", (e) => {
@@ -364,7 +353,7 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     const sums = ovSectionSummaries(M, { scope: scopeBusy ? "running" : scope?.result && scope.mode === data.mode ? "done" : "idle", stale: !!scope?.result && scope.mode === data.mode && scope.sig !== scopeSig(), hidden: hidden.size, area: areaFilter, focus: focusFn });
     const traced = withTranscript && mode !== "commits";
     const secs = [
-      section("map", "Map", sums.map, () => contracts()),
+      section("map", "Map", sums.map, () => mapBody()),
       section("foot", "Footprint", sums.foot, () => el("div", { class: "ov-sec__stack" }, [noiseBar(), body(sum)])),
       ...(traced ? [section("trace", "Intent", sums.trace, () => traceBox)] : []),
       ...(mode !== "commits" ? [section("scope", "Scope", sums.scope, () => scopeBody())] : []),
@@ -900,32 +889,6 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     ]);
   }
 
-  // contracts is the architecture graph and the contract surface, side by
-  // side. Until the first /architecture answer it's a placeholder.
-  function contracts() {
-    if (!arch) {
-      const stacked = archView === "functions";
-      const head = skelHead(stacked ? "Calls" : "Architecture", [viewSwitch()]);
-      return el("div", { class: "overview-body" + (stacked ? " is-stacked" : "") }, [
-        stacked ? el("div", { class: "overview-section" }, [head, callsSkeleton()]) : archSkeleton(head),
-        surfaceSkeleton(),
-      ]);
-    }
-    if (!arch.repo) return el("div");
-    // The call graph needs the width: the surface goes under it.
-    return el("div", { class: "overview-body" + (archView === "functions" ? " is-stacked" : "") }, [architecture(), surfaceSection()]);
-  }
-
-  function rulesNote() {
-    const r = arch.rules;
-    const presets = r.presets?.length ? `built-in ${r.presets.join(", ")} rules` + (r.autoPresets ? " (detected)" : "") : "";
-    if (r.error) return el("div", { class: "overview-rules is-error", text: `${r.path}: ${r.error}` + (presets ? ` — only the ${presets} applied.` : " — rules not applied.") });
-    if (!r.found && !presets) return el("div", { class: "overview-rules", text: `No layer rules: add ${r.path} to flag dependencies that cross layers.` });
-    if (!r.found) return el("div", { class: "overview-rules", text: `Checked against the ${presets}. Add ${r.path} to add your own layers, or presets = [] to turn these off.` });
-    const own = r.layers ? `${r.path} (${plural(r.layers, "layer")})` : r.path;
-    return el("div", { class: "overview-rules", text: `Checked against ${own}` + (presets ? ` and the ${presets}.` : ".") });
-  }
-
   // viewSwitch flips the section between packages (imports) and functions
   // (calls).
   function viewSwitch() {
@@ -944,31 +907,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     return seg;
   }
 
-  function architecture() {
+  // mapBody is the Map section: the package map, or the Functions view.
+  function mapBody() {
+    if (!arch) return archSkeleton(skelHead(null, [viewSwitch()]));
+    if (!arch.repo) return el("div");
     if (archView === "functions") return functionsSection();
-    const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Architecture" }), viewSwitch()]);
-    if (!arch.languages?.length) {
-      return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "No supported language in this change (Go, Ruby on Rails, JavaScript/TypeScript, Python, Kotlin/Java, Swift)." })]);
-    }
-    const toggle = el("label", { class: "overview__muted overview-toggle" }, [
-      el("input", { type: "checkbox", id: "overview-all-imports", ...(allImports ? { checked: "" } : {}) }),
-      document.createTextNode(" all dependencies"),
-    ]);
-    toggle.querySelector("input").addEventListener("change", (e) => {
-      allImports = e.target.checked;
-      storageSet(OVERVIEW_ALL_IMPORTS_KEY, allImports);
-      render();
-    });
-    head.insertBefore(toggle, head.lastChild);
-    const changed = arch.edges.length;
-    const parts = [head];
-    parts.push(changed || allImports ? archSvg() : el("div", { class: "overview__note", text: `No dependencies between parts of the code added or removed (${plural(arch.packages.length, "part")} touched).` }));
-    const approx = arch.languages.filter((l) => !l.exact && l.units);
-    if (approx.length) parts.push(el("div", { class: "overview-rules", text: `${approx.map((l) => LANG_LABEL[l.name] || l.name).join(", ")}: dependencies are inferred from names, so they're approximate (dotted).` }));
-    const listed = arch.edges.filter((e) => e.violation || e.fixed);
-    if (listed.length) parts.push(el("div", { class: "overview-violations" }, listed.map(violationRow)));
-    parts.push(rulesNote());
-    return el("div", { class: "overview-section" }, parts);
+    return map.element(viewSwitch());
   }
 
   function functionsSection() {
@@ -993,105 +937,6 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       for (const e of calls.errors || []) parts.push(el("div", { class: "overview-rules is-error", text: e }));
     }
     return el("div", { class: "overview-section" }, parts);
-  }
-
-  function violationRow(e) {
-    const files = e.files.map((f) => {
-      const b = el("button", { class: "link-btn overview-violation__file", type: "button", text: `${f.path}:${f.line}`, title: "Show changes" });
-      b.addEventListener("click", () => openDiff({ path: f.path }, f.line));
-      return b;
-    });
-    return el("div", { class: "overview-violation" + (e.fixed ? " is-fixed" : "") }, [
-      el("span", { class: "overview-violation__edge", text: `${e.from} ${e.op === "-" ? "↛" : "→"} ${e.to}` }),
-      el("span", { text: e.violation ? `breaks: ${e.violation}` : `no longer breaks: ${e.fixed}` }),
-      el("span", { class: "overview-violation__files" }, files),
-    ]);
-  }
-
-  // archSvg draws the graph: packages as labelled boxes in layered rows,
-  // imports as curves from importer to imported.
-  function archSvg() {
-    const { nodes, edges } = archGraph(arch, allImports);
-    const { rows } = layoutArchGraph(nodes, edges);
-    const CHAR = 6.6, PAD = 10, H = 24, ROW = 64, GAP = 14, M = 8;
-    const label = (n) => arch.labels?.[n.path] || n.path;
-    const width = (n) => Math.max(40, label(n).length * CHAR + 2 * PAD);
-    const rowW = rows.map((r) => r.reduce((s, n) => s + width(n), 0) + GAP * (r.length - 1));
-    const W = Math.max(...rowW) + 2 * M;
-    const box = new Map();
-    rows.forEach((r, i) => {
-      let x = M + (W - 2 * M - rowW[i]) / 2;
-      for (const n of r) {
-        box.set(n.path, { x, y: M + i * ROW, w: width(n) });
-        x += width(n) + GAP;
-      }
-    });
-    const Ht = M * 2 + (rows.length - 1) * ROW + H;
-    const svg = svgEl("svg", { class: "overview-arch", viewBox: `0 0 ${W} ${Ht}`, width: W, height: Ht, role: "img", "aria-label": "Package imports: " + edges.filter((e) => e.op).map((e) => `${e.op === "+" ? "added" : "removed"} ${e.from} to ${e.to}`).join(", ") });
-    const defs = svgEl("defs", {});
-    const marker = svgEl("marker", { id: "ov-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
-    marker.appendChild(svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "context-stroke" })); // the edge's own color
-    defs.appendChild(marker);
-    svg.appendChild(defs);
-    // Changed edges are drawn last, on top of the faint existing ones.
-    const ordered = [...edges].sort((a, b) => (a.op ? 1 : 0) - (b.op ? 1 : 0) || (a.violation ? 1 : 0) - (b.violation ? 1 : 0));
-    for (const e of ordered) {
-      const a = box.get(e.from), b = box.get(e.to);
-      if (!a || !b) continue;
-      const x1 = a.x + a.w / 2, x2 = b.x + b.w / 2;
-      const down = b.y > a.y;
-      const y1 = down ? a.y + H : a.y, y2 = down ? b.y : b.y + H;
-      const dy = Math.max(24, Math.abs(y2 - y1) / 2) * (down ? 1 : -1);
-      const cls = (e.violation ? "is-bad" : e.op === "+" ? "is-new" : e.op === "-" ? "is-removed" : "is-existing") + (e.approx ? " is-approx" : "");
-      const path = svgEl("path", { class: `overview-arch__edge ${cls}`, d: `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}`, "marker-end": "url(#ov-arrow)" });
-      const title = svgEl("title", {});
-      title.textContent = `${e.from} → ${e.to}` + (e.op === "+" ? " (new)" : e.op === "-" ? " (removed)" : "") + (e.approx ? " · approximate" : "") + (e.violation ? ` — breaks: ${e.violation}` : "");
-      path.appendChild(title);
-      svg.appendChild(path);
-    }
-    for (const n of nodes) {
-      const b = box.get(n.path);
-      const g = svgEl("g", { class: `overview-arch__node is-${n.status || "context"}` });
-      g.appendChild(svgEl("rect", { x: b.x, y: b.y, width: b.w, height: H }));
-      const t = svgEl("text", { x: b.x + b.w / 2, y: b.y + H / 2 + 4, "text-anchor": "middle" });
-      t.textContent = label(n);
-      const title = svgEl("title", {});
-      title.textContent = n.path + (n.status ? ` (${n.status})` : " (not changed)");
-      g.append(title, t);
-      svg.appendChild(g);
-    }
-    const legend = el("div", { class: "overview-legend is-static" }, [
-      el("span", {}, [el("i", { class: "overview-sw is-edge-new" }), document.createTextNode("new dependency")]),
-      el("span", {}, [el("i", { class: "overview-sw is-edge-removed" }), document.createTextNode("removed")]),
-      el("span", {}, [el("i", { class: "overview-sw is-edge-bad" }), document.createTextNode("breaks a rule")]),
-    ]);
-    return el("div", { class: "overview-arch-wrap" }, [el("div", { class: "overview-arch-scroll" }, [svg]), legend]);
-  }
-
-  function surfaceSection() {
-    const head = el("div", { class: "overview-section__head" }, [el("h3", { text: "Contract surface" })]);
-    const cats = SURFACE_KINDS.filter((k) => arch.surface[k.key]?.length);
-    if (!cats.length) {
-      return el("div", { class: "overview-section" }, [head, el("div", { class: "overview__note", text: "No exported API, routes, flags, config keys, env vars, dependencies, migrations or permissions changed." })]);
-    }
-    const rows = cats.map((k) => {
-      const all = arch.surface[k.key];
-      const items = all.slice(0, SURFACE_SHOWN).map((c) => {
-        const b = el("button", { class: "overview-contract", type: "button", title: `${c.path}${c.line ? ":" + c.line : ""} — show changes` }, [
-          el("span", { class: `overview-contract__op is-${c.op === "+" ? "add" : c.op === "-" ? "del" : "mod"}`, text: c.op === "-" ? "−" : c.op }),
-          el("span", { class: "overview-contract__name", text: c.name }),
-          ...(c.detail ? [el("span", { class: "overview-contract__detail", text: c.detail })] : []),
-        ]);
-        b.addEventListener("click", () => openDiff({ path: c.path }, c.line));
-        return b;
-      });
-      if (all.length > SURFACE_SHOWN) items.push(el("div", { class: "overview-group__hidden", text: `${all.length - SURFACE_SHOWN} more` }));
-      return el("div", { class: "overview-surface__row" }, [
-        el("div", { class: "overview-surface__kind", text: `${k.label} (${all.length})` }),
-        el("div", { class: "overview-surface__items" }, items),
-      ]);
-    });
-    return el("div", { class: "overview-section" }, [head, el("div", { class: "overview-surface" }, rows)]);
   }
 
   function body(sum) {

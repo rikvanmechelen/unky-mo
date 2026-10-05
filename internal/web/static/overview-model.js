@@ -260,26 +260,6 @@ function layoutTreemap(items, w, h) {
   return out;
 }
 
-// archGraph picks what the architecture graph shows. By default that's the
-// change itself: the ends of the dependencies it adds or removes, and the
-// existing dependencies between them for context. With allImports, every
-// touched unit and everything it depends on (dense for Rails, whose layers
-// reference each other in cycles).
-function archGraph(arch, allImports) {
-  const status = new Map((arch.packages || []).map((p) => [p.path, p.status]));
-  const nodes = new Map(); // path → {path, status}
-  const add = (p) => { if (!nodes.has(p)) nodes.set(p, { path: p, status: status.get(p) || "" }); };
-  if (allImports) for (const p of arch.packages || []) add(p.path);
-  const edges = [];
-  for (const e of arch.edges || []) { add(e.from); add(e.to); edges.push(e); }
-  for (const e of arch.existing || []) {
-    if (!allImports && !(nodes.has(e.from) && nodes.has(e.to))) continue;
-    add(e.from); add(e.to);
-    edges.push(e);
-  }
-  return { nodes: [...nodes.values()], edges };
-}
-
 // layoutArchGraph places packages in rows by import depth (a package sits
 // below everything that imports it) and orders each row by the average x of
 // its importers, so edges mostly run straight down. Cycles (an edge removed
@@ -948,6 +928,116 @@ function ovFirstChange(rows) {
   return (rows || []).findIndex((r) => r.sign === "+" || r.sign === "-");
 }
 
+// ── The map ────────────────────────────────────────────────────
+
+const MAP_BOX_MIN = 240, MAP_BOX_MAX = 300, MAP_GAP_X = 24, MAP_GAP_Y = 44;
+const MAP_HEAD = 34, MAP_ROW = 22, MAP_CAP = 12, MAP_FOLD_AT = 60;
+
+// ovMapUnits are the packages the map draws: the changed ones, those
+// holding a function of the call graph (changed, or a caller or callee of
+// one), and the ends of the change's imports (and of the existing ones
+// when existing is set).
+function ovMapUnits(M, { existing = false } = {}) {
+  const units = new Set();
+  for (const p of ovByType(M, "pkg")) if (p.status !== "context") units.add(p.unit);
+  for (const f of ovByType(M, "fn")) units.add(f.unit);
+  for (const e of ovByType(M, "imp")) {
+    if (e.changed || existing) { units.add(e.from); units.add(e.to); }
+  }
+  return [...units];
+}
+
+// ovMapFns are a package's functions as its box lists them: the changed
+// ones, callers before what they call, then the others by name.
+function ovMapFns(M, unit) {
+  const p = M.E.get("pkg:" + unit);
+  if (!p) return [];
+  const fns = p.fns.map((id) => M.E.get(id));
+  const changed = fns.filter((f) => f.status);
+  const ids = new Set(changed.map((f) => f.id));
+  const edges = [];
+  for (const f of changed) {
+    for (const cid of f.callees) {
+      const c = M.E.get(cid);
+      if (ids.has(c.toId)) edges.push({ from: f.id, to: c.toId });
+    }
+  }
+  const { rows } = layoutArchGraph(changed.map((f) => ({ path: f.id })), edges);
+  const flat = rows.flat().map((n) => M.E.get(n.path));
+  const ordered = [...flat.filter((f) => !f.test), ...flat.filter((f) => f.test)];
+  const rest = fns.filter((f) => !f.status).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return [...ordered, ...rest].map((f) => f.id);
+}
+
+// ovLayoutMap places the map's package boxes. Layers are rows (a unit in
+// no layer is a group of its own), importers above what they import; the
+// boxes of a row wrap to as many lines as the width needs. fold holds the
+// user's choices per unit (false folded, true open, "all" every function);
+// set is what the selection relates to. Returns {W, H, boxes: Map(unit →
+// {x, y, w, h, cx, collapsed, shown, rest, fns}), rowY(fnId)}.
+function ovLayoutMap(M, { width = 900, set = null, fold = {}, foldUnrelated = true, existing = false } = {}) {
+  const units = ovMapUnits(M, { existing });
+  const inMap = new Set(units);
+  const groupOf = (u) => {
+    const l = M.E.get("pkg:" + u)?.layer;
+    return l ? "layer:" + l : "unit:" + u;
+  };
+  const groups = new Map();
+  for (const u of units.slice().sort()) {
+    const g = groupOf(u);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(u);
+  }
+  const gEdges = [];
+  const link = (a, b) => { if (inMap.has(a) && inMap.has(b) && groupOf(a) !== groupOf(b)) gEdges.push({ from: groupOf(a), to: groupOf(b) }); };
+  for (const e of ovByType(M, "imp")) if (e.op !== "-" && (e.changed || existing)) link(e.from, e.to);
+  for (const c of ovByType(M, "call")) {
+    if (c.op === "-") continue;
+    const a = M.E.get(c.fromId), b = M.E.get(c.toId);
+    if (a && b) link(a.unit, b.unit);
+  }
+  const { rows } = layoutArchGraph([...groups.keys()].map((g) => ({ path: g })), gEdges);
+  const order = M.arch?.rules?.order || [];
+  const rank = (g) => { const i = g.startsWith("layer:") ? order.indexOf(g.slice(6)) : -1; return i < 0 ? order.length : i; };
+
+  const perLine = Math.max(1, Math.floor((width + MAP_GAP_X) / (MAP_BOX_MIN + MAP_GAP_X)));
+  const totalChanged = ovChangedFns(M).length;
+  const boxes = new Map();
+  let y = 6;
+  for (const row of rows) {
+    const rowUnits = row.slice().sort((a, b) => rank(a.path) - rank(b.path)).flatMap((n) => groups.get(n.path));
+    for (let k = 0; k < rowUnits.length; k += perLine) {
+      const line = rowUnits.slice(k, k + perLine);
+      const w = Math.min(MAP_BOX_MAX, Math.floor((width - MAP_GAP_X * (line.length - 1)) / line.length));
+      const lineW = line.length * w + (line.length - 1) * MAP_GAP_X;
+      let x = Math.max(0, Math.round((width - lineW) / 2));
+      let tallest = 0;
+      for (const u of line) {
+        const fns = ovMapFns(M, u);
+        const o = fold[u];
+        const related = !set || set.has("pkg:" + u);
+        const auto = totalChanged > MAP_FOLD_AT ? (set ? !related : true) : (foldUnrelated && set ? !related : false);
+        const collapsed = o === false ? true : o === true || o === "all" ? false : auto;
+        const shown = collapsed ? [] : o === "all" ? fns : fns.filter((f, i) => i < MAP_CAP || (set && set.has(f)));
+        const rest = fns.length - shown.length;
+        const h = MAP_HEAD + (collapsed ? (fns.length ? MAP_ROW : 0) : shown.length * MAP_ROW + (rest ? MAP_ROW : 0)) + 6;
+        boxes.set(u, { x, y, w, h, cx: x + w / 2, collapsed, shown, rest, fns });
+        tallest = Math.max(tallest, h);
+        x += w + MAP_GAP_X;
+      }
+      y += tallest + MAP_GAP_Y;
+    }
+  }
+  const rowY = (fnId) => {
+    const f = M.E.get(fnId);
+    const b = f && boxes.get(f.unit);
+    if (!b) return null;
+    const i = b.shown.indexOf(fnId);
+    return i < 0 ? b.y + 15 : b.y + MAP_HEAD + i * MAP_ROW + MAP_ROW / 2;
+  };
+  return { W: width, H: Math.max(0, y - MAP_GAP_Y + 10), boxes, rowY };
+}
+
 // ── Selection history ──────────────────────────────────────────
 // {stack, at}: the selections made, and where Back/Forward stand. null is
 // "nothing selected", a step of its own so Back can return to it.
@@ -999,9 +1089,9 @@ function selValid(h) {
 if (typeof module === "object" && module.exports) {
   module.exports = {
     OVERVIEW_KINDS, OVERVIEW_NOISE, SURFACE_KINDS, CALL_MARK, FINDING_SEVERITY,
-    createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, archGraph, layoutArchGraph,
+    createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
-    ovSectionSummaries, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
+    ovSectionSummaries, ovMapUnits, ovMapFns, ovLayoutMap, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }
