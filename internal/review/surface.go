@@ -41,7 +41,9 @@ var (
 	isURLsPy = func(p string) bool { return path.Base(p) == "urls.py" }
 	goFile   = ext(".go")
 	jsFile   = ext(".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
-	isRoutes = func(p string) bool { return p == "config/routes.rb" || strings.HasSuffix(p, "/config/routes.rb") }
+	// The root config/routes.rb of a Rails app is read by railsSurface
+	// (rails_routes.go); this line pattern only covers apps in a subfolder.
+	isRoutes = func(p string) bool { return strings.HasSuffix(p, "/config/routes.rb") }
 )
 
 var routePatterns = []pattern{
@@ -50,7 +52,6 @@ var routePatterns = []pattern{
 	// Express-style: app.get('/x', …), router.post("/y", …).
 	{re: regexp.MustCompile("\\b(?:app|router)\\.(get|post|put|patch|delete|all)\\(\\s*['\"`](/[^'\"`]*)['\"`]"), ok: jsFile,
 		name: func(m []string) string { return strings.ToUpper(m[1]) + " " + m[2] }},
-	// Rails routes.rb: one route per line.
 	// Flask @app.route("/x"); FastAPI @app.get("/x"), @router.post("/x").
 	{re: regexp.MustCompile(`@\w+\.route\(\s*["']([^"']+)["']`), ok: pyFile},
 	{re: regexp.MustCompile(`@\w+\.(get|post|put|patch|delete)\(\s*["']([^"']*)["']`), ok: pyFile,
@@ -58,7 +59,8 @@ var routePatterns = []pattern{
 	// Django path("x/", …) and re_path(r"^x/$", …) in urls.py.
 	{re: regexp.MustCompile(`\b(?:re_)?path\(\s*r?["']([^"']*)["']`), ok: isURLsPy,
 		name: func(m []string) string { return "/" + m[1] }},
-	// A trailing comment needs a space before its "#": 'health#show' isn't one.
+	// Rails routes.rb in a subfolder, one route per line. A trailing comment
+	// needs a space before its "#": 'health#show' isn't one.
 	{re: regexp.MustCompile(`(?m)^[ \t]*((?:get|post|put|patch|delete|match|root|resources?|namespace|scope|mount)\b.*?)(?:[ \t]+#.*)?[ \t]*$`), ok: isRoutes},
 }
 
