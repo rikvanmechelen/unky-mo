@@ -9,7 +9,15 @@
 <script src="/theme.js"></script>
 </head>
 <body>
-<div class="branch-shell">
+<div class="chat-shell is-overview has-files branch-shell" id="chat-shell">
+  <nav class="chat-nav">
+    <div class="chat-nav__brand">
+      <span class="chat-nav__wordmark">Unky Mo</span>
+      <a class="chat-nav__back" href="/">Dashboard</a>
+    </div>
+    <div class="chat-nav__list" id="review-nav"></div>
+    <div class="chat-nav__inspector" id="inspector"></div>
+  </nav>
   <main class="chat-main branch-main">
     <div class="chat-bar branch-bar">
       <a class="branch-bar__back" href="/">Dashboard</a>
@@ -23,6 +31,17 @@
     <div class="editor-panel" id="editor-panel" hidden></div>
     <div class="overview-panel" id="overview-panel" hidden></div>
   </main>
+  <aside class="files-pane" id="files-pane">
+    <div class="files-pane__head">
+      <span class="files-pane__title">Files</span>
+      <span class="files-tabs">
+        <button class="files-tab is-active" data-mode="review" type="button">Review <span id="review-count"></span></button>
+        <button class="files-tab" data-mode="branch" type="button">Files</button>
+      </span>
+    </div>
+    <div class="files-pane__list" id="files-list"></div>
+    <div class="files-pane__foot" id="files-foot"></div>
+  </aside>
 </div>
 <script src="/vendor/codemirror.js"></script>
 <script src="/common.js"></script>
@@ -35,6 +54,9 @@
 <script src="/calls.js"></script>
 <script src="/overview-map.js"></script>
 <script src="/overview.js"></script>
+<script src="/inspector.js"></script>
+<script src="/reviewqueue.js"></script>
+<script src="/rails.js"></script>
 <script src="/branch.js"></script>
 </body>
 </html>

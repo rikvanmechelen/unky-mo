@@ -1787,8 +1787,9 @@ button.file-row.overview-file { padding: 3px 12px; }
 .overview-file.is-dim { opacity: 0.45; }
 
 /* Reviewer view (branch.html): the chat view's middle column on its own. */
-.branch-shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--paper); }
-.branch-main { flex: 1; border-left: 0; }
+.branch-shell .chat-nav__list .nav-session .status-sq { background: var(--ink-4); }
+.branch-shell .nav-session.is-current .status-sq { background: var(--paper); }
+.branch-main { min-width: 0; }
 .branch-bar__back { font-size: 13px; line-height: 1.25; }
 .branch-bar__kind { color: var(--ink-3); }
 .branch-bar__links { display: flex; gap: 16px; font-size: 13px; }

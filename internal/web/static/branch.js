@@ -63,11 +63,62 @@ function branchMain() {
     }
   }
 
+  // The rails: the inspector on the left, the Review list on the right.
+  const shell = document.getElementById("chat-shell");
+  createRails(shell);
+  createInspector(document.getElementById("inspector"), overview);
+  reviewPane(document.getElementById("files-pane"), createReviewQueue(overview));
+  reviewNav(document.getElementById("review-nav"), { project, branch, pr });
+
   overview.setTarget({ key, api, transcript: false });
   overview.setAvailable(true);
   // Restores the branch's remembered tabs; Overview is the home tab.
   editor.setTarget({ key, api, sendTo: null });
   editor.setAvailable(true);
+}
+
+// reviewPane runs the Files panel's two tabs: Review (what to read, in
+// order) and Files (every file the change touches).
+function reviewPane(pane, queue) {
+  const tabs = pane.querySelectorAll(".files-tab");
+  const list = pane.querySelector("#files-list");
+  const foot = pane.querySelector("#files-foot");
+  const count = pane.querySelector("#review-count");
+  let mode = "review";
+  function render() {
+    tabs.forEach((t) => t.classList.toggle("is-active", t.dataset.mode === mode));
+    count.textContent = queue.count();
+    if (mode === "review") queue.review(list); else queue.branchFiles(list);
+    foot.replaceChildren(el("span", { class: "files-pane__keys", text: "j / k step · x reviewed · o diff · f file · Alt+← → back, forward · Esc" }));
+  }
+  tabs.forEach((t) => t.addEventListener("click", () => { mode = t.dataset.mode; render(); }));
+  queue.attach(render);
+  render();
+}
+
+// reviewNav lists the project's open pull requests (and the branch being
+// viewed), so the reviewer can move between them.
+async function reviewNav(nav, { project, branch, pr }) {
+  const row = (href, label, sub, current) => el("a", { class: "nav-session plain" + (current ? " is-current" : ""), href }, [
+    el("span", { class: "status-sq" }),
+    el("span", { class: "nav-session__name" }, [el("span", { class: "nav-session__project", text: label }), el("span", { class: "nav-session__branch", text: sub })]),
+    el("span", { class: "nav-session__status", text: current ? "viewing" : "" }),
+  ]);
+  const rows = [];
+  if (!pr && branch) rows.push(row(location.href, "branch", branch, true));
+  nav.replaceChildren(el("div", { class: "nav-group" }, [el("div", { class: "nav-group__project", text: project }), ...rows]));
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(project)}/prs`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || String(res.status));
+    for (const p of Array.isArray(body) ? body : []) {
+      rows.push(row(`/branch?project=${encodeURIComponent(project)}&pr=${p.number}`, `#${p.number}`, p.title, String(p.number) === pr));
+    }
+    if (!rows.length) rows.push(el("div", { class: "chat-nav__empty", text: "No open pull requests." }));
+  } catch (err) {
+    rows.push(el("div", { class: "chat-nav__empty", text: `Couldn’t list pull requests: ${err.message}` }));
+  }
+  nav.replaceChildren(el("div", { class: "nav-group" }, [el("div", { class: "nav-group__project", text: project }), ...rows]));
 }
 
 // The tab icon follows session status here too, like the other pages.

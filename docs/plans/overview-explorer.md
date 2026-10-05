@@ -765,6 +765,26 @@ it over. A step gets its detailed plan in this doc before coding
   project's open PRs (switching re-targets the page), nav bar and
   inspector. Middle: the PR header line. Right: Review + Files. No Intent
   section; Scope stays.
+
+  **F12 detail.**
+  - **`branch.html`** becomes the chat view's grid
+    (`.chat-shell.is-overview.has-files`):
+    - **Nav:** the wordmark and Dashboard link, a list, and the inspector.
+    - **Middle:** today's branch bar, editor tabs and Overview.
+    - **Files panel:** two tabs, Review and Files (the branch's changed
+      files), and the keys line.
+  - **The list** is the project's open pull requests (`/api/projects/
+    {name}/prs`, cached server-side) as compact rows (`#n` + title), the
+    one being viewed marked "viewing"; for a branch target, the branch
+    itself first. A failed fetch (e.g. `gh` not signed in) shows the error
+    as a note under the branch.
+  - **`branch.js`** wires `createInspector`, `createReviewQueue` (with a
+    small tab controller of its own, since `files.js` polls a session) and
+    `createRails`, so `[` / `]` and the rail tabs hide the rails here too.
+    The Overview is always the home tab, so the page stays in Overview
+    mode.
+  - No Intent section (no transcript); Scope stays.
+
 - **F13. Phone**: the inspector as a bottom sheet while something is
   selected; map boxes stack in one column. Review becomes a section under
   the page (the design has no right rail on a phone).
@@ -842,4 +862,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F11 built 2026-10-05; next: F12.
+backend) F1–F12 built 2026-10-05; next: F13.
