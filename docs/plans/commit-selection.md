@@ -1,5 +1,7 @@
 # Overview of selected commits
 
+**Status:** v1 (consecutive commits, chat view) built on main, 2026-10-05: steps 1–5 below. The "Later" items are still open.
+
 ## Goal
 
 In the chat view's Git log tab, select one or more commits with the usual multi-select rules, and have the Overview tab show **the change those commits make**: files, kinds, areas, treemap, architecture, contract surface and the function call graph. It's for reviewing part of a branch ("what did these three commits do?") instead of all of it (Branch) or only what isn't committed (Uncommitted).
@@ -364,3 +366,14 @@ A pure, top-level function (testable later), mirroring the server's rules over t
 - Open a file: a read-only range diff with the right sides; a renamed file's left side comes from its old path. Reload the page: the tab comes back.
 - Functions view → a function's "Open": the range tab opens at the line.
 - Switch window: the selection and `commits` mode are gone.
+
+## Step 5 in detail: docs and rollout
+
+- **CLAUDE.md:**
+  - `internal/gitfiles/`: mention `selection.go` (`ResolveSelection`, `GetOverviewRange`).
+  - `internal/web/` Git log paragraph: the selection rules, the bar and `selectionProblem`.
+  - Overview paragraph: `base=commits&commits=`, the cached resolution, no polling, what's hidden, `range` tabs and the `sel-base`/`sel-head` revs, and `ttlCache` pruning.
+- **`.claude/rules/testing.md`:** `selection_test.go` (the fixture history and its cases) and `handlers_selection_test.go`.
+- **Status:** a line at the top of this plan saying v1 is built, with the later items still open.
+- **Rollout:** `make install` and `mo restart`, so the real dashboard serves it.
+- **Memory:** update the plan's memory note to "built".
