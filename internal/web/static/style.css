@@ -46,6 +46,23 @@
   --term-muted: #767676;
   --term-text:  #dddddd;
   --term-error: #ff585d;
+  /* ANSI colours 0-15 for the live terminal (the drawer is dark in both themes). */
+  --ansi-0:  #2e2e2e;
+  --ansi-1:  #e06c75;
+  --ansi-2:  #98c379;
+  --ansi-3:  #e5c07b;
+  --ansi-4:  #61afef;
+  --ansi-5:  #c678dd;
+  --ansi-6:  #56b6c2;
+  --ansi-7:  #d0d0d0;
+  --ansi-8:  #767676;
+  --ansi-9:  #ff7b85;
+  --ansi-10: #b5e890;
+  --ansi-11: #ffd68a;
+  --ansi-12: #82c4ff;
+  --ansi-13: #de9bf2;
+  --ansi-14: #7fd8e3;
+  --ansi-15: #ffffff;
 
   /* Diffs, the editor's selection/search and syntax highlighting. */
   --diff-add-bg:   #e6f4ea;
@@ -836,6 +853,17 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
   height: 160px; overflow: auto; padding: 12px 16px; margin: 0;
   font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--term-text); white-space: pre-wrap; word-break: break-word;
 }
+.term-drawer__output.is-live { cursor: text; }
+.term-drawer__output.is-live.is-focused { box-shadow: inset 2px 0 0 var(--term-muted); }
+.term-cursor { outline: 1px solid var(--term-fg); outline-offset: -1px; }
+.term-drawer__output.is-focused .term-cursor { background: var(--term-fg); color: var(--term-bg); outline: 0; }
+/* Offscreen but focusable: the live terminal's keyboard. */
+.term-drawer__sink { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.term-drawer__hint {
+  border-top: 1px solid var(--term-line); padding: 0 16px; height: 28px; line-height: 28px;
+  font-family: var(--font-sans); font-size: 11px; color: var(--term-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.term-drawer__hint[hidden] { display: none; }
 .term-drawer__line { display: flex; align-items: center; border-top: 1px solid var(--term-line); height: 36px; }
 .term-drawer__line[hidden] { display: none; }
 .term-drawer__prompt { padding: 0 8px 0 16px; font-family: var(--font-mono); font-size: 12px; color: var(--term-muted); }

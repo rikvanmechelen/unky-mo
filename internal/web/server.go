@@ -138,6 +138,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals", s.handleNewTerminal)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals/{pane}/output", s.handleTerminalOutput)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals/{pane}/input", s.handleTerminalInput)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals/{pane}/keys", s.handleTerminalKeys)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals/{pane}/interrupt", s.handleTerminalInterrupt)
 	s.mux.HandleFunc("DELETE /api/sessions/{windowID}/terminals/{pane}", s.handleCloseTerminal)
 	s.mux.HandleFunc("GET /api/tickets", s.handleTickets)

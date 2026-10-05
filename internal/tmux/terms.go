@@ -94,3 +94,93 @@ func (c *Client) CapturePane(paneID string, lines int) (string, error) {
 	}
 	return strings.TrimRight(string(out), "\n"), nil
 }
+
+// Screen is a pane's scrollback and screen with its colours, plus where
+// the cursor is, for a live terminal view.
+type Screen struct {
+	// Text holds the lines with tmux's SGR escapes (capture-pane -e),
+	// wrapped lines not joined, so they line up with the cursor.
+	Text string
+	// CursorLine is the cursor's 0-based line in Text, CursorCol its
+	// column in cells.
+	CursorLine, CursorCol int
+	CursorVisible         bool
+}
+
+// screenMarker starts the display-message line that follows the capture.
+const screenMarker = "mo-screen "
+
+// CaptureScreen returns the last `lines` lines of history plus the visible
+// screen, with colours and the cursor position. The capture and the cursor
+// are read in one tmux command, so they match. Like CapturePane, nothing
+// attaches or resizes.
+func (c *Client) CaptureScreen(paneID string, lines int) (Screen, error) {
+	out, err := c.tmuxCmd(
+		"capture-pane", "-p", "-e", "-t", paneID, "-S", fmt.Sprintf("-%d", lines), ";",
+		"display-message", "-p", "-t", paneID, screenMarker+"#{cursor_x} #{cursor_y} #{pane_height} #{cursor_flag}",
+	).CombinedOutput()
+	if err != nil {
+		return Screen{}, fmt.Errorf("capture-pane: %s", strings.TrimSpace(string(out)))
+	}
+	return parseScreen(string(out))
+}
+
+// parseScreen splits CaptureScreen's output into the capture and the
+// cursor line that ends it.
+func parseScreen(out string) (Screen, error) {
+	out = strings.TrimSuffix(out, "\n")
+	i := strings.LastIndex(out, "\n"+screenMarker)
+	if i < 0 {
+		return Screen{}, fmt.Errorf("capture-pane: no cursor in output")
+	}
+	var x, y, height, flag int
+	if _, err := fmt.Sscanf(out[i+1+len(screenMarker):], "%d %d %d %d", &x, &y, &height, &flag); err != nil {
+		return Screen{}, fmt.Errorf("capture-pane: bad cursor line: %w", err)
+	}
+	text := out[:i]
+	n := strings.Count(text, "\n") + 1
+	return Screen{Text: text, CursorLine: max(n-height+y, 0), CursorCol: x, CursorVisible: flag == 1}, nil
+}
+
+// Key is one step of what a live terminal typed: literal Text, or a tmux
+// key Name such as "Tab" or "C-r". Exactly one is set.
+type Key struct {
+	Text string
+	Name string
+}
+
+// SendKeySequence types keys into target in order: Text literally (no
+// key-name interpretation), runs of Names in one send-keys. Callers must
+// only pass Names they've checked against a fixed list — a Name is handed
+// to tmux as a key name.
+func (c *Client) SendKeySequence(target string, keys []Key) error {
+	var names []string
+	flush := func() error {
+		if len(names) == 0 {
+			return nil
+		}
+		err := c.runTmux(append([]string{"send-keys", "-t", target}, names...)...)
+		names = names[:0]
+		return err
+	}
+	for _, k := range keys {
+		if k.Name != "" {
+			names = append(names, k.Name)
+			continue
+		}
+		if err := flush(); err != nil {
+			return err
+		}
+		if err := c.sendLiteral(target, k.Text); err != nil {
+			return err
+		}
+	}
+	return flush()
+}
+
+// PasteText pastes text into target as a bracketed paste (if the app asked
+// for bracketed paste), without pressing Enter — a shell then shows a
+// multi-line paste for editing instead of running each line.
+func (c *Client) PasteText(target, text string) error {
+	return c.paste(target, text)
+}

@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
 // terminalView is a drawer tab as the browser sees it. ID is the pane
@@ -105,12 +107,124 @@ func (s *Server) handleTerminalOutput(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	text, err := s.deps.Terminals.Capture(pane)
+	s.writeScreen(w, pane)
+}
+
+// screenView is a terminal's capture as the browser sees it: Text carries
+// tmux's SGR colour escapes, which terminal.js turns into styled spans.
+type screenView struct {
+	Text          string `json:"text"`
+	CursorLine    int    `json:"cursorLine"`
+	CursorCol     int    `json:"cursorCol"`
+	CursorVisible bool   `json:"cursorVisible"`
+}
+
+func (s *Server) writeScreen(w http.ResponseWriter, pane string) {
+	sc, err := s.deps.Terminals.Capture(pane)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, map[string]string{"text": text})
+	writeJSON(w, screenView{Text: sc.Text, CursorLine: sc.CursorLine, CursorCol: sc.CursorCol, CursorVisible: sc.CursorVisible})
+}
+
+// liveKeyNames are the tmux key names a live terminal may send: what a
+// shell's line editor uses (completion, history, word and line editing)
+// plus enough to get around a full-screen program. Anything else is
+// refused, since a name is handed to tmux as a key, not as text.
+var liveKeyNames = func() map[string]bool {
+	m := map[string]bool{}
+	for _, k := range strings.Fields(`Enter Tab BTab BSpace DC IC Escape Space
+		Up Down Left Right Home End PPage NPage
+		C-Up C-Down C-Left C-Right M-Up M-Down M-Left M-Right S-Up S-Down S-Left S-Right
+		F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 C-Space M-BSpace M-Enter`) {
+		m[k] = true
+	}
+	for c := 'a'; c <= 'z'; c++ {
+		m["C-"+string(c)] = true
+		m["M-"+string(c)] = true
+	}
+	for _, c := range "0123456789.,<>/?_-" {
+		m["M-"+string(c)] = true
+	}
+	return m
+}()
+
+const (
+	maxLiveKeys    = 256
+	maxLiveText    = 4 << 10
+	maxLivePaste   = 64 << 10
+	liveKeysSettle = 40 * time.Millisecond
+)
+
+// handleTerminalKeys is the live terminal's input: keystrokes go straight
+// to the shell — so its own completion, suggestions and history search
+// work — and the answer is the screen right after, so typing doesn't wait
+// for the next output poll. Body: {"keys": [{"text": "ls"}, {"key": "Tab"}]}
+// or {"paste": "…"}. Text may hold no control characters (those are keys);
+// a paste may hold newlines and tabs and goes in as a bracketed paste.
+func (s *Server) handleTerminalKeys(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keys []struct {
+			Text string `json:"text"`
+			Key  string `json:"key"`
+		} `json:"keys"`
+		Paste string `json:"paste"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLivePaste*2)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	if len(req.Keys) > maxLiveKeys || len(req.Paste) > maxLivePaste {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("too much input at once"))
+		return
+	}
+	keys := make([]tmux.Key, 0, len(req.Keys))
+	total := 0
+	for _, k := range req.Keys {
+		switch {
+		case k.Key != "" && k.Text == "":
+			if !liveKeyNames[k.Key] {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported key %q", k.Key))
+				return
+			}
+			keys = append(keys, tmux.Key{Name: k.Key})
+		case k.Text != "" && k.Key == "":
+			if stripControl(k.Text) != k.Text || strings.ContainsAny(k.Text, "\n\t") {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("control characters must be sent as keys"))
+				return
+			}
+			total += len(k.Text)
+			keys = append(keys, tmux.Key{Text: k.Text})
+		default:
+			writeError(w, http.StatusBadRequest, fmt.Errorf("each key needs exactly one of text or key"))
+			return
+		}
+	}
+	if total > maxLiveText {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("too much input at once"))
+		return
+	}
+	paste := stripControl(req.Paste)
+	pane, ok := s.ownedTerminal(w, r)
+	if !ok {
+		return
+	}
+	if len(keys) > 0 {
+		if err := s.deps.Terminals.SendKeys(pane, keys); err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+	}
+	if paste != "" {
+		if err := s.deps.Terminals.Paste(pane, paste); err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+	}
+	// Give the shell a moment to redraw (a completion, a suggestion).
+	time.Sleep(liveKeysSettle)
+	s.writeScreen(w, pane)
 }
 
 // handleTerminalInput types one line into the terminal and presses Enter.

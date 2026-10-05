@@ -232,10 +232,30 @@ func (c *Client) SendRawKeys(target, keys string) error {
 // not contain embedded newlines (each would submit early in Claude Code);
 // multi-line text goes through SendPastedText instead.
 func (c *Client) SendLiteralText(target, text string) error {
-	if err := c.runTmux("send-keys", "-l", "-t", target, "--", text); err != nil {
+	if err := c.sendLiteral(target, text); err != nil {
 		return err
 	}
 	return c.runTmux("send-keys", "-t", target, "Enter")
+}
+
+// sendLiteral types text into target with no key-name interpretation and
+// no Enter. tmux reads an argument's trailing ";" as a command separator
+// (and drops it), even after "--", so trailing semicolons go as hex bytes.
+func (c *Client) sendLiteral(target, text string) error {
+	body := strings.TrimRight(text, ";")
+	if body != "" {
+		if err := c.runTmux("send-keys", "-l", "-t", target, "--", body); err != nil {
+			return err
+		}
+	}
+	if n := len(text) - len(body); n > 0 {
+		args := []string{"send-keys", "-t", target, "-H"}
+		for range n {
+			args = append(args, "3b")
+		}
+		return c.runTmux(args...)
+	}
+	return nil
 }
 
 // pasteSettle is how long SendPastedText waits between the paste and the
@@ -284,7 +304,14 @@ func (c *Client) SendPrompt(target, text string, imagePaths []string) error {
 // through a uniquely named buffer that the paste deletes.
 func (c *Client) paste(target, text string) error {
 	buf := fmt.Sprintf("mo-paste-%d", time.Now().UnixNano())
-	if err := c.runTmux("set-buffer", "-b", buf, "--", text); err != nil {
+	// Through stdin rather than set-buffer's argument: tmux reads an
+	// argument's trailing ";" as a command separator and drops it.
+	load := c.tmuxCmd("load-buffer", "-b", buf, "-")
+	load.Stdin = strings.NewReader(text)
+	if out, err := load.CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("load-buffer: %s", msg)
+		}
 		return err
 	}
 	if err := c.runTmux("paste-buffer", "-p", "-d", "-b", buf, "-t", target); err != nil {

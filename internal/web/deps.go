@@ -167,8 +167,12 @@ type ScopeChecker interface {
 // returned for the requested window.
 type Terminals interface {
 	List(w state.ProjectState) ([]ops.Terminal, error)
-	Capture(paneID string) (string, error)
+	Capture(paneID string) (tmux.Screen, error)
 	SendLine(paneID, text string) error
+	// SendKeys types a live terminal's keystrokes; key Names are already
+	// checked against liveKeyNames.
+	SendKeys(paneID string, keys []tmux.Key) error
+	Paste(paneID, text string) error
 	Interrupt(paneID string) error
 	New(w state.ProjectState) (string, error)
 	Close(paneID string) error
@@ -596,8 +600,16 @@ func (r realTerminals) List(w state.ProjectState) ([]ops.Terminal, error) {
 	return out, nil
 }
 
-func (r realTerminals) Capture(paneID string) (string, error) {
-	return r.client.CapturePane(paneID, terminalScrollback)
+func (r realTerminals) Capture(paneID string) (tmux.Screen, error) {
+	return r.client.CaptureScreen(paneID, terminalScrollback)
+}
+
+func (r realTerminals) SendKeys(paneID string, keys []tmux.Key) error {
+	return r.client.SendKeySequence(paneID, keys)
+}
+
+func (r realTerminals) Paste(paneID, text string) error {
+	return r.client.PasteText(paneID, text)
 }
 
 // SendLine types text literally (no tmux key-name interpretation) and

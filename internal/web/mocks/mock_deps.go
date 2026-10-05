@@ -21,6 +21,7 @@ import (
 	review "github.com/rvanmech/unky-mo/internal/review"
 	state "github.com/rvanmech/unky-mo/internal/state"
 	tickets "github.com/rvanmech/unky-mo/internal/tickets"
+	tmux "github.com/rvanmech/unky-mo/internal/tmux"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -972,10 +973,10 @@ func (m *MockTerminals) EXPECT() *MockTerminalsMockRecorder {
 }
 
 // Capture mocks base method.
-func (m *MockTerminals) Capture(paneID string) (string, error) {
+func (m *MockTerminals) Capture(paneID string) (tmux.Screen, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Capture", paneID)
-	ret0, _ := ret[0].(string)
+	ret0, _ := ret[0].(tmux.Screen)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1042,6 +1043,34 @@ func (m *MockTerminals) New(w state.ProjectState) (string, error) {
 func (mr *MockTerminalsMockRecorder) New(w any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "New", reflect.TypeOf((*MockTerminals)(nil).New), w)
+}
+
+// Paste mocks base method.
+func (m *MockTerminals) Paste(paneID, text string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Paste", paneID, text)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Paste indicates an expected call of Paste.
+func (mr *MockTerminalsMockRecorder) Paste(paneID, text any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Paste", reflect.TypeOf((*MockTerminals)(nil).Paste), paneID, text)
+}
+
+// SendKeys mocks base method.
+func (m *MockTerminals) SendKeys(paneID string, keys []tmux.Key) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SendKeys", paneID, keys)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SendKeys indicates an expected call of SendKeys.
+func (mr *MockTerminalsMockRecorder) SendKeys(paneID, keys any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendKeys", reflect.TypeOf((*MockTerminals)(nil).SendKeys), paneID, keys)
 }
 
 // SendLine mocks base method.
