@@ -439,7 +439,17 @@ h1, h2 {
 .rail-tab__count { font-size: 12px; line-height: 1; font-weight: 700; padding-top: 2px; }
 .rail-tab__count:empty { display: none; }
 .chat-shell:not(.has-files) .rail-tab--right { display: none; }
-@media (prefers-reduced-motion: reduce) { .chat-shell { transition: none; } }
+/* An open rail's tab only shows while the pointer is over the rail (or the
+   tab), or keyboard focus is in it; a hidden rail's tab always shows. On
+   touch screens, with no hover, it always shows. */
+@media (hover: hover) {
+  .rail-tab { transition: opacity 120ms linear; }
+  .chat-shell:not(.hide-nav):not(:has(.chat-nav:hover, .chat-nav :focus-visible, .rail-tab--left:hover, .rail-tab--left:focus-visible)) .rail-tab--left,
+  .chat-shell:not(.hide-files):not(:has(.files-pane:hover, .files-pane :focus-visible, .rail-tab--right:hover, .rail-tab--right:focus-visible)) .rail-tab--right {
+    opacity: 0; pointer-events: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) { .chat-shell, .rail-tab { transition: none; } }
 
 /* ── Left nav: sessions + usage ─────────────────────────────── */
 .chat-nav { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }

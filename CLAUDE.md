@@ -120,7 +120,7 @@ The chat view is three columns:
 - Middle: the transcript, composer and terminal drawer.
 - Right: the Files panel.
 
-Either side rail can be hidden (`static/rails.js`): a tab centred on the main column's edge, or `[` / `]` outside text fields. The tab keeps its shape either way and always shows the sessions' status squares (left, current one ringed) or the changed-file count (right). The columns are `--nav-w`/`--files-w` on `.chat-shell`, animated; hidden rails are remembered in localStorage `mo.rails`.
+Either side rail can be hidden (`static/rails.js`): a tab centred on the main column's edge, or `[` / `]` outside text fields. An open rail's tab shows only while the pointer is over that rail or keyboard focus is in it (always on touch screens); a hidden rail's tab always shows. The tab keeps its shape either way and always shows the sessions' status squares (left, current one ringed) or the changed-file count (right). The columns are `--nav-w`/`--files-w` on `.chat-shell`, animated; hidden rails are remembered in localStorage `mo.rails`.
 
 Assistant text is rendered by `static/markdown.js`, which builds DOM nodes and never uses innerHTML on transcript text. Lists that re-poll (nav, question banner, files tree, drawer tabs) skip rebuilding when nothing changed, so a click straddling a poll isn't lost.
 
