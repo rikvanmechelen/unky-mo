@@ -340,3 +340,27 @@ test("focus lens", () => {
   assert.deepEqual(m.ovLens(M, "fn:internal/tui.RenderBadge").right.map((x) => x.id), ["fn:(internal/tui.Theme).ColorFor"]);
   assert.equal(m.ovLens(M, "file:docs/overview.md"), null);
 });
+
+test("origin of files no edit touched", () => {
+  const cmds = [
+    { turn: 2, command: "python3 - <<'EOF'\np='overview.js'; s=open(p).read()\nEOF" },
+    { turn: 3, command: "cd x && make mocks" },
+    { turn: 4, command: "git rm -q internal/old.go" },
+  ];
+  assert.deepEqual(m.ovGuessOrigin({ path: "internal/web/static/overview.js", kind: "logic", status: "M" }, cmds), { n: 2, how: "Bash", command: "p='overview.js'; s=open(p).read()" });
+  assert.deepEqual(m.ovGuessOrigin({ path: "internal/web/mocks/mock_deps.go", kind: "generated", status: "M" }, cmds), { n: 3, how: "regenerated (Bash)", command: "cd x && make mocks" });
+  assert.equal(m.ovGuessOrigin({ path: "internal/old.go", kind: "logic", status: "D" }, cmds).how, "git rm (Bash)");
+  assert.equal(m.ovGuessOrigin({ path: "x/view.js", kind: "logic", status: "M" }, cmds), null, "a name inside another name isn't it");
+  assert.equal(m.ovGuessOrigin({ path: "go.sum", kind: "generated", status: "M" }, cmds), null);
+  assert.equal(m.ovGuessOrigin({ path: "a.go", kind: "logic", status: "M" }, []), null);
+
+  // The trace keeps Bash calls (not failed ones), and the model uses them.
+  const t = m.createIntentTrace(() => ({ kind: "user" }));
+  t.add({ type: "user", uuid: "u1", message: { content: "do it" } });
+  t.add({ type: "assistant", uuid: "a1", message: { content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "sed -i s/x/y/ docs/overview.md" } }, { type: "tool_use", id: "b2", name: "Bash", input: { command: "rm docs/other.md" } }] } });
+  t.add({ type: "user", uuid: "r2", message: { content: [{ type: "tool_result", tool_use_id: "b2", is_error: true }] } });
+  assert.deepEqual(t.commands.map((c) => c.id), ["b1"]);
+  const inputs = alarmInputs();
+  const M = m.buildModel({ ...inputs, trace: { ...inputs.trace, edits: inputs.trace.edits.filter((e) => !e.path.endsWith("overview.md")), commands: t.commands } });
+  assert.deepEqual(M.E.get("file:docs/overview.md").origin, { n: 1, how: "Bash", command: "sed -i s/x/y/ docs/overview.md" });
+});

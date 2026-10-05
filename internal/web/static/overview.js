@@ -583,7 +583,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
       for (const r of g.rows) {
         const fid = "file:" + r.f.path;
         const name = selectable(el("button", { class: "overview-trace__name", type: "button", title: `${r.f.path} — click to inspect, double-click for the changes`, text: r.f.path }), fid);
-        const out = g.turn === null ? [el("i", { class: "overview-trace__out", title: "Not edited in this conversation" })] : [];
+        const origin = g.turn === null ? getModel()?.E.get(fid)?.origin : null;
+        const out = g.turn === null ? [el("i", { class: "overview-trace__out", title: origin ? `Not edited in this conversation; probably ${origin.how} in prompt ${origin.n}: ${origin.command}` : "Not edited in this conversation" })] : [];
         const tr = el("tr", { class: selMark(fid).trim() }, [el("td", { class: "overview-trace__file" }, [el("span", { class: "overview-trace__namewrap" }, [...out, name, ...driftTag(r.f.path)])])]);
         for (const n of columns) {
           const td = el("td", { class: "overview-trace__cell" });

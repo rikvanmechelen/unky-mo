@@ -305,6 +305,15 @@ function createInspector(host, overview) {
     }));
   }
 
+  // originItem is a file no edit touched, as a "why" item: the Bash
+  // command that probably changed it (ovGuessOrigin), or that it's unknown.
+  function originItem(M, f) {
+    const o = f.origin;
+    if (!o) return { n: 0, text: "Not edited in this conversation", notes: [], sub: "Bash, another session, or earlier work" };
+    const p = M.E.get("prompt:" + o.n);
+    return { n: o.n, text: `Probably ${o.how}${o.n ? ` in prompt ${o.n}` : " before the first prompt"}` + (p?.text ? ` — ${oneLine(p.text, 120)}` : ""), notes: [o.command], sub: "A guess from the command’s text" };
+  }
+
   // ── Per entity ──────────────────────────────────────────────────
 
   function entityView(M, id) {
@@ -406,7 +415,7 @@ function createInspector(host, overview) {
       f.drift ? alert("warn", (f.drift.verdict === "drift" ? "Outside the ask: " : "Unclear against the ask: ") + f.drift.reason) : null,
       f.binary ? alert(null, "A binary file.") : codeBlock("First change", f.status === "D" ? f.path : f.path, 1, { side, first: true }),
       rel("Functions in this file", f.fns.map((x) => ({ id: x }))),
-      M.traced ? (prompts.length ? why("Edited by", prompts) : why("Edited by", [{ n: 0, text: "Not edited in this conversation", notes: [], sub: "Bash, another session, or earlier work" }])) : null,
+      M.traced ? (prompts.length ? why("Edited by", prompts) : why("Edited by", [originItem(M, f)])) : null,
       rel("Contracts", cons.map((x) => ({ id: x.id, sub: x.catLabel }))),
       actionsBar([
         ...openActs(f.id, ovWhere(M, f.id)),

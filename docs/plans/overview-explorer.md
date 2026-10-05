@@ -709,6 +709,34 @@ it over. A step gets its detailed plan in this doc before coding
   tool_use commands for the path, `git rm`, `go generate`/`go get`/`make
   mocks`, to say "git rm (Bash)" instead of "not edited in this
   conversation". It's a heuristic, so it's worded as "probably".
+
+  **F10 detail.**
+  - `createIntentTrace` also records Bash tool calls as `commands: [{turn,
+    command, agent}]`, a subagent's on the turn of its Agent call, and
+    drops one whose result `is_error`, like edits.
+  - **`ovGuessOrigin(file, commands)`** in the model file (Node-tested),
+    latest command first:
+    1. **It mentions the file:** its path, or its name as a whole word
+       (quoted, after `/`, `=` or a space, before a quote, space or end
+       of line) → "Bash".
+    2. **A deleted file:** `git rm` / `rm` with its name → "git rm (Bash)".
+    3. **A regenerator for its kind:**
+       - generated mocks: `mockgen` / `make mocks` / `go generate`;
+       - `go.mod` / `go.sum`: `go get` / `go mod`;
+       - JS lock files: `npm` / `yarn` / `pnpm`;
+       - `Gemfile.lock`: `bundle`;
+       - whitespace-only files: `gofmt` / `goimports` / `prettier` /
+         `rubocop -a` / `black`.
+
+    The answer is `{n, command (first line, 120 chars), how}`, or null.
+  - **`buildModel`** sets `file.origin` for files no edit touched.
+    - **The file inspector's "Edited by":** "Probably Bash in prompt N"
+      with the command, instead of "Not edited in this conversation", and
+      the prompt number selects the prompt.
+    - **The trace's untraced rows:** the guess as the yellow mark's
+      tooltip.
+    - Worded "probably": it's a guess from text.
+
 - **F11. Editor tab Diff | File switch** + "Show in Overview": swaps a tab
   between `bdiff`/`range`/`sdiff` and `file` in place (same path, same
   line), and Show in Overview selects `file:<path>`. In Selected mode,
@@ -794,4 +822,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F9 built 2026-10-05; next: F10.
+backend) F1–F10 built 2026-10-05; next: F11.

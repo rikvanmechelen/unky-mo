@@ -64,10 +64,11 @@ function scopeRequestFrom(files, trace, root) {
 // abandoned branch still changed the file. Subagent lines are added with
 // addAgent and land on the turn whose Agent call spawned them.
 function createIntentTrace(describeUser) {
-  let turns, edits, agentTurns, seen, lastNote, version;
+  let turns, edits, commands, agentTurns, seen, lastNote, version;
   function reset() {
     turns = []; // [{n, uuid, text}]
     edits = []; // [{turn, path (absolute), tool, id, note, agent, hunks}]
+    commands = []; // [{turn, command, id, agent}]: Bash calls, for files no edit touched
     agentTurns = new Map(); // Agent tool_use id → turn
     seen = new Set(); // line uuids already folded (a reconnect replays them)
     lastNote = new Map(); // "" (main) or agent id → the last assistant text
@@ -87,9 +88,10 @@ function createIntentTrace(describeUser) {
       if (Array.isArray(content)) {
         for (const b of content) {
           if (b.type === "tool_result" && b.is_error) {
-            const n = edits.length;
+            const n = edits.length + commands.length;
             edits = edits.filter((e) => e.id !== b.tool_use_id);
-            if (edits.length !== n) version++;
+            commands = commands.filter((c) => c.id !== b.tool_use_id);
+            if (edits.length + commands.length !== n) version++;
           } else if (b.type === "tool_result" && msg.toolUseResult && typeof msg.toolUseResult === "object") {
             // Which lines the edit wrote: [newStart, newLines, oldStart,
             // oldLines] per hunk; a created file is all of it.
@@ -121,6 +123,11 @@ function createIntentTrace(describeUser) {
       if (b.type === "text" && b.text.trim()) lastNote.set(noteKey, b.text.trim());
       if (b.type !== "tool_use") continue;
       if (!agent && (b.name === "Agent" || b.name === "Task")) agentTurns.set(b.id, turnNow());
+      if (b.name === "Bash" && typeof b.input?.command === "string") {
+        commands.push({ turn: agent ? agentTurn : turnNow(), command: b.input.command, id: b.id, agent: agent || null });
+        version++;
+        continue;
+      }
       const p = EDIT_TOOLS.has(b.name) ? (b.input?.file_path ?? b.input?.notebook_path) : null;
       if (typeof p !== "string") continue;
       edits.push({ turn: agent ? agentTurn : turnNow(), path: p, tool: b.name, id: b.id, note: lastNote.get(noteKey) || "", agent: agent || null });
@@ -137,6 +144,7 @@ function createIntentTrace(describeUser) {
     hasAgents: () => agentTurns.size > 0,
     get turns() { return turns; },
     get edits() { return edits; },
+    get commands() { return commands; },
     get version() { return version; },
   };
 }
@@ -382,7 +390,7 @@ function buildModel({ overview, arch = null, calls = null, trace = null, scope =
     const e = put({
       type: "file", id: "file:" + f.path, path: f.path, oldPath: f.oldPath || "", status: f.status, added: f.added, removed: f.removed,
       binary: !!f.binary, kind: f.kind, area: f.area, name: f.path.slice(i + 1), dir: f.path.slice(0, i + 1),
-      unit, fns: [], prompts: [], drift: drift.get(f.path) || null, outside: false,
+      unit, fns: [], prompts: [], drift: drift.get(f.path) || null, outside: false, origin: null,
       reviewed: !!reviewed && reviewed[f.path] === reviewSig(f),
     });
     fileByPath.set(f.path, e.id);
@@ -493,6 +501,7 @@ function buildModel({ overview, arch = null, calls = null, trace = null, scope =
         const fe = E.get("file:" + r.f.path);
         if (!r.turns.size) {
           fe.outside = true;
+          fe.origin = ovGuessOrigin(fe, trace.commands);
           orphans.push(fe.id);
           continue;
         }
@@ -1057,6 +1066,41 @@ function ovLens(M, fnId) {
   };
 }
 
+// ovGuessOrigin guesses which Bash command changed a file no edit touched,
+// from the commands' text (latest first): one that names the file, an rm
+// of a deleted one, or one that regenerates its kind of file. It returns
+// {n, command (the line that matched, cut short), how} or null. It's a guess, so
+// it's shown as "probably".
+function ovGuessOrigin(file, commands) {
+  if (!commands?.length) return null;
+  const name = file.path.split("/").pop();
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const named = new RegExp(`(^|[\\s'"=/(])${esc(name)}($|[\\s'"),;:])`, "m");
+  const gens = [];
+  if (file.kind === "generated" && /mock/i.test(file.path)) gens.push(/\bmockgen\b|\bmake mocks\b|\bgo generate\b/);
+  if (name === "go.mod" || name === "go.sum") gens.push(/\bgo (get|mod)\b/);
+  if (/^(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(name)) gens.push(/\b(npm|yarn|pnpm)\b/);
+  if (name === "Gemfile.lock") gens.push(/\bbundle\b/);
+  if (file.kind === "format") gens.push(/\b(gofmt|goimports|prettier|black)\b|\brubocop -a\b/);
+  // The line of the command that matched (a heredoc's first line says
+  // little), or its first line.
+  const out = (c, how, test) => {
+    const lines = c.command.split("\n");
+    return { n: c.turn, how, command: oneLine(lines.find(test) || lines[0], 120) };
+  };
+  for (let i = commands.length - 1; i >= 0; i--) {
+    const c = commands[i];
+    if (c.command.includes(file.path) || named.test(c.command)) {
+      return out(c, file.status === "D" && /\b(git rm|rm)\b/.test(c.command) ? "git rm (Bash)" : "Bash", (l) => l.includes(file.path) || named.test(l));
+    }
+  }
+  for (let i = commands.length - 1; i >= 0; i--) {
+    const c = commands[i];
+    if (gens.some((re) => re.test(c.command))) return out(c, "regenerated (Bash)", (l) => gens.some((re) => re.test(l)));
+  }
+  return null;
+}
+
 // ── Selection history ──────────────────────────────────────────
 // {stack, at}: the selections made, and where Back/Forward stand. null is
 // "nothing selected", a step of its own so Back can return to it.
@@ -1111,6 +1155,6 @@ if (typeof module === "object" && module.exports) {
     createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
-    ovSectionSummaries, ovMapUnits, ovMapFns, ovLayoutMap, ovLens, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
+    ovSectionSummaries, ovGuessOrigin, ovMapUnits, ovMapFns, ovLayoutMap, ovLens, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }
