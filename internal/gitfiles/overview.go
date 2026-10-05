@@ -78,6 +78,9 @@ type Overview struct {
 	MergeBase string `json:"mergeBase,omitempty"`
 	Rev       string `json:"rev,omitempty"`
 	Head      string `json:"head,omitempty"`
+	// Worktree marks a ModeCommits overview that ends at the working tree
+	// (a Git log selection that includes the uncommitted changes).
+	Worktree bool `json:"worktree,omitempty"`
 	// BaseFetched is when origin's copy of Base was last updated (unix
 	// seconds), 0 when unknown or Base isn't origin's: an old fetch means an
 	// old merge base, and an overview that shows work already merged.
@@ -117,8 +120,15 @@ func GetOverview(ctx context.Context, cmd moexec.Commander, dir, mode string) (*
 	}
 
 	o.Rev = rev
+	return overviewToWorktree(ctx, cmd, o, root, rev)
+}
+
+// overviewToWorktree fills o with the files changed from commit rev (none
+// without commits) to the working tree, untracked files included.
+func overviewToWorktree(ctx context.Context, cmd moexec.Commander, o *Overview, root, rev string) (*Overview, error) {
 	var files []OverviewFile
 	if rev != "" {
+		var err error
 		files, err = diffFiles(ctx, cmd, root, []string{rev}, func(p, status string) []byte { return readHeader(root, p, status) })
 		if err != nil {
 			return nil, err

@@ -377,3 +377,29 @@ A pure, top-level function (testable later), mirroring the server's rules over t
 - **Status:** a line at the top of this plan saying v1 is built, with the later items still open.
 - **Rollout:** `make install` and `mo restart`, so the real dashboard serves it.
 - **Memory:** update the plan's memory note to "built".
+
+## Follow-up: uncommitted changes in a selection
+
+The Git log's "Uncommitted changes" row becomes selectable. It's still consecutive-only: uncommitted changes sit on top of HEAD, so they can be selected **alone** (the change from HEAD to the working tree) or **with a run of commits ending at HEAD** (from the commit before the run to the working tree). Uncommitted changes plus commits that don't end at HEAD are refused ("uncommitted changes sit on HEAD (abc1234), which isn't selected").
+
+The change of such a selection is the diff from a commit to the working tree, untracked files included, which `GetOverview` already makes for Branch and Uncommitted mode. So:
+- the analysis reads the working tree (`Overview.Head` empty), as in Branch mode;
+- the tab keeps polling, since the working tree changes;
+- files open as **editable** diff tabs against the selection's base, like the Branch mode's `bdiff` tabs, not as read-only range tabs.
+
+Steps: A. `gitfiles`; B. web; C. browser + docs.
+
+### Step A in detail: `gitfiles`
+
+- **Refactor:** move `GetOverview`'s "diff `rev` against the working tree, plus untracked files" part into `overviewToWorktree(ctx, cmd, o, root, rev)`. `GetOverview` calls it unchanged (`TestGetOverview*` guard it).
+- `HeadCommit(ctx, cmd, dir) (root, head string, err error)`: the checkout's root and HEAD's full id. `ErrNotRepo` outside a checkout; `ErrNoCommits` (new) in a repo without commits.
+- `GetOverviewWorktree(ctx, cmd, root, base string) (*Overview, error)`: `base` must be a full commit id (`ErrUnknownCommit` otherwise). The fields:
+  - `Mode: ModeCommits`, `Rev = MergeBase = base`, `Head` empty, `Branch` = the current branch;
+  - `Worktree: true`, a new `Overview` field (JSON `worktree`) so the browser can tell this overview reads the working tree.
+- `ResolveSelection` stays as it is. The HEAD rule ("the newest selected commit must be HEAD") is checked by the web layer on every request, because HEAD moves while a resolved selection stays cached. A new `SelectionError` reason `"worktree"` (Commit = the newest selected commit, Other = HEAD) carries the message.
+- **Tests** (`selection_test.go`, `selectionRepo`, whose working tree has an uncommitted `a.go` edit; add an untracked file):
+  - `HeadCommit` returns c5 and the root; in an empty repo it returns `ErrNoCommits`.
+  - `GetOverviewWorktree(c3)` lists m's side files, c5's `a.go` with the uncommitted text's line counts, and the untracked file. `Worktree` is set and `Head` empty.
+  - `GetOverviewWorktree(HEAD)` equals Uncommitted mode's file list.
+  - A short base or a tree id gives `ErrUnknownCommit`.
+  - The "worktree" reason's message names both commits.

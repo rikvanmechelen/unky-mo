@@ -180,3 +180,63 @@ func TestGetOverviewRange(t *testing.T) {
 		}
 	}
 }
+
+func TestHeadCommit(t *testing.T) {
+	dir, ids := selectionRepo(t)
+	ctx, cmd := context.Background(), moexec.DefaultCommander
+	root, head, err := HeadCommit(ctx, cmd, dir+"/sub")
+	if err != nil || head != ids["c5"] || root != gitOut(t, dir, "rev-parse", "--show-toplevel") {
+		t.Errorf("HeadCommit: %q %q %v", root, head, err)
+	}
+	empty := t.TempDir()
+	run(t, empty, "init", "-q", "-b", "main")
+	if _, _, err := HeadCommit(ctx, cmd, empty); !errors.Is(err, ErrNoCommits) {
+		t.Errorf("empty repo: %v", err)
+	}
+}
+
+// A selection ending at the working tree: from the commit before it to the
+// uncommitted and untracked files.
+func TestGetOverviewWorktree(t *testing.T) {
+	dir, ids := selectionRepo(t)
+	ctx, cmd := context.Background(), moexec.DefaultCommander
+	write(t, dir, "notes.txt", "untracked\n")
+	o, err := GetOverviewWorktree(ctx, cmd, dir, ids["c3"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Mode != ModeCommits || !o.Worktree || o.Head != "" || o.Rev != ids["c3"] || o.MergeBase != ids["c3"] || o.Branch != "main" {
+		t.Errorf("overview %+v", o)
+	}
+	files := overviewFiles(o)
+	if f := files["a.go"]; f.Added != 1 || f.Removed != 4 {
+		t.Errorf("a.go against the uncommitted text: %+v", f)
+	}
+	if files["side.go"].Status != "A" || files["notes.txt"].Status != "?" || len(o.Files) != 3 {
+		t.Errorf("files %+v", o.Files)
+	}
+
+	// From HEAD it's exactly the Uncommitted mode's change.
+	o, err = GetOverviewWorktree(ctx, cmd, dir, ids["c5"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := GetOverview(ctx, cmd, dir, ModeHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(o.Files) != fmt.Sprint(head.Files) {
+		t.Errorf("from HEAD %+v, uncommitted %+v", o.Files, head.Files)
+	}
+
+	tree := gitOut(t, dir, "rev-parse", ids["c2"]+"^{tree}")
+	for _, bad := range []string{ids["c3"][:7], "HEAD", tree} {
+		if _, err := GetOverviewWorktree(ctx, cmd, dir, bad); !errors.Is(err, ErrUnknownCommit) {
+			t.Errorf("base %q: %v", bad, err)
+		}
+	}
+	e := &SelectionError{Reason: "worktree", Commit: ids["c3"], Other: ids["c5"]}
+	if msg := e.Error(); !strings.Contains(msg, ids["c3"][:7]) || !strings.Contains(msg, ids["c5"][:7]) {
+		t.Errorf("message %q", msg)
+	}
+}

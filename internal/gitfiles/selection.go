@@ -34,7 +34,9 @@ type SelectionError struct {
 	// Reason is "gap" (Commit, between two selected commits, isn't
 	// selected), "merge" (the selected merge Commit brings in Other, which
 	// isn't selected), "root" (Commit has no parent to compare with) or
-	// "heads" (Commit and Other are on different branches).
+	// "heads" (Commit and Other are on different branches) or "worktree"
+	// (the uncommitted changes are selected, but the newest selected commit
+	// Commit isn't HEAD, Other, which they sit on).
 	Reason string
 	Commit string
 	Other  string
@@ -49,6 +51,8 @@ func (e *SelectionError) Error() string {
 		return fmt.Sprintf("the merge %s brings in %s, which isn't selected", c, o)
 	case "root":
 		return fmt.Sprintf("%s is the first commit: there's nothing before it to compare with", c)
+	case "worktree":
+		return fmt.Sprintf("the uncommitted changes sit on %s, but the newest selected commit is %s", o, c)
 	default:
 		return fmt.Sprintf("%s and %s are on different branches", c, o)
 	}
@@ -250,4 +254,33 @@ func GetOverviewRange(ctx context.Context, cmd moexec.Commander, root, base, hea
 	o := &Overview{Root: root, Mode: ModeCommits, MergeBase: base, Rev: base, Head: head, Files: []OverviewFile{}, Kinds: map[Kind]KindTotal{}, Areas: []string{}}
 	o.Branch = CurrentBranch(ctx, cmd, root)
 	return overviewBetween(ctx, cmd, o, root, base, head)
+}
+
+// ErrNoCommits is returned for a repository without commits.
+var ErrNoCommits = errors.New("no commits yet")
+
+// HeadCommit returns the top level of the checkout containing dir and its
+// HEAD commit's full id.
+func HeadCommit(ctx context.Context, cmd moexec.Commander, dir string) (root, head string, err error) {
+	root, err = Root(ctx, cmd, dir)
+	if err != nil {
+		return "", "", err
+	}
+	head = gitLine(ctx, cmd, root, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	if head == "" {
+		return "", "", ErrNoCommits
+	}
+	return root, head, nil
+}
+
+// GetOverviewWorktree reads the change from commit base (a full id) to the
+// working tree of the checkout at root, untracked files included: a Git
+// log selection that includes the uncommitted changes.
+func GetOverviewWorktree(ctx context.Context, cmd moexec.Commander, root, base string) (*Overview, error) {
+	if !hashRe.MatchString(base) || gitLine(ctx, cmd, root, "cat-file", "-t", base) != "commit" {
+		return nil, ErrUnknownCommit
+	}
+	o := &Overview{Root: root, Mode: ModeCommits, MergeBase: base, Rev: base, Worktree: true, Files: []OverviewFile{}, Kinds: map[Kind]KindTotal{}, Areas: []string{}}
+	o.Branch = CurrentBranch(ctx, cmd, root)
+	return overviewToWorktree(ctx, cmd, o, root, base)
 }
