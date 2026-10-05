@@ -55,6 +55,7 @@ func main() {
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(webCmd())
 	rootCmd.AddCommand(restartCmd())
+	rootCmd.AddCommand(snapshotCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -900,7 +901,11 @@ func hooksCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Install Unky Mo status hooks into Claude settings",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			statusScript, _, err := installStatusHooks()
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			statusScript, _, err := installStatusHooks(cfg)
 			if err != nil {
 				return err
 			}

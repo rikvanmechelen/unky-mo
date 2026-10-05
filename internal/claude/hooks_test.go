@@ -209,7 +209,7 @@ func TestHooksInstalledFalseByDefault(t *testing.T) {
 
 func TestInstallHooksV2_AddsExpandedHookSet(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+	if err := InstallHooksV2("/opt/status-hook.sh", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !HooksV2Installed() {
@@ -242,7 +242,7 @@ func TestInstallHooksV2_PreservesExistingHooks(t *testing.T) {
 	preexisting := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/my/hook.sh","timeout":2}]}]}}`
 	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(preexisting), 0644)
 
-	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+	if err := InstallHooksV2("/opt/status-hook.sh", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +267,7 @@ func TestInstallHooksV2_ReplacesV1Hooks(t *testing.T) {
 	}
 
 	// Install V2 — should replace V1 markers.
-	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+	if err := InstallHooksV2("/opt/status-hook.sh", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +295,7 @@ func TestUninstallHooks_RemovesBothV1AndV2(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	// Install V2.
-	if err := InstallHooksV2("/opt/status-hook.sh"); err != nil {
+	if err := InstallHooksV2("/opt/status-hook.sh", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !HooksV2Installed() {
@@ -316,12 +316,12 @@ func TestUninstallHooks_RemovesBothV1AndV2(t *testing.T) {
 
 func TestEnsureHooksV2_InstallsThenNoops(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	changed, err := EnsureHooksV2("/opt/status-hook.sh")
+	changed, err := EnsureHooksV2("/opt/status-hook.sh", "")
 	if err != nil || !changed {
 		t.Fatalf("first EnsureHooksV2: changed=%v err=%v, want install", changed, err)
 	}
 	before, _ := os.ReadFile(ClaudeSettingsPath())
-	changed, err = EnsureHooksV2("/opt/status-hook.sh")
+	changed, err = EnsureHooksV2("/opt/status-hook.sh", "")
 	if err != nil || changed {
 		t.Fatalf("second EnsureHooksV2: changed=%v err=%v, want no-op", changed, err)
 	}
@@ -336,7 +336,7 @@ func TestEnsureHooksV2_UpgradesV1(t *testing.T) {
 	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := EnsureHooksV2("/opt/status-hook.sh")
+	changed, err := EnsureHooksV2("/opt/status-hook.sh", "")
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v, want upgrade", changed, err)
 	}
@@ -351,10 +351,10 @@ func TestEnsureHooksV2_UpgradesV1(t *testing.T) {
 
 func TestEnsureHooksV2_RewritesStaleScriptPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if err := InstallHooksV2("/old/checkout/scripts/status-hook.sh"); err != nil {
+	if err := InstallHooksV2("/old/checkout/scripts/status-hook.sh", ""); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := EnsureHooksV2("/new/status-hook.sh")
+	changed, err := EnsureHooksV2("/new/status-hook.sh", "")
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v, want rewrite", changed, err)
 	}
@@ -373,14 +373,14 @@ func TestEnsureHooksV2_PreservesForeignHooks(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureHooksV2("/opt/status-hook.sh"); err != nil {
+	if _, err := EnsureHooksV2("/opt/status-hook.sh", ""); err != nil {
 		t.Fatal(err)
 	}
 	dump, _ := os.ReadFile(ClaudeSettingsPath())
 	if !strings.Contains(string(dump), "/usr/bin/mine") {
 		t.Error("user's own Stop hook should survive")
 	}
-	if changed, _ := EnsureHooksV2("/opt/status-hook.sh"); changed {
+	if changed, _ := EnsureHooksV2("/opt/status-hook.sh", ""); changed {
 		t.Error("foreign hooks alongside ours should still count as up to date")
 	}
 }
@@ -419,5 +419,44 @@ func TestStatusHookScriptEmbedsQuotedBinary(t *testing.T) {
 	}
 	if strings.Contains(got, "__MO_BIN__") {
 		t.Error("placeholder left in script")
+	}
+}
+
+func TestEnsureHooksV2_SnapshotHooks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const bin = "/opt/it's/mo"
+	if changed, err := EnsureHooksV2("/opt/status-hook.sh", bin); err != nil || !changed {
+		t.Fatalf("install with snapshots: changed=%v err=%v", changed, err)
+	}
+	hooks := readSettingsFile(t)["hooks"].(map[string]interface{})
+	pre := hooks["PreToolUse"].([]interface{})
+	if len(pre) != 2 {
+		t.Fatalf("PreToolUse entries = %d, want status + snapshot", len(pre))
+	}
+	snap := pre[1].(map[string]interface{})
+	cmd := snap["hooks"].([]interface{})[0].(map[string]interface{})["command"]
+	if snap["matcher"] != "Bash" || cmd != `'/opt/it'\''s/mo' snapshot pre # unky-mo` {
+		t.Errorf("snapshot entry = %v", snap)
+	}
+	post := hooks["PostToolUse"].([]interface{})
+	if len(post) != 1 || post[0].(map[string]interface{})["matcher"] != "Bash" {
+		t.Errorf("PostToolUse = %v", post)
+	}
+	if changed, _ := EnsureHooksV2("/opt/status-hook.sh", bin); changed {
+		t.Error("second ensure rewrote settings")
+	}
+	// Switching them off removes both entries, and PostToolUse with them.
+	if changed, err := EnsureHooksV2("/opt/status-hook.sh", ""); err != nil || !changed {
+		t.Fatalf("disable: changed=%v err=%v", changed, err)
+	}
+	hooks = readSettingsFile(t)["hooks"].(map[string]interface{})
+	if n := len(hooks["PreToolUse"].([]interface{})); n != 1 {
+		t.Errorf("PreToolUse entries after disabling = %d, want 1", n)
+	}
+	if _, ok := hooks["PostToolUse"]; ok {
+		t.Error("PostToolUse kept after disabling")
+	}
+	if err := UninstallHooks(); err != nil {
+		t.Fatal(err)
 	}
 }

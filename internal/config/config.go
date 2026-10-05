@@ -43,6 +43,10 @@ type WebConfig struct {
 	// cert`) instead of the generated one. Set both or neither.
 	CertFile string `toml:"cert_file"`
 	KeyFile  string `toml:"key_file"`
+	// DisableBashDiffs leaves out the hooks that snapshot the checkout
+	// around each Bash call (`mo snapshot`), so the chat view shows no diff
+	// for what a command changed.
+	DisableBashDiffs bool `toml:"disable_bash_diffs"`
 }
 
 // ListenAddr returns Addr, or the default when unset. A method rather than a

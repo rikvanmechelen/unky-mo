@@ -8,8 +8,10 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/rvanmech/unky-mo/internal/bashsnap"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
+	moexec "github.com/rvanmech/unky-mo/internal/exec"
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 	"github.com/rvanmech/unky-mo/internal/web"
@@ -22,9 +24,10 @@ func hookScriptDir() string {
 }
 
 // installStatusHooks writes the embedded hook script and makes sure Claude's
-// settings carry exactly the V2 hook set pointing at it. changed reports
-// whether either the script or settings.json had to be updated.
-func installStatusHooks() (script string, changed bool, err error) {
+// settings carry exactly the V2 hook set pointing at it, plus the Bash
+// snapshot hooks unless [web] disable_bash_diffs. changed reports whether
+// either the script or settings.json had to be updated.
+func installStatusHooks(cfg *config.Config) (script string, changed bool, err error) {
 	moBin, err := os.Executable()
 	if err != nil {
 		return "", false, fmt.Errorf("locating mo binary: %w", err)
@@ -33,7 +36,11 @@ func installStatusHooks() (script string, changed bool, err error) {
 	if err != nil {
 		return "", false, fmt.Errorf("writing hook script: %w", err)
 	}
-	settingsChanged, err := claude.EnsureHooksV2(script)
+	snapshotBin := moBin
+	if cfg.Web.DisableBashDiffs {
+		snapshotBin = ""
+	}
+	settingsChanged, err := claude.EnsureHooksV2(script, snapshotBin)
 	if err != nil {
 		return "", false, fmt.Errorf("installing hooks: %w", err)
 	}
@@ -48,10 +55,13 @@ func installStatusHooks() (script string, changed bool, err error) {
 // Failures are reported, never fatal.
 func startupChecks(cfg *config.Config) (notices []string, warning string) {
 
-	if _, changed, err := installStatusHooks(); err != nil {
+	if _, changed, err := installStatusHooks(cfg); err != nil {
 		notices = append(notices, "hook setup failed: "+err.Error())
 	} else if changed {
 		notices = append(notices, "updated Claude status hooks")
+	}
+	if store, err := bashsnap.NewStore(moexec.DefaultCommander); err == nil {
+		store.Sweep()
 	}
 
 	if !cfg.Web.Disabled {

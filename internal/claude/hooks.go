@@ -127,9 +127,63 @@ var v2HookTypes = []struct {
 	{"SessionEnd", ""},
 }
 
+// hookSpec is one unky-mo hook entry: the event, its matcher and the command.
+type hookSpec struct {
+	event, matcher, command string
+	timeout                 int
+}
+
+// snapshotEvents are the extra events the Bash snapshot hooks use; with
+// v2HookTypes they're every event unky-mo manages entries in.
+var snapshotEvents = []string{"PreToolUse", "PostToolUse"}
+
+func managedEvents() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, ht := range v2HookTypes {
+		if !seen[ht.name] {
+			seen[ht.name] = true
+			out = append(out, ht.name)
+		}
+	}
+	for _, e := range snapshotEvents {
+		if !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// v2Specs is the hook set for statusScript. With snapshotBin (the mo
+// binary) set, Bash calls also get `mo snapshot pre|post`, which records
+// what each command changed (internal/bashsnap) for the web chat view.
+// They're separate entries matched on Bash, so other tools don't pay for
+// them, and the status script stays as fast as it is.
+func v2Specs(statusScript, snapshotBin string) []hookSpec {
+	var specs []hookSpec
+	for _, ht := range v2HookTypes {
+		specs = append(specs, hookSpec{ht.name, ht.matcher, v2HookCommand(ht.name, statusScript), 5})
+	}
+	if snapshotBin != "" {
+		specs = append(specs,
+			hookSpec{"PreToolUse", "Bash", snapshotHookCommand(snapshotBin, "pre"), 10},
+			hookSpec{"PostToolUse", "Bash", snapshotHookCommand(snapshotBin, "post"), 10},
+		)
+	}
+	return specs
+}
+
+func snapshotHookCommand(moBin, phase string) string {
+	quoted := "'" + strings.ReplaceAll(moBin, "'", `'\''`) + "'"
+	return fmt.Sprintf("%s snapshot %s # %s", quoted, phase, hookMarker)
+}
+
 // InstallHooksV2 installs the expanded hook set using a single unified script.
 // It replaces any existing V1 hooks (Notification + Stop) with the full set.
-func InstallHooksV2(statusScript string) error {
+// snapshotBin adds the Bash snapshot hooks (see v2Specs); "" leaves them out
+// and removes any installed earlier.
+func InstallHooksV2(statusScript, snapshotBin string) error {
 	settings, err := readSettings()
 	if err != nil {
 		return fmt.Errorf("reading settings: %w", err)
@@ -140,22 +194,32 @@ func InstallHooksV2(statusScript string) error {
 		hooks = make(map[string]interface{})
 	}
 
-	for _, ht := range v2HookTypes {
-		entries := filterOutUnkyMo(hooks, ht.name)
-		hookEntry := map[string]interface{}{
-			"hooks": []interface{}{
-				map[string]interface{}{
-					"type":    "command",
-					"command": v2HookCommand(ht.name, statusScript),
-					"timeout": 5,
+	specs := v2Specs(statusScript, snapshotBin)
+	for _, event := range managedEvents() {
+		entries := filterOutUnkyMo(hooks, event)
+		for _, sp := range specs {
+			if sp.event != event {
+				continue
+			}
+			hookEntry := map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"command": sp.command,
+						"timeout": sp.timeout,
+					},
 				},
-			},
+			}
+			if sp.matcher != "" {
+				hookEntry["matcher"] = sp.matcher
+			}
+			entries = append(entries, hookEntry)
 		}
-		if ht.matcher != "" {
-			hookEntry["matcher"] = ht.matcher
+		if len(entries) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = entries
 		}
-		entries = append(entries, hookEntry)
-		hooks[ht.name] = entries
 	}
 
 	settings["hooks"] = hooks
@@ -167,28 +231,29 @@ func v2HookCommand(hookType, statusScript string) string {
 }
 
 // EnsureHooksV2 installs the V2 hook set unless Claude's settings already
-// hold exactly it for statusScript: one unky-mo entry per V2 hook type, with
-// the expected command and matcher. Anything else — V1 leftovers, a missing
-// type, a stale script path, duplicates — triggers a reinstall. Returns
-// whether settings.json was rewritten.
-func EnsureHooksV2(statusScript string) (bool, error) {
+// hold exactly it for statusScript and snapshotBin: per event, the unky-mo
+// entries v2Specs lists, in order, with the expected command and matcher.
+// Anything else — V1 leftovers, a missing type, a stale script path,
+// duplicates, snapshot hooks switched on or off — triggers a reinstall.
+// Returns whether settings.json was rewritten.
+func EnsureHooksV2(statusScript, snapshotBin string) (bool, error) {
 	settings, err := readSettings()
 	if err != nil {
 		return false, fmt.Errorf("reading settings: %w", err)
 	}
 	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooksV2UpToDate(hooks, statusScript) {
+	if hooksV2UpToDate(hooks, v2Specs(statusScript, snapshotBin)) {
 		return false, nil
 	}
-	if err := InstallHooksV2(statusScript); err != nil {
+	if err := InstallHooksV2(statusScript, snapshotBin); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func hooksV2UpToDate(hooks map[string]interface{}, statusScript string) bool {
-	for _, ht := range v2HookTypes {
-		entries, _ := hooks[ht.name].([]interface{})
+func hooksV2UpToDate(hooks map[string]interface{}, specs []hookSpec) bool {
+	for _, event := range managedEvents() {
+		entries, _ := hooks[event].([]interface{})
 		var ours []map[string]interface{}
 		for _, e := range entries {
 			if entryHasMarker(e) {
@@ -196,20 +261,28 @@ func hooksV2UpToDate(hooks map[string]interface{}, statusScript string) bool {
 				ours = append(ours, obj)
 			}
 		}
-		if len(ours) != 1 {
+		var want []hookSpec
+		for _, sp := range specs {
+			if sp.event == event {
+				want = append(want, sp)
+			}
+		}
+		if len(ours) != len(want) {
 			return false
 		}
-		matcher, _ := ours[0]["matcher"].(string)
-		if matcher != ht.matcher {
-			return false
-		}
-		list, _ := ours[0]["hooks"].([]interface{})
-		if len(list) != 1 {
-			return false
-		}
-		h, _ := list[0].(map[string]interface{})
-		if cmd, _ := h["command"].(string); cmd != v2HookCommand(ht.name, statusScript) {
-			return false
+		for i, sp := range want {
+			matcher, _ := ours[i]["matcher"].(string)
+			if matcher != sp.matcher {
+				return false
+			}
+			list, _ := ours[i]["hooks"].([]interface{})
+			if len(list) != 1 {
+				return false
+			}
+			h, _ := list[0].(map[string]interface{})
+			if cmd, _ := h["command"].(string); cmd != sp.command {
+				return false
+			}
 		}
 	}
 	return true
@@ -246,10 +319,7 @@ func UninstallHooks() error {
 	}
 
 	// Remove both V1 (Notification, Stop) and V2 hook types.
-	hookTypes := []string{"Notification", "Stop"}
-	for _, ht := range v2HookTypes {
-		hookTypes = append(hookTypes, ht.name)
-	}
+	hookTypes := append([]string{"Notification", "Stop"}, managedEvents()...)
 	seen := make(map[string]bool)
 	for _, ht := range hookTypes {
 		if seen[ht] {
