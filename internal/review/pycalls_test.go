@@ -239,3 +239,18 @@ func TestPyCalls(t *testing.T) {
 		t.Error("python call graph marked exact")
 	}
 }
+
+// An unknown receiver's method resolves to the repo's only method of that
+// name, unless the name is a standard collection/string method.
+func TestUniqueMethodSkipsCommonNames(t *testing.T) {
+	r := &hResolver{l: &pyCalls{}, byName: map[string][]hDefRef{
+		"append":  {{"a.py", &hDef{Name: "append", Owner: "Log", Class: "Log"}}},
+		"archive": {{"a.py", &hDef{Name: "archive", Owner: "Log", Class: "Log"}}},
+	}}
+	if id, ok := r.uniqueMethod("archive"); !ok || id != "a.py:Log.archive" {
+		t.Errorf("archive = %q, %v", id, ok)
+	}
+	if id, ok := r.uniqueMethod("append"); ok {
+		t.Errorf("append resolved to %q", id)
+	}
+}

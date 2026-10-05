@@ -264,9 +264,29 @@ func (r *hResolver) method(c hClassRef, name string, base func(p, name string) (
 	return nil, ""
 }
 
+// commonMethods are names the standard libraries use on collections,
+// strings and streams: an unknown receiver calling one is far more likely a
+// list or a string than the one repo method that happens to share it.
+var commonMethods = map[string]bool{}
+
+func init() {
+	for _, n := range strings.Fields(`append add addAll insert remove removeAll removeAt removeFirst removeLast
+		pop push shift unshift splice slice concat clear count size length isEmpty contains includes has
+		get set put delete update keys values items entries first last min max sum sort sorted reverse
+		reversed map flatMap compactMap filter reduce forEach each find findIndex index indexOf some every
+		join split trim strip lower upper lowercased uppercased replace replacing startswith endswith
+		hasPrefix hasSuffix format toString description equals hashCode hash copy clone close open read
+		write flush then catch finally subscribe next resume cancel`) {
+		commonMethods[n] = true
+	}
+}
+
 // uniqueMethod is the one method (a definition inside a class) named name
 // in the whole tree, if there's exactly one.
 func (r *hResolver) uniqueMethod(name string) (string, bool) {
+	if commonMethods[name] {
+		return "", false
+	}
 	var found []hDefRef
 	for _, d := range r.byName[name] {
 		if d.def.Class != "" && !d.def.IsClass {
