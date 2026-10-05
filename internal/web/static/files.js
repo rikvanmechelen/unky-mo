@@ -1,7 +1,7 @@
 // Files panel for the chat view: the browser counterpart of the sidebar's
 // Files section. "Changed" lists the session checkout's changed files with
 // line counts; "All files" is a collapsible tree of every tracked and
-// untracked file; "Graph" the commit history (graph.js); the footer shows
+// untracked file; "Git log" the commit history (graph.js); the footer shows
 // totals and the upstream sync state.
 // Data comes from /api/sessions/{windowID}/files and /tree (gitfiles).
 // A changed file calls onOpenDiff(path) and a file in the tree onOpen(path);

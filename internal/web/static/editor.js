@@ -2,7 +2,7 @@
 // chat (transcript + composer + terminal drawer) as a pinned first tab and
 // one CodeMirror tab per opened file or diff (the file's changes against
 // HEAD, with a per-change "Revert"), or one file's changes in a commit
-// (read-only, from the Files panel's Graph tab). Line comments for Claude live in
+// (read-only, from the Files panel's Git log tab). Line comments for Claude live in
 // review.js. Tabs are remembered per window in
 // localStorage. Files come from /api/sessions/{windowID}/file, which only
 // serves paths the Files panel lists; the active tab re-polls it with
