@@ -48,6 +48,15 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported rev %q", rev))
 		return
 	}
+	if rev == "" && r.URL.Query().Get("base") == gitfiles.ModeCommits {
+		// The working-tree side of a diff against a selection's base.
+		dir, q, ok := s.sessionChange(w, r)
+		if !ok {
+			return
+		}
+		s.serveSelectionWorktreeFile(w, r, dir, q, path)
+		return
+	}
 	dir, ok := s.sessionPath(windowID)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
@@ -74,6 +83,10 @@ func (s *Server) serveSelectionFile(w http.ResponseWriter, r *http.Request, dir 
 	}
 	if file == nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("%s isn't changed in the selected commits", path))
+		return
+	}
+	if !before && o.Worktree {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("this selection ends at the working tree: read the file without a rev"))
 		return
 	}
 	rev, at := o.Head, path
@@ -110,6 +123,36 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, dir, path, re
 	default:
 		c, err = s.deps.Git.ReadFile(root, path)
 	}
+	if errors.Is(err, gitfiles.ErrOutsideRoot) {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeContent(w, r, c, false)
+}
+
+// serveSelectionWorktreeFile serves the working-tree version of a file for
+// a diff against a selection's base: any file the checkout lists, or one
+// the selection's overview lists (e.g. deleted in a selected commit).
+// gitfiles.Resolve's symlink rules apply either way.
+func (s *Server) serveSelectionWorktreeFile(w http.ResponseWriter, r *http.Request, dir string, q changeQuery, path string) {
+	root, _, err := s.listedPath(dir, path)
+	if err != nil {
+		o, cerr := s.change(dir, q)
+		if cerr != nil {
+			writeError(w, changeStatus(cerr), cerr)
+			return
+		}
+		if !slices.ContainsFunc(o.Files, func(f gitfiles.OverviewFile) bool { return f.Path == path }) {
+			writeError(w, http.StatusNotFound, fmt.Errorf("%s is not a file in this checkout", path))
+			return
+		}
+		root = o.Root
+	}
+	c, err := s.deps.Git.ReadFile(root, path)
 	if errors.Is(err, gitfiles.ErrOutsideRoot) {
 		writeError(w, http.StatusForbidden, err)
 		return

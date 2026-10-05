@@ -665,6 +665,22 @@ func (mr *MockGitFilesMockRecorder) FetchBase(root, base any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchBase", reflect.TypeOf((*MockGitFiles)(nil).FetchBase), root, base)
 }
 
+// HeadCommit mocks base method.
+func (m *MockGitFiles) HeadCommit(dir string) (string, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HeadCommit", dir)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// HeadCommit indicates an expected call of HeadCommit.
+func (mr *MockGitFilesMockRecorder) HeadCommit(dir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadCommit", reflect.TypeOf((*MockGitFiles)(nil).HeadCommit), dir)
+}
+
 // Log mocks base method.
 func (m *MockGitFiles) Log(dir, scope string) (*gitfiles.Log, error) {
 	m.ctrl.T.Helper()
@@ -723,6 +739,21 @@ func (m *MockGitFiles) OverviewRange(root, base, head string) (*gitfiles.Overvie
 func (mr *MockGitFilesMockRecorder) OverviewRange(root, base, head any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OverviewRange", reflect.TypeOf((*MockGitFiles)(nil).OverviewRange), root, base, head)
+}
+
+// OverviewWorktree mocks base method.
+func (m *MockGitFiles) OverviewWorktree(root, base string) (*gitfiles.Overview, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OverviewWorktree", root, base)
+	ret0, _ := ret[0].(*gitfiles.Overview)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OverviewWorktree indicates an expected call of OverviewWorktree.
+func (mr *MockGitFilesMockRecorder) OverviewWorktree(root, base any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OverviewWorktree", reflect.TypeOf((*MockGitFiles)(nil).OverviewWorktree), root, base)
 }
 
 // ReadAt mocks base method.

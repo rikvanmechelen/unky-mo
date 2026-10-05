@@ -147,6 +147,12 @@ type GitFiles interface {
 	// OverviewRange reads the change from commit base to commit head: the
 	// Overview of selected commits.
 	OverviewRange(root, base, head string) (*gitfiles.Overview, error)
+	// HeadCommit returns the checkout's root and HEAD's full id
+	// (gitfiles.ErrNoCommits in a repo without commits), and
+	// OverviewWorktree the change from commit base to the working tree: a
+	// selection that includes the uncommitted changes.
+	HeadCommit(dir string) (root, head string, err error)
+	OverviewWorktree(root, base string) (*gitfiles.Overview, error)
 }
 
 // ChangeAnalyzer works out a change's architecture delta (package imports
@@ -557,6 +563,18 @@ func (g realGitFiles) OverviewRange(root, base, head string) (*gitfiles.Overview
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.GetOverviewRange(ctx, g.cmd, root, base, head)
+}
+
+func (g realGitFiles) HeadCommit(dir string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.HeadCommit(ctx, g.cmd, dir)
+}
+
+func (g realGitFiles) OverviewWorktree(root, base string) (*gitfiles.Overview, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetOverviewWorktree(ctx, g.cmd, root, base)
 }
 
 func (g realGitFiles) FetchBase(root, base string) error {

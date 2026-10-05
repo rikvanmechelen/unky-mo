@@ -403,3 +403,28 @@ Steps: A. `gitfiles`; B. web; C. browser + docs.
   - `GetOverviewWorktree(HEAD)` equals Uncommitted mode's file list.
   - A short base or a tree id gives `ErrUnknownCommit`.
   - The "worktree" reason's message names both commits.
+
+### Step B in detail: web
+
+- **`GitFiles` gains** `HeadCommit(dir) (root, head string, err error)` and `OverviewWorktree(root, base string) (*gitfiles.Overview, error)` (+ mocks).
+- **Query:** `changeQuery.worktree` is set by `worktree=1`, which is only allowed with `base=commits` (any other value or mode → 400).
+  - With `worktree=1`, `commits=` may be empty or absent; without it, at least one commit is still required.
+  - `q.key(dir)` gains a `\x00wt` suffix. The selection cache keeps a commits-only key (`selKey`), since resolving the commits doesn't depend on the worktree.
+- **`s.change` for a worktree selection:**
+  1. `root, head` from `HeadCommit`, cached 2 s (in `overviewCache` under `"head\x00"+dir`), so polls don't re-run it but a new commit is noticed quickly.
+  2. With commits: resolve them (cached) and require `sel.Head == head`, else `&SelectionError{Reason: "worktree", Commit: sel.Head, Other: head}`. `base = sel.Base`. Without commits: `base = head`.
+  3. The overview comes from `overviewCache` (2 s, like Branch mode) under `root + "\x00wt\x00" + base` → `OverviewWorktree`.
+
+  The architecture and call caches keep working unchanged: `archCache` has a 3 s TTL, and `changeFingerprint` already checks the working tree's sizes/mtimes when `Head` is empty.
+- **Errors:** `ErrNoCommits` → 422 ("no commits yet").
+- **Files:**
+  - `rev=sel-base` works as before (it reads `o.Rev`).
+  - `rev=sel-head` on a worktree selection → 400: the working-tree side is the plain file.
+  - The plain read (`rev` empty) also accepts the selection's query. A path the selection's overview lists is then allowed even if `listedPath` doesn't know it (e.g. deleted in a selected commit), and it's read through `ReadFile`, so `Resolve`'s symlink rules still apply. Saving (`PUT`) is unchanged.
+- **Tests** (`handlers_selection_test.go`):
+  - uncommitted only: `HeadCommit` + `OverviewWorktree(root, head)`, no `ResolveSelection`;
+  - commits ending at HEAD: `ResolveSelection` + `HeadCommit` + `OverviewWorktree(root, base)`;
+  - commits not ending at HEAD → 422 with the "worktree" message;
+  - `worktree=1` with `base=branch`, `worktree=yes`, `base=commits` with neither commits nor worktree → 400 with no `GitFiles` call;
+  - `ErrNoCommits` → 422;
+  - `/file`: `rev=sel-head` → 400; the plain read of a path only the selection lists → `ReadFile`; a path outside it → 404.

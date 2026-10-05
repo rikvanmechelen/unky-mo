@@ -43,26 +43,40 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 type changeQuery struct {
 	mode    string   // gitfiles.ModeBranch, ModeHead or ModeCommits
 	commits []string // ModeCommits only: sorted, without duplicates
+	// worktree (ModeCommits only) adds the uncommitted changes on top of
+	// HEAD: commits may then be empty, and must otherwise end at HEAD.
+	worktree bool
 }
 
 // parseChange reads ?base= (default branch) and, for base=commits, the
-// comma-separated full commit ids in ?commits=. Only the syntax is checked
-// here; gitfiles checks the commits themselves.
+// comma-separated full commit ids in ?commits= and worktree=1 for the
+// uncommitted changes. Only the syntax is checked here; gitfiles checks
+// the commits themselves.
 func parseChange(r *http.Request) (changeQuery, error) {
 	q := changeQuery{mode: r.URL.Query().Get("base")}
 	if q.mode == "" {
 		q.mode = gitfiles.ModeBranch
 	}
-	list := r.URL.Query().Get("commits")
+	list, wt := r.URL.Query().Get("commits"), r.URL.Query().Get("worktree")
 	switch q.mode {
 	case gitfiles.ModeBranch, gitfiles.ModeHead:
-		if list != "" {
-			return q, fmt.Errorf("commits only go with base=commits")
+		if list != "" || wt != "" {
+			return q, fmt.Errorf("commits and worktree only go with base=commits")
 		}
 		return q, nil
 	case gitfiles.ModeCommits:
 	default:
 		return q, fmt.Errorf("unknown base %q", q.mode)
+	}
+	switch wt {
+	case "":
+	case "1":
+		q.worktree = true
+		if list == "" {
+			return q, nil
+		}
+	default:
+		return q, fmt.Errorf("bad worktree %q", wt)
 	}
 	for _, h := range strings.Split(list, ",") {
 		if !commitIDRe.MatchString(h) {
@@ -85,6 +99,9 @@ func (q changeQuery) key(dir string) string {
 	k := dir + "\x00" + q.mode
 	if q.mode == gitfiles.ModeCommits {
 		k += "\x00" + strings.Join(q.commits, ",")
+		if q.worktree {
+			k += "\x00wt"
+		}
 	}
 	return k
 }
@@ -112,6 +129,9 @@ func (s *Server) change(dir string, q changeQuery) (*gitfiles.Overview, error) {
 	if q.mode != gitfiles.ModeCommits {
 		return s.overview(dir, q.mode)
 	}
+	if q.worktree {
+		return s.worktreeChange(dir, q)
+	}
 	sel, err := s.selection(dir, q)
 	if err != nil {
 		return nil, err
@@ -125,10 +145,45 @@ func (s *Server) change(dir string, q changeQuery) (*gitfiles.Overview, error) {
 	return v.(*gitfiles.Overview), nil
 }
 
+// worktreeChange reads a selection that includes the uncommitted changes:
+// from HEAD, or from the commit before the selected commits (which must end
+// at HEAD, where the uncommitted changes sit), to the working tree. HEAD is
+// read on every request (through a short cache): it moves, while the
+// commits' resolution is kept long.
+func (s *Server) worktreeChange(dir string, q changeQuery) (*gitfiles.Overview, error) {
+	type rootHead struct{ root, head string }
+	v, err := s.overviewCache.get("head\x00"+dir, func() (any, error) {
+		root, head, err := s.deps.Git.HeadCommit(dir)
+		return rootHead{root, head}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	rh := v.(rootHead)
+	base := rh.head
+	if len(q.commits) > 0 {
+		sel, err := s.selection(dir, q)
+		if err != nil {
+			return nil, err
+		}
+		if sel.Head != rh.head {
+			return nil, &gitfiles.SelectionError{Reason: "worktree", Commit: sel.Head, Other: rh.head}
+		}
+		base = sel.Base
+	}
+	v, err = s.overviewCache.get(rh.root+"\x00wt\x00"+base, func() (any, error) {
+		return s.deps.Git.OverviewWorktree(rh.root, base)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*gitfiles.Overview), nil
+}
+
 // selection resolves q's commits to the two commits their change lies
 // between. A commit's parents never change, so the answer is kept long.
 func (s *Server) selection(dir string, q changeQuery) (*gitfiles.Selection, error) {
-	v, err := s.selectionCache.get(q.key(dir), func() (any, error) { return s.deps.Git.ResolveSelection(dir, q.commits) })
+	v, err := s.selectionCache.get(dir+"\x00"+strings.Join(q.commits, ","), func() (any, error) { return s.deps.Git.ResolveSelection(dir, q.commits) })
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +197,7 @@ func changeStatus(err error) int {
 	switch {
 	case errors.Is(err, gitfiles.ErrBadSelection):
 		return http.StatusBadRequest
-	case errors.As(err, &se):
+	case errors.As(err, &se), errors.Is(err, gitfiles.ErrNoCommits):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, gitfiles.ErrUnknownCommit):
 		return http.StatusNotFound

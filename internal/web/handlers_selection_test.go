@@ -136,3 +136,108 @@ func TestSelectionFile(t *testing.T) {
 		t.Errorf("sel-head without commits: want 400, got %d", rec.Code)
 	}
 }
+
+const selHead = "dddddddddddddddddddddddddddddddddddddddd"
+
+func worktreeOverview(base string) *gitfiles.Overview {
+	return &gitfiles.Overview{
+		Root: "/ws/foo", Mode: gitfiles.ModeCommits, Rev: base, MergeBase: base, Worktree: true,
+		Files: []gitfiles.OverviewFile{
+			{Path: "a.go", Status: "M", Added: 1, Kind: gitfiles.KindLogic, Area: "."},
+			{Path: "gone.go", Status: "D", Removed: 2, Kind: gitfiles.KindLogic, Area: "."},
+		},
+	}
+}
+
+// The uncommitted changes alone: from HEAD to the working tree, with no
+// commits to resolve.
+func TestSelectionWorktreeOnly(t *testing.T) {
+	srv, git, _, _ := selectionFixture(t)
+	git.EXPECT().HeadCommit("/ws/foo/sub").Return("/ws/foo", selHead, nil).Times(1)
+	git.EXPECT().OverviewWorktree("/ws/foo", selHead).Return(worktreeOverview(selHead), nil).Times(1)
+
+	for i := 0; i < 2; i++ {
+		rec := get(t, srv, "/api/sessions/@5/overview?base=commits&worktree=1")
+		var got overviewResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil || !got.Worktree || got.Rev != selHead {
+			t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+		}
+	}
+}
+
+// Commits plus the uncommitted changes: the commits must end at HEAD.
+func TestSelectionWorktreeWithCommits(t *testing.T) {
+	srv, git, _, _ := selectionFixture(t)
+	git.EXPECT().HeadCommit("/ws/foo/sub").Return("/ws/foo", selB, nil)
+	git.EXPECT().ResolveSelection("/ws/foo/sub", []string{selA, selB}).Return(&gitfiles.Selection{Root: "/ws/foo", Base: selBase, Head: selB}, nil)
+	git.EXPECT().OverviewWorktree("/ws/foo", selBase).Return(worktreeOverview(selBase), nil)
+	rec := get(t, srv, "/api/sessions/@5/overview?base=commits&worktree=1&commits="+selB+","+selA)
+	var got overviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil || got.Rev != selBase || !got.Worktree {
+		t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+	}
+
+	// The same commits while HEAD is elsewhere: refused, naming both.
+	srv, git, _, _ = selectionFixture(t)
+	git.EXPECT().HeadCommit("/ws/foo/sub").Return("/ws/foo", selHead, nil)
+	git.EXPECT().ResolveSelection("/ws/foo/sub", []string{selA, selB}).Return(&gitfiles.Selection{Root: "/ws/foo", Base: selBase, Head: selB}, nil)
+	rec = get(t, srv, "/api/sessions/@5/architecture?base=commits&worktree=1&commits="+selA+","+selB)
+	want := (&gitfiles.SelectionError{Reason: "worktree", Commit: selB, Other: selHead}).Error()
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("not at HEAD: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSelectionWorktreeRejects(t *testing.T) {
+	srv, git, _, _ := selectionFixture(t)
+	for name, query := range map[string]string{
+		"worktree for branch":   "base=branch&worktree=1",
+		"worktree for head":     "base=head&worktree=1",
+		"worktree=yes":          "base=commits&worktree=yes",
+		"neither":               "base=commits",
+		"worktree, bad commits": "base=commits&worktree=1&commits=HEAD",
+	} {
+		if rec := get(t, srv, "/api/sessions/@5/overview?"+query); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: want 400, got %d", name, rec.Code)
+		}
+	}
+	git.EXPECT().HeadCommit("/ws/foo/sub").Return("", "", gitfiles.ErrNoCommits)
+	if rec := get(t, srv, "/api/sessions/@5/calls?base=commits&worktree=1"); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("no commits: want 422, got %d", rec.Code)
+	}
+}
+
+// A diff against a worktree selection's base: the base side from the
+// commit, the working-tree side as the plain file, which may also be a
+// file only the selection lists.
+func TestSelectionWorktreeFile(t *testing.T) {
+	srv, git, _, _ := selectionFixture(t)
+	git.EXPECT().HeadCommit("/ws/foo/sub").Return("/ws/foo", selHead, nil).AnyTimes()
+	git.EXPECT().OverviewWorktree("/ws/foo", selHead).Return(worktreeOverview(selHead), nil).AnyTimes()
+	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go"}, nil).AnyTimes()
+	git.EXPECT().Changes("/ws/foo/sub").Return(&gitfiles.Changes{Root: "/ws/foo"}, nil).AnyTimes()
+	git.EXPECT().Overview("/ws/foo/sub", gitfiles.ModeBranch).Return(&gitfiles.Overview{Root: "/ws/foo"}, nil).AnyTimes()
+	q := "base=commits&worktree=1"
+
+	git.EXPECT().ReadAt("/ws/foo", selHead, "gone.go").Return(&gitfiles.Content{Path: "gone.go", Exists: true, Text: "old", Hash: "h"}, nil)
+	rec := get(t, srv, "/api/sessions/@5/file?path=gone.go&rev=sel-base&"+q)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"old"`) {
+		t.Errorf("sel-base: %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(t, srv, "/api/sessions/@5/file?path=a.go&rev=sel-head&"+q); rec.Code != http.StatusBadRequest {
+		t.Errorf("sel-head on a worktree selection: want 400, got %d", rec.Code)
+	}
+
+	git.EXPECT().ReadFile("/ws/foo", "a.go").Return(&gitfiles.Content{Path: "a.go", Exists: true, Text: "new", Hash: "h1"}, nil)
+	git.EXPECT().ReadFile("/ws/foo", "gone.go").Return(&gitfiles.Content{Path: "gone.go"}, nil)
+	for _, path := range []string{"a.go", "gone.go"} {
+		rec := get(t, srv, "/api/sessions/@5/file?path="+path+"&"+q)
+		var got fileResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil || got.ReadOnly {
+			t.Errorf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+	}
+	if rec := get(t, srv, "/api/sessions/@5/file?path=.env&"+q); rec.Code != http.StatusNotFound {
+		t.Errorf(".env: want 404, got %d", rec.Code)
+	}
+}
