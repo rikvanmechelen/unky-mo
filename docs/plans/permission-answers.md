@@ -241,3 +241,48 @@ When nothing matches and `planFile` is set, `readPlanFile` serves `{plan, planFi
   - A feedback answer types and then presses BTab when approving.
   - A stale sig, the wrong status, or a dialog the terminal user already amended is a 409 with no keys.
   - A bad row, text on a plain row, approve without text, or text that's too long is a 400 with no keys.
+
+## Step 4 in detail: the banner
+
+### `static/permission-model.js` (no DOM, tested in Node)
+
+- **`permissionContent(tool, input)`** → what the banner shows, or `null` with no tool:
+  - Bash → `{kind: "command", command, description}`.
+  - Edit → `{kind: "diff", path, rows: editRows(old_string, new_string)}`. MultiEdit joins its edits' rows with a `gap` row. Write → every line as `+` (`create: true`). NotebookEdit → the new source as `+`.
+  - Read → `{kind: "path", path}`.
+  - WebFetch → `{kind: "url", url, prompt}`. WebSearch → `{kind: "url", url: query}`.
+  - ExitPlanMode → `{kind: "plan", plan, path: planFilePath}`.
+  - Anything else → `{kind: "json", tool, text}`: pretty JSON, cut at 4000 characters.
+- **`editRows(old, new)`**: a hook's Edit has only the two strings, no patch. Lines the two share at the start and end are context (at most 3 on each side; the rest folds into a `gap`), the middle is `-` then `+`. The whole is capped at 400 rows (a `more` row says how many were left out).
+- **`choiceTone(label)`**: `deny` for a label starting "No"; `lasting` for one that changes more than this call ("don't ask again", "always allow", "allow reading from", "during this session", "switch to", "use auto mode"); `allow` otherwise.
+
+### Banner (`chat.js` `renderPermissionBanner(data, onAnswer, opts)`)
+
+- `#permission-banner` becomes a flex column like the question banner. Its static text stays as the fallback content.
+- **Head:** the dialog's title (small, mono) and question (bold).
+- **Content** by kind, in a box capped at about 28% of the window, with "Expand" when it overflows:
+  - command: mono, with the description above;
+  - diff: the transcript's `diff-line` rows, with the path and "Open" (`editor.reveal`);
+  - path / url: one mono line;
+  - plan: `renderMarkdown`;
+  - json: a `pre`.
+- **Choices:** one row per dialog row, in its order and wording, `N.` first.
+  - A plain row is a button.
+  - An `amend` row is a button plus a "…and tell Claude" text field. Sending with text fills the field, and Enter in the field sends.
+  - The `feedback` row is a textarea with "Send feedback" (Enter) and "Approve with this feedback" (shift+tab, as in the terminal), both disabled while it's empty.
+  - `lasting` rows get a small "changes settings" tag. `deny` rows are styled as secondary.
+- **Keys:** with focus in the banner but not in a field, a digit presses that row's button (only rows without required text).
+- **While answering**, everything is disabled. An error shows under the choices, and its 409 text says to look again. The next poll rebuilds the banner when the dialog changed.
+- **Without a dialog** (not parsed): the content, if any, plus "Answer it in the terminal." Without content: the choices alone.
+
+### Polling
+
+- While the state poll says `permission`, `/permission` is fetched every second (`permissionPoller` in `main`), and stopped otherwise, on session switch and when the session ends.
+- The banner is rebuilt only when `[session, tool, input, sig]` changes, so typing in a field survives polls.
+- A fetch error leaves the last banner.
+- The composer keeps its lock ("Waiting for permission") and its placeholder says "Answer the prompt above, or in the terminal".
+
+### Tests
+
+- `jstests/permission_model.test.js`: every kind, `editRows` (shared lines as context, a gap past 3, a pure insert, an empty old string, the cap), `choiceTone` on the probed labels.
+- The banner by hand on a real prompt (step 5).

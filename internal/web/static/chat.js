@@ -245,6 +245,159 @@ function renderQuestionBanner(tool, input, onAnswer) {
   return frag;
 }
 
+// renderPermissionBanner builds the permission banner from /permission's
+// answer: {tool, input, dialog: {title, question, rows: [{n, label, text}],
+// sig} | null}. The content comes from permission-model.js; the choices
+// are the dialog's own rows, read from Claude's pane by the server, so
+// their wording is exactly the terminal's. onAnswer({sig, row, text,
+// approve}) resolves to "" on success or an error message. opts.onOpenFile
+// opens a diff's file in an editor tab.
+function renderPermissionBanner(data, onAnswer, opts = {}) {
+  const frag = document.createDocumentFragment();
+  const dialog = data && data.dialog;
+  const content = permissionContent(data && data.tool, data && data.input);
+
+  frag.appendChild(el("div", { class: "question-banner__tool", text: (dialog && dialog.title) || (data && data.tool) || "Permission" }));
+  frag.appendChild(el("div", { class: "question-banner__question", text: dialog ? dialog.question : "Claude is waiting for permission." }));
+
+  if (content) {
+    const box = el("div", { class: "permission-content" });
+    switch (content.kind) {
+      case "command":
+        if (content.description) box.appendChild(el("div", { class: "permission-content__desc", text: content.description }));
+        box.appendChild(el("pre", { class: "permission-content__mono", text: content.command }));
+        break;
+      case "diff": {
+        const head = el("div", { class: "permission-content__path" }, [el("span", { text: (content.create ? "New file " : "") + content.path })]);
+        if (content.path && opts.onOpenFile && !content.create) {
+          head.appendChild(el("button", { type: "button", class: "permission-content__open", text: "Open", onClick: () => opts.onOpenFile(content.path) }));
+        }
+        box.appendChild(head);
+        const diff = el("div", { class: "tool-card__diff" });
+        for (const r of content.rows) {
+          if (r.sign === "gap" || r.sign === "more") {
+            diff.appendChild(el("div", { class: "diff-line diff-gap" }, [
+              el("span", { class: "diff-line__ln", text: "⋯" }), el("span"),
+              el("span", { class: "diff-line__text", text: r.sign === "more" ? `${r.n} more lines` : "" }),
+            ]));
+            continue;
+          }
+          const cls = r.sign === "+" ? " is-add" : r.sign === "-" ? " is-del" : "";
+          diff.appendChild(el("div", { class: "diff-line" + cls }, [
+            el("span", { class: "diff-line__ln" }),
+            el("span", { class: "diff-line__sign", text: r.sign === " " ? "" : r.sign }),
+            el("span", { class: "diff-line__text", text: r.text }),
+          ]));
+        }
+        box.appendChild(diff);
+        break;
+      }
+      case "path":
+        box.appendChild(el("pre", { class: "permission-content__mono", text: content.path }));
+        break;
+      case "url":
+        box.appendChild(el("pre", { class: "permission-content__mono", text: content.url }));
+        if (content.prompt) box.appendChild(el("div", { class: "permission-content__desc", text: content.prompt }));
+        break;
+      case "plan":
+        box.appendChild(el("div", { class: "permission-content__plan" }, [renderMarkdown(content.plan)]));
+        break;
+      default:
+        box.appendChild(el("pre", { class: "permission-content__mono", text: content.text }));
+    }
+    const scroll = el("div", { class: "permission-content__scroll" }, [box]);
+    frag.appendChild(scroll);
+    const expand = el("button", { type: "button", class: "permission-content__expand", text: "Expand", hidden: "" });
+    expand.addEventListener("click", () => {
+      const open = scroll.classList.toggle("is-expanded");
+      expand.textContent = open ? "Collapse" : "Expand";
+    });
+    frag.appendChild(expand);
+    // Shown only when the box overflows, once it's laid out.
+    requestAnimationFrame(() => { if (scroll.scrollHeight > scroll.clientHeight + 4) expand.hidden = false; });
+  }
+
+  if (!dialog || !onAnswer) {
+    frag.appendChild(el("div", { class: "permission-hint", text: "Answer it in the terminal." }));
+    return frag;
+  }
+
+  const form = el("div", { class: "permission-choices", tabindex: "-1" });
+  const error = el("div", { class: "question-form__error", role: "alert" });
+  const controls = [];
+  let sending = false;
+
+  function setSending(on) {
+    sending = on;
+    form.classList.toggle("is-sending", on);
+    for (const c of controls) c.disabled = on;
+    // The feedback buttons stay off while their field is empty.
+    if (!on) form.querySelectorAll("textarea").forEach((a) => a.dispatchEvent(new Event("input")));
+  }
+  async function send(answer) {
+    if (sending) return;
+    error.textContent = "";
+    setSending(true);
+    const err = await onAnswer({ sig: dialog.sig, ...answer });
+    if (!err) return; // the banner goes once the session moves on
+    error.textContent = err;
+    setSending(false);
+  }
+
+  const quick = new Map(); // digit → button, for rows that need no text
+  for (const row of dialog.rows) {
+    const tone = choiceTone(row.label);
+    const text = el("span", { class: "permission-choice__label-text", text: row.label });
+    if (tone === "lasting") text.appendChild(el("span", { class: "permission-choice__tag", text: "changes settings" }));
+    const label = [el("span", { class: "permission-choice__n", text: row.n + "." }), text];
+    const item = el("div", { class: `permission-choice is-${tone}` });
+
+    if (row.text === "feedback") {
+      const area = el("textarea", { class: "question-form__text permission-choice__text", rows: "2", maxlength: "2000", placeholder: row.label });
+      const fb = el("button", { type: "button", class: "permission-choice__btn", text: "Send feedback" });
+      const approve = el("button", { type: "button", class: "permission-choice__btn", text: "Approve with this feedback", title: "shift+tab in the terminal" });
+      const refresh = () => { fb.disabled = approve.disabled = sending || !area.value.trim(); };
+      area.addEventListener("input", refresh);
+      area.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!fb.disabled) fb.click(); }
+      });
+      fb.addEventListener("click", () => send({ row: row.n, text: area.value.trim() }));
+      approve.addEventListener("click", () => send({ row: row.n, text: area.value.trim(), approve: true }));
+      controls.push(area, fb, approve);
+      item.append(el("div", { class: "permission-choice__label" }, label), area, el("div", { class: "permission-choice__actions" }, [fb, approve]));
+      refresh();
+    } else {
+      const btn = el("button", { type: "button", class: "permission-choice__btn is-main" }, label);
+      controls.push(btn);
+      item.appendChild(btn);
+      if (row.text === "amend") {
+        const field = el("input", { type: "text", class: "question-form__text permission-choice__text", maxlength: "2000",
+          placeholder: row.label === "No" ? "…and tell Claude what to do differently" : "…and tell Claude what to do next" });
+        field.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); btn.click(); }
+        });
+        btn.addEventListener("click", () => send({ row: row.n, text: field.value.trim() }));
+        controls.push(field);
+        item.appendChild(field);
+      } else {
+        btn.addEventListener("click", () => send({ row: row.n }));
+      }
+      quick.set(String(row.n), btn);
+    }
+    form.appendChild(item);
+  }
+  form.appendChild(error);
+
+  // A digit picks its row, as in the terminal — not while typing.
+  form.addEventListener("keydown", (e) => {
+    if (e.target.matches("input, textarea") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const btn = quick.get(e.key);
+    if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+  });
+  frag.appendChild(form);
+  return frag;
+}
+
 // renderAnswerSummary is an answered AskUserQuestion folded: one row per
 // question, its header (or the question) and the answers as chips. Typed
 // ("Type something") answers are quoted and marked.
@@ -766,15 +919,17 @@ function main() {
   const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
     (msg) => { sendError.textContent = msg; });
   const subagents = createSubagents(document.getElementById("agent-strip"));
+  // Paths in tool cards (and the permission banner) are absolute; editor
+  // tabs take them relative to the repo root. Outside the checkout (or
+  // before the first files poll) the path is passed as-is and the tab
+  // explains it can't be opened.
+  const openAbsFile = (absPath) => {
+    const root = filesPane.root();
+    editor.open(root && absPath.startsWith(root + "/") ? absPath.slice(root.length + 1) : absPath);
+  };
   const view = createTranscriptView(transcript, transcriptScroll, {
     onToolCard: subagents.decorateCard,
-    // Paths in tool cards are absolute; editor tabs take them relative to
-    // the repo root. Outside the checkout (or before the first files poll)
-    // the path is passed as-is and the tab explains it can't be opened.
-    onOpenFile: (absPath) => {
-      const root = filesPane.root();
-      editor.open(root && absPath.startsWith(root + "/") ? absPath.slice(root.length + 1) : absPath);
-    },
+    onOpenFile: openAbsFile,
   });
 
   // Per-session state — reset by resetSession when the nav switches to
@@ -934,9 +1089,82 @@ function main() {
   }
 
   function hideBanners() {
-    permissionBanner.style.display = "none";
+    stopPermission();
     questionBanner.style.display = "none";
     questionKey = null;
+  }
+
+  // The permission banner polls /permission once a second while the
+  // session waits on a permission prompt: the dialog's choices are read
+  // from Claude's pane, and a parallel call's dialog can follow this one.
+  // It's rebuilt only when the dialog or its content changes, so text
+  // typed into it survives the polls.
+  let permissionKey = null;
+  let permissionTimer = null;
+  let permissionSeq = 0;
+
+  function showPermission(key, data) {
+    if (key !== permissionKey) {
+      permissionKey = key;
+      permissionBanner.replaceChildren(renderPermissionBanner(data, answerPermission, { onOpenFile: openAbsFile }));
+    }
+    permissionBanner.style.display = "flex";
+  }
+
+  async function fetchPermission() {
+    const seq = ++permissionSeq;
+    const id = windowID;
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/permission`);
+      if (seq !== permissionSeq || id !== windowID || !permissionTimer) return;
+      if (!res.ok) return; // e.g. 409 once answered: the state poll hides it
+      const data = await res.json();
+      if (seq !== permissionSeq || !permissionTimer) return;
+      showPermission(JSON.stringify([id, data.tool || "", data.input ?? null, data.dialog ? data.dialog.sig : ""]), data);
+    } catch (err) {
+      // transient — keep the last banner
+    }
+  }
+
+  // startPermission shows what the state file knows right away, then the
+  // dialog once /permission answers.
+  function startPermission(p) {
+    if (!permissionTimer) {
+      permissionTimer = setInterval(fetchPermission, 1000);
+      fetchPermission();
+    }
+    if (permissionKey === null) {
+      showPermission("state", { tool: p.pending_tool || "", input: p.pending_input, dialog: null });
+    }
+  }
+
+  function stopPermission() {
+    if (permissionTimer) clearInterval(permissionTimer);
+    permissionTimer = null;
+    permissionSeq++;
+    permissionKey = null;
+    permissionBanner.style.display = "none";
+  }
+
+  // answerPermission has the server answer the dialog it showed
+  // (permission.go). Resolves to "" or an error message for the banner.
+  async function answerPermission(answer) {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/permission`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(answer),
+      });
+      if (res.ok) {
+        setTimeout(fetchPermission, 400);
+        return "";
+      }
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) permissionKey = null; // rebuild from the next poll
+      return data.error || `request failed (${res.status})`;
+    } catch (err) {
+      return String(err);
+    }
   }
 
   // answerQuestion has the server drive Claude Code's question dialog
@@ -1134,7 +1362,8 @@ function main() {
         );
       }
 
-      permissionBanner.style.display = status === "permission" ? "block" : "none";
+      if (status === "permission") startPermission(p);
+      else stopPermission();
       if (status === "question" && p.pending_tool) {
         showQuestion(JSON.stringify([p.session_id, p.pending_tool, p.pending_input]),
           () => [renderQuestionBanner(p.pending_tool, p.pending_input,
@@ -1173,6 +1402,7 @@ function main() {
         : "Claude is working…";
       promptInput.placeholder = status === "question"
         ? (p.pending_tool === "AskUserQuestion" ? "Answer in the form above…" : "Type a number or your answer…")
+        : status === "permission" ? "Answer the prompt above, or in the terminal"
         : p ? `Message ${p.name}` : "Message this session";
     } catch (err) {
       // transient — leave the last known status showing
