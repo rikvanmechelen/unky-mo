@@ -132,11 +132,11 @@ The plan dialog has a second full-width rule between the plan and the question; 
 ### Transcript
 
 - Bash, Edit, Write, Read and WebFetch: the assistant line with the `tool_use` is on disk while the dialog is open (last non-metadata line), as with AskUserQuestion. Recovery after a restart works for these.
-- **ExitPlanMode is not.** Its `tool_use` (`{plan, planFilePath}`) is written only once the dialog is answered. While it's open, the transcript's last call is the `ToolSearch` that loaded it. After a restart, the plan's content comes from the plan file named in the dialog's footer (`~/.claude/plans/<name>.md`). The hook's `tool_input` carries the same `{plan, planFilePath}` while TUI and hooks are up.
+- **ExitPlanMode isn't reliably there.** In the probe its `tool_use` (`{plan, planFilePath}`) was written only once the dialog was answered: while it was open (checked for about a minute), the transcript's last call was the `ToolSearch` that loaded it. But in a real session (moma-chatbot, step 2's check) the open ExitPlanMode call *was* the transcript's last line, so `ReadPendingTool` recovered it. What decides this is unknown (timing, or the probe loading the tool through ToolSearch in the same turn). Treat it as "maybe". After a restart, the plan's content comes from the plan file named in the dialog's footer (`~/.claude/plans/<name>.md`). The hook's `tool_input` carries the same `{plan, planFilePath}` while TUI and hooks are up.
 
 ### Changes to the plan
 
-- `ReadPendingTool` is not enough for plan approval. When the screen's footer names a plan file, `/permission` reads it, but only a `*.md` directly in `~/.claude/plans/`, opened with `O_NOFOLLOW` and capped like editor files, and returns it as `{tool: "ExitPlanMode", input: {plan}}`.
+- `ReadPendingTool` is not always enough for plan approval. When there's no pending content and the screen's footer names a plan file, `/permission` reads it, but only a `*.md` directly in `~/.claude/plans/`, opened with `O_NOFOLLOW` and capped like editor files, and returns it as `{tool: "ExitPlanMode", input: {plan}}`.
 - The POST takes `{sig, row, text?, approveWithText?}`:
   - A plain row without text: its digit.
   - Text on a Yes/No row of a dialog with "Tab to amend": ↓ to the row (checking the cursor on screen after each step), Tab, check the label changed to "… tell Claude …", type the text, check it's shown, Enter.
@@ -156,7 +156,7 @@ The plan dialog has a second full-width rule between the plan and the question; 
 
 ### Transcript recovery (`pending.go`)
 
-- `ReadPendingQuestion(path)` → `ReadPendingTool(path, interactiveOnly bool)`. The same backwards walk, returning the newest unanswered `tool_use` of the current turn, of an interactive tool or (for a permission) of any tool. For ExitPlanMode it finds nothing (not written yet, see step 1), which is right: step 3 reads the plan file from the screen.
+- `ReadPendingQuestion(path)` → `ReadPendingTool(path, interactiveOnly bool)`. The same backwards walk, returning the newest unanswered `tool_use` of the current turn, of an interactive tool or (for a permission) of any tool. For ExitPlanMode it finds the call only when Claude Code has written it (see step 1); otherwise step 3 reads the plan file named on screen. *(Corrected after building: moma-chatbot's open plan was recovered from its transcript.)*
 - Parallel calls: the newest unanswered call wins. Step 3 only shows the content when the dialog's preview agrees with it (the command or path appears on screen), so a wrong guess shows no content rather than the wrong content. That replaces "return all candidates" from the first draft. One candidate keeps the state file simple, and the screen check is needed anyway.
 - `RecoverPendingQuestion` → `RecoverPending(sessionID, read func(SessionStatus) (…))`: called for Question and Permission with no content. `read` gets the status so the caller passes `interactiveOnly` = (status == Question).
 

@@ -54,9 +54,9 @@ func TestReadPendingToolQuestion(t *testing.T) {
 	}
 }
 
-// A permission prompt's call is any tool's; ExitPlanMode's is only written
-// once answered (step 1 of docs/plans/permission-answers.md), so its
-// transcript has nothing open.
+// A permission prompt's call is any tool's. ExitPlanMode's is sometimes
+// only written once answered (step 1 of docs/plans/permission-answers.md);
+// then its transcript has nothing open.
 func TestReadPendingToolPermission(t *testing.T) {
 	bash := func(id, cmd string) string {
 		return `{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"` + id + `","name":"Bash","input":{"command":"` + cmd + `"}}]}}`

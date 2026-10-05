@@ -21,11 +21,11 @@ const pendingTailBytes = 1 << 20
 // or permission prompt survives a TUI restart, or a dropped hook, which
 // would otherwise leave only `claude agents`' content-less status. The
 // input is the tool_use's own, the same shape the hook forwards. ok is
-// false when there's no such call: ExitPlanMode's call is only written once
-// it's answered, and a future Claude Code that stops writing calls early
-// just falls back to the content-less status. With parallel calls open,
-// the newest wins; it may not be the one the dialog asks about, which the
-// web checks against the screen.
+// false when there's no such call: ExitPlanMode's call is sometimes only
+// written once it's answered, and a future Claude Code that stops writing
+// calls early just falls back to the content-less status. With parallel
+// calls open, the newest wins; it may not be the one the dialog asks
+// about, which the web checks against the screen.
 func ReadPendingTool(path string, interactiveOnly bool) (tool string, input json.RawMessage, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
