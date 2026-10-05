@@ -205,6 +205,8 @@ func callLangOf(l language) callLang {
 		return &hCalls{l: &pyCalls{}}
 	case *swiftLang:
 		return newSwiftCallLang()
+	case *ktLang:
+		return &hCalls{l: &jvmCalls{}}
 	}
 	return nil
 }
