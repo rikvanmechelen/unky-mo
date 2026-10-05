@@ -33,7 +33,9 @@ function callIndex(cg) {
 // isn't expanded), their callers left, their callees right. With a focus:
 // that function, its callers and its callees. Implementations behind an
 // interface call are listed in the detail, not drawn.
-// Returns {left, center: [{unit, funcs, collapsed}], right, edges}.
+// Returns {left, center: [{unit, funcs, collapsed, collapsible, added,
+// removed}], right, edges}: added/removed count the unit's new and dropped
+// calls, so a collapsed unit still shows them.
 function callFocus(cg, ix, focusID, expanded) {
   const isCenter = (f) => (focusID ? f.id === focusID : !!f.status);
   const centerFns = [...ix.funcs.values()].filter(isCenter);
@@ -55,9 +57,16 @@ function callFocus(cg, ix, focusID, expanded) {
     byUnit.get(u).push(f);
   }
   const collapse = !focusID && centerFns.length > CALLS_COLLAPSE_AT;
-  const center = [...byUnit.keys()].sort().map((unit) => ({
-    unit, funcs: orderByCalls(byUnit.get(unit), ix), collapsed: collapse && !expanded.has(unit),
-  }));
+  const center = [...byUnit.keys()].sort().map((unit) => {
+    const ids = new Set(byUnit.get(unit).map((f) => f.id));
+    const changed = (cg.calls || []).filter((c) => c.op && drawn(c) && (ids.has(c.from) || ids.has(c.to)));
+    return {
+      unit, funcs: orderByCalls(byUnit.get(unit), ix),
+      collapsed: collapse && !expanded.has(unit), collapsible: collapse,
+      added: changed.filter((c) => c.op === "+").length,
+      removed: changed.filter((c) => c.op === "-").length,
+    };
+  });
   const shown = new Set([...left.keys(), ...right.keys()]);
   for (const g of center) if (!g.collapsed) for (const f of g.funcs) shown.add(f.id);
   const edges = (cg.calls || []).filter((c) => drawn(c) && shown.has(c.from) && shown.has(c.to)
@@ -190,9 +199,11 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
     const label = (f) => (CALL_MARK[f.status] ? CALL_MARK[f.status] + " " : "") + shortLabel(f.name || f.id, MAXCH);
     const width = (list, extra = 0) => Math.max(80, ...list.map((f) => label(f).length * CHAR + 2 * PAD + extra));
     const centerFns = view.center.flatMap((g) => (g.collapsed ? [] : g.funcs));
-    const unitLabel = (g) => (g.unit || "(root)") + (g.collapsed ? ` · ${g.funcs.length} function${g.funcs.length === 1 ? "" : "s"}` : "");
+    const unitLabel = (g) => (g.collapsible ? (g.collapsed ? "▸ " : "▾ ") : "") + (g.unit || "(root)")
+      + (g.collapsed ? ` · ${g.funcs.length} function${g.funcs.length === 1 ? "" : "s"}` : "");
+    const callCounts = (g) => [g.added ? ` +${g.added}` : "", g.removed ? ` −${g.removed}` : ""];
     const wl = view.left.length ? width(view.left) : 0;
-    const wc = Math.max(width(centerFns, 16), ...view.center.map((g) => unitLabel(g).length * CHAR + 2 * PAD));
+    const wc = Math.max(width(centerFns, 16), ...view.center.map((g) => (unitLabel(g) + callCounts(g).join("")).length * CHAR + 2 * PAD));
     const wr = view.right.length ? width(view.right) : 0;
     const xl = M, xc = M + (wl ? wl + COLGAP : 0), xr = xc + wc + COLGAP;
     const box = new Map();
@@ -229,15 +240,31 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
     for (const { g, top, bottom } of groups) {
       const r = svgEl("g", { class: "calls__unit" + (g.collapsed ? " is-collapsed" : "") });
       r.appendChild(svgEl("rect", { x: xc, y: top, width: wc, height: bottom - top, rx: 3 }));
+      // The header: a click toggles a unit that can be collapsed.
+      const head = svgEl("g", { class: "calls__unit-head" + (g.collapsible ? " is-toggle" : "") });
+      head.appendChild(svgEl("rect", { x: xc, y: top, width: wc, height: UNIT_H, class: "calls__unit-hit" }));
       const t = svgEl("text", { x: xc + 8, y: top + 14 });
       t.textContent = unitLabel(g);
-      r.appendChild(t);
-      if (g.collapsed || view.center.length > 1) {
-        const tt = svgEl("title", {});
-        tt.textContent = g.collapsed ? "Show this part's functions" : g.unit;
-        r.appendChild(tt);
+      const [plus, minus] = callCounts(g);
+      if (plus) { const sp = svgEl("tspan", { class: "calls__plus" }); sp.textContent = plus; t.appendChild(sp); }
+      if (minus) { const sp = svgEl("tspan", { class: "calls__minus" }); sp.textContent = minus; t.appendChild(sp); }
+      head.appendChild(t);
+      const tt = svgEl("title", {});
+      tt.textContent = (g.collapsible ? (g.collapsed ? "Show this part's functions" : "Hide this part's functions") : g.unit)
+        + (g.added || g.removed ? ` · ${g.added} new call${g.added === 1 ? "" : "s"}, ${g.removed} removed` : "");
+      head.appendChild(tt);
+      if (g.collapsible) {
+        head.setAttribute("tabindex", 0);
+        head.setAttribute("role", "button");
+        head.setAttribute("aria-expanded", String(!g.collapsed));
+        const toggle = () => {
+          if (g.collapsed) expanded.add(g.unit); else expanded.delete(g.unit);
+          render();
+        };
+        head.addEventListener("click", toggle);
+        head.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
       }
-      if (g.collapsed) r.addEventListener("click", () => { expanded.add(g.unit); render(); });
+      r.appendChild(head);
       s.appendChild(r);
     }
     // Edges, changed ones on top.

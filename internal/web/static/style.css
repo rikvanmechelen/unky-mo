@@ -1180,10 +1180,16 @@ button.file-row.overview-file { padding: 3px 12px; }
 .calls__crumbs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; }
 .calls__sep { color: var(--ink-4); }
 .calls__col { font-family: var(--font-sans); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; fill: var(--ink-4); }
-.calls__unit rect { fill: var(--surface); stroke: var(--line); }
+.calls__unit > rect { fill: var(--surface); stroke: var(--line); }
 .calls__unit text { font-family: var(--font-mono); font-size: 11px; font-weight: 700; fill: var(--ink-3); }
-.calls__unit.is-collapsed { cursor: pointer; }
-.calls__unit.is-collapsed:hover rect { stroke: var(--ink-3); }
+.calls__unit-hit { fill: transparent; stroke: none; }
+.calls__unit-head.is-toggle { cursor: pointer; }
+.calls__unit-head.is-toggle:hover text { fill: var(--ink); }
+.calls__unit-head:focus { outline: none; }
+.calls__unit-head:focus-visible .calls__unit-hit { stroke: var(--blue); stroke-width: 2; }
+.calls__unit.is-collapsed:hover > rect { stroke: var(--ink-3); }
+.calls__unit .calls__plus { fill: var(--green); }
+.calls__unit .calls__minus { fill: var(--red); }
 .calls__node { cursor: pointer; }
 .calls__node rect { fill: var(--paper); stroke: var(--line); stroke-width: 1; }
 .calls__node text { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); pointer-events: none; }
