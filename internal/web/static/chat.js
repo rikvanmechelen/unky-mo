@@ -125,6 +125,10 @@ function relativize(absPath, base) {
 // instead, shown relative to the turn's project cwd.
 function toolSummaryDetail(block, cwd) {
   const input = block.input || {};
+  if (block.name === "AskUserQuestion" && Array.isArray(input.questions)) {
+    const qs = input.questions;
+    return { text: qs.length === 1 ? qs[0].question || "" : `${qs.length} questions`, mono: false };
+  }
   if (typeof input.description === "string") return { text: input.description, mono: false };
   if (typeof input.file_path === "string") return { text: relativize(input.file_path, cwd), mono: true };
   // A Bash call without a description: show the command itself.
@@ -139,37 +143,147 @@ function toolSummaryDetail(block, cwd) {
 // given tool name + input (already a parsed JS value — /api/state's JSON
 // response embeds it verbatim, same as Go's json.RawMessage does on the wire
 // — not a string to re-parse). The AskUserQuestion shape
-// ({questions:[{question,header,options:[{label,description}]}]}) is
-// rendered readably; anything else (a future interactive tool, or a shape
+// ({questions:[{question,header,options:[{label,description}],multiSelect}]})
+// is rendered readably; anything else (a future interactive tool, or a shape
 // that doesn't match) falls back to pretty-printed JSON so something is
 // still visible instead of nothing.
 //
-// onPick(n), when given, makes each option a button that answers with its
-// 1-based number — the same as typing the number into the composer.
-function renderQuestionBanner(tool, input, onPick) {
+// onAnswer(questions, answers), when given, turns it into a form: radio
+// buttons for a single-select question, checkboxes for a multiSelect one,
+// and a "Type something" field for each, as in Claude Code's dialog. It
+// resolves to "" on success or an error message.
+function renderQuestionBanner(tool, input, onAnswer) {
   const frag = document.createDocumentFragment();
   frag.appendChild(el("div", { class: "question-banner__tool", text: tool }));
 
-  if (input && Array.isArray(input.questions)) {
+  if (!(input && Array.isArray(input.questions))) {
+    frag.appendChild(el("pre", { text: JSON.stringify(input, null, 2) }));
+    return frag;
+  }
+  if (!onAnswer) {
     for (const q of input.questions) {
       if (q.header) frag.appendChild(el("div", { class: "question-banner__tool", text: q.header }));
       frag.appendChild(el("div", { class: "question-banner__question", text: q.question || "" }));
       if (Array.isArray(q.options)) {
-        const list = el("ol", { class: "question-banner__options" }, q.options.map((o, i) => {
-          const text = o.label + (o.description ? " — " + o.description : "");
-          if (!onPick) return el("li", { text });
-          const btn = el("button", { class: "question-banner__option", type: "button", text });
-          btn.addEventListener("click", () => onPick(i + 1));
-          return el("li", {}, [btn]);
-        }));
-        frag.appendChild(list);
+        frag.appendChild(el("ol", { class: "question-banner__options" },
+          q.options.map((o) => el("li", { text: o.label + (o.description ? " — " + o.description : "") }))));
       }
     }
     return frag;
   }
 
-  frag.appendChild(el("pre", { text: JSON.stringify(input, null, 2) }));
+  const form = el("form", { class: "question-form" });
+  const groups = input.questions.map((q, qi) => {
+    const type = q.multiSelect ? "checkbox" : "radio";
+    const name = `q${qi}`;
+    const boxes = [];
+    const opts = (q.options || []).map((o, oi) => {
+      const box = el("input", { type, name, value: String(oi) });
+      boxes.push(box);
+      return el("label", { class: "question-form__opt" }, [
+        box,
+        el("span", { class: "question-form__label" }, [
+          el("span", { text: o.label }),
+          o.description ? el("span", { class: "question-form__desc", text: o.description }) : null,
+        ].filter(Boolean)),
+      ]);
+    });
+    const otherBox = el("input", { type, name, value: "other", "aria-label": "Type something" });
+    const otherText = el("input", { type: "text", class: "question-form__text", placeholder: "Type something", maxlength: "2000" });
+    // Typing checks the box, as in the terminal.
+    otherText.addEventListener("input", () => { if (otherText.value.trim()) otherBox.checked = true; update(); });
+    otherBox.addEventListener("change", () => { if (otherBox.checked && !otherText.value.trim()) otherText.focus(); });
+    const fieldset = el("fieldset", { class: "question-form__q" }, [
+      el("legend", {}, [
+        q.header ? el("span", { class: "question-banner__tool", text: q.header + (q.multiSelect ? " · pick any" : "") }) : null,
+        el("span", { class: "question-banner__question", text: q.question || "" }),
+      ].filter(Boolean)),
+      ...opts,
+      el("label", { class: "question-form__opt" }, [otherBox, otherText]),
+    ]);
+    form.appendChild(fieldset);
+    return {
+      question: q.question,
+      answer() {
+        const options = boxes.filter((b) => b.checked).map((b) => Number(b.value));
+        const other = otherBox.checked ? otherText.value.trim() : "";
+        return { options, other, ok: (options.length > 0 || other !== "") && !(otherBox.checked && !other) };
+      },
+    };
+  });
+
+  const submit = el("button", { type: "submit", class: "question-form__send", text: groups.length > 1 ? "Send answers" : "Send answer" });
+  const error = el("span", { class: "question-form__error", role: "alert" });
+  form.appendChild(el("div", { class: "question-form__foot" }, [submit, error]));
+
+  function update() {
+    submit.disabled = form.classList.contains("is-sending") || !groups.every((g) => g.answer().ok);
+  }
+  form.addEventListener("change", update);
+  update();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    update();
+    if (submit.disabled) return;
+    const answers = groups.map((g) => { const { options, other } = g.answer(); return { options, other }; });
+    error.textContent = "";
+    form.classList.add("is-sending");
+    form.querySelectorAll("input").forEach((i) => { i.disabled = true; });
+    submit.disabled = true;
+    submit.textContent = "Answering…";
+    const err = await onAnswer(groups.map((g) => g.question), answers);
+    if (!err) return; // the banner goes once the session moves on
+    error.textContent = err;
+    form.classList.remove("is-sending");
+    form.querySelectorAll("input").forEach((i) => { i.disabled = false; });
+    submit.textContent = groups.length > 1 ? "Send answers" : "Send answer";
+    update();
+  });
+
+  frag.appendChild(form);
   return frag;
+}
+
+// renderAnswerSummary is an answered AskUserQuestion folded: one row per
+// question, its header (or the question) and the answers as chips. Typed
+// ("Type something") answers are quoted and marked.
+function renderAnswerSummary(qa) {
+  const rows = [];
+  for (const q of qa) {
+    rows.push(el("dt", { class: "qa-summary__q", title: q.question, text: q.header || q.question }));
+    const chips = [
+      ...q.options.filter((o) => o.picked).map((o) => el("span", { class: "qa-chip", text: o.label })),
+      ...q.typed.map((t) => el("span", { class: "qa-chip is-typed", title: "Typed answer", text: `“${t}”` })),
+    ];
+    if (!q.answered) chips.push(el("span", { class: "qa-none", text: "no answer" }));
+    if (q.notes) chips.push(el("span", { class: "qa-notes", text: q.notes }));
+    rows.push(el("dd", { class: "qa-summary__a" }, chips));
+  }
+  return el("dl", { class: "qa-summary" }, rows);
+}
+
+// renderAnswerDetail is the opened card: each question with all its
+// options, the picked ones marked, plus typed answers and notes.
+function renderAnswerDetail(qa) {
+  return el("div", { class: "qa-detail" }, qa.map((q) => el("div", { class: "qa-detail__q" }, [
+    q.header ? el("span", { class: "qa-detail__header", text: q.header + (q.multiSelect ? " · multiple" : "") }) : null,
+    el("span", { class: "qa-detail__question", text: q.question }),
+    el("ul", { class: "qa-detail__options" }, [
+      ...q.options.map((o) => el("li", { class: o.picked ? "is-picked" : "" }, [
+        el("span", { class: "qa-detail__mark", "aria-label": o.picked ? "picked" : "", text: o.picked ? "✓" : "" }),
+        el("span", { class: "qa-detail__label" }, [
+          el("span", { text: o.label }),
+          o.description ? el("span", { class: "qa-detail__desc", text: o.description }) : null,
+        ].filter(Boolean)),
+      ])),
+      ...q.typed.map((t) => el("li", { class: "is-picked is-typed" }, [
+        el("span", { class: "qa-detail__mark", text: "✎" }),
+        el("span", { class: "qa-detail__label" }, [el("span", { text: t }), el("span", { class: "qa-detail__desc", text: "Typed answer" })]),
+      ])),
+    ]),
+    q.notes ? el("span", { class: "qa-notes", text: q.notes }) : null,
+  ].filter(Boolean))));
 }
 
 // renderDiff turns an Edit tool's structuredPatch (array of unified-diff
@@ -350,7 +464,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     }
     const card = el("div", { class: "tool-card" }, [head, body]);
     const entry = {
-      card, body, action, name: block.name,
+      card, body, action, name: block.name, rawInput: block.input,
       input: el("pre", { text: JSON.stringify(block.input, null, 2) }),
     };
     toggle.addEventListener("click", () => {
@@ -371,6 +485,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     entry.body.style.display = open ? "flex" : "none";
     entry.action.textContent = open ? "Hide" : "Show";
     entry.card.classList.toggle("is-preview", open && preview);
+    entry.card.classList.toggle("is-open", open);
   }
 
   // Like Claude Code's terminal, the most recent edit's diff (or command's
@@ -389,6 +504,17 @@ function createTranscriptView(container, scrollEl, opts = {}) {
 
     if (block.is_error || (toolUseResult && typeof toolUseResult === "object" && toolUseResult.toolDenialKind)) {
       card.classList.add("is-error");
+    }
+
+    // An answered question shows its answers even while folded; opening
+    // it lists every option with the picks marked.
+    if (entry.name === "AskUserQuestion" && !block.is_error) {
+      const qa = questionAnswers(entry.rawInput, toolUseResult);
+      if (qa) {
+        card.insertBefore(renderAnswerSummary(qa), body);
+        body.appendChild(renderAnswerDetail(qa));
+        return;
+      }
     }
 
     // A Write that creates a file carries an empty structuredPatch — show its
@@ -813,10 +939,20 @@ function main() {
     questionKey = null;
   }
 
-  async function pickOption(n) {
-    questionBanner.querySelectorAll("button").forEach((b) => { b.disabled = true; });
-    if (!(await sendPrompt(String(n)))) {
-      questionBanner.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+  // answerQuestion has the server drive Claude Code's question dialog
+  // (answer.go). Resolves to "" or an error message for the form.
+  async function answerQuestion(questions, answers) {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questions, answers }),
+      });
+      if (res.ok) return "";
+      const data = await res.json().catch(() => ({}));
+      return data.error || `request failed (${res.status})`;
+    } catch (err) {
+      return String(err);
     }
   }
 
@@ -1001,13 +1137,14 @@ function main() {
       permissionBanner.style.display = status === "permission" ? "block" : "none";
       if (status === "question" && p.pending_question_tool) {
         showQuestion(JSON.stringify([p.session_id, p.pending_question_tool, p.pending_question_input]),
-          () => [renderQuestionBanner(p.pending_question_tool, p.pending_question_input, pickOption)]);
+          () => [renderQuestionBanner(p.pending_question_tool, p.pending_question_input,
+            p.pending_question_tool === "AskUserQuestion" ? answerQuestion : null)]);
       } else if (status === "question") {
         // Detected via `claude agents --json` rather than the PreToolUse
         // hook, so the question's text/options were never captured.
         showQuestion("uncaptured", () => [
           el("div", { class: "question-banner__tool", text: "Waiting for your answer" }),
-          el("div", { class: "question-banner__question", text: "Claude is showing a question in the terminal that couldn't be captured here. Reply with an option number or your answer." }),
+          el("div", { class: "question-banner__question", text: "Claude is showing a question in the terminal that couldn't be read here. Answer it in the terminal, or type a reply (an option number for a simple question)." }),
         ]);
       } else {
         questionBanner.style.display = "none";
@@ -1035,7 +1172,7 @@ function main() {
         : external ? "External session"
         : "Claude is working…";
       promptInput.placeholder = status === "question"
-        ? "Type a number or your answer…"
+        ? (p.pending_question_tool === "AskUserQuestion" ? "Answer in the form above…" : "Type a number or your answer…")
         : p ? `Message ${p.name}` : "Message this session";
     } catch (err) {
       // transient — leave the last known status showing

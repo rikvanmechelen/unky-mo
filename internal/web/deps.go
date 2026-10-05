@@ -206,11 +206,13 @@ type Shells interface {
 
 // ClaudePane reads the visible screen of a session's Claude pane, for the
 // chat view's copy of Claude Code's spinner line and permission mode, and
-// presses shift+tab there to cycle the mode. target is always built from
+// presses shift+tab there to cycle the mode. SendKeys drives an
+// AskUserQuestion dialog there (answer.go). target is always built from
 // the state file, never from the request.
 type ClaudePane interface {
 	Capture(target string) (string, error)
 	CycleMode(target string) error
+	SendKeys(target string, keys []tmux.Key) error
 }
 
 // Subagents lists the agents a session spawned with the Agent tool (see
@@ -709,6 +711,12 @@ func (r realClaudePane) Capture(target string) (string, error) {
 // CycleMode presses shift+tab, Claude Code's permission-mode cycle key.
 func (r realClaudePane) CycleMode(target string) error {
 	return r.client.SendRawKeys(target, "BTab")
+}
+
+// SendKeys types keys into Claude's pane: Text literally, Names as tmux
+// key names (answer.go only uses a fixed few).
+func (r realClaudePane) SendKeys(target string, keys []tmux.Key) error {
+	return r.client.SendKeySequence(target, keys)
 }
 
 // realShells finds shells via ps/lsof (claude.ActiveShells) for the live

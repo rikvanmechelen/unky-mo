@@ -1271,6 +1271,20 @@ func (mr *MockClaudePaneMockRecorder) CycleMode(target any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CycleMode", reflect.TypeOf((*MockClaudePane)(nil).CycleMode), target)
 }
 
+// SendKeys mocks base method.
+func (m *MockClaudePane) SendKeys(target string, keys []tmux.Key) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SendKeys", target, keys)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SendKeys indicates an expected call of SendKeys.
+func (mr *MockClaudePaneMockRecorder) SendKeys(target, keys any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendKeys", reflect.TypeOf((*MockClaudePane)(nil).SendKeys), target, keys)
+}
+
 // MockSubagents is a mock of Subagents interface.
 type MockSubagents struct {
 	ctrl     *gomock.Controller
