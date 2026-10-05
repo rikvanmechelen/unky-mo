@@ -87,7 +87,7 @@ end
 		"Admin::Report.self.recent": "where fresh [6-6]",
 		"Admin::Report.self.build":  "new self.new.run [9-11]",
 		"Admin::Report.self.cached": "build [14-16]",
-		"Admin::Report.run":         "ready? ready? helper items ?.each ?.process compute ?.go Report.new Report.new.deliver super.run [19-38]",
+		"Admin::Report.run":         "ready? ready? helper items self.items.each self.items.[].process compute self.compute.go Report.new Report.new.deliver super.run [19-38]",
 		"Admin::Report.label":       "Report.build [40-40]",
 		"Admin::Report.ready?":      " [42-42]",
 		"Admin::Thing.call":         "perform [47-47]",
@@ -200,7 +200,7 @@ end
 	}
 	// A view is one definition; block parameters are locals.
 	v := l.scanFile("app/views/a/show.html.erb", "<h1><%= title(@a) %></h1>\n<%# hidden(1) %>\n<% @a.each do |x| %><%= x.name %><%= x %><% end %>\n")
-	if got := rbDefsOf(v); !reflect.DeepEqual(got, map[string]string{"<view>": "title ?.each ?.name [1-3]"}) {
+	if got := rbDefsOf(v); !reflect.DeepEqual(got, map[string]string{"<view>": "title @a.each @a.[].name [1-3]"}) {
 		t.Errorf("view %v", got)
 	}
 }
@@ -370,17 +370,17 @@ func TestRbCalls(t *testing.T) {
 	}
 	calls := callKeys(cg)
 	for _, w := range []string{
-		"+User>User#prepare@ref",                      // a callback
-		"User>User#normalize@ref",                     // an unchanged callback of a changed class
-		"+User#full_name>Trackable#track@approx",      // through the concern
-		"+User#prepare>User#normalize@approx",         // a bare call without parens
-		"+AdminUser#full_name>User#full_name@approx",  // super
-		"+AdminUser.build>User#initialize@approx",     // Const.new, initialize inherited
-		"+Report#deliver>Notifier#call@approx",        // Const.new.m
-		"Report.generate>Report#initialize@approx",    // new(…) in a class method
-		"Report.generate>Report#build@approx",         // new(…).m
-		"UsersController#show>Report.generate@approx", // a caller in an unchanged file
-		"main:spec/models/report_spec.rb>Report.generate@approx",
+		"+User>User#prepare@ref",                                                       // a callback
+		"User>User#normalize@ref",                                                      // an unchanged callback of a changed class
+		"+User#full_name>Trackable#track@approx",                                       // through the concern
+		"+User#prepare>User#normalize@approx",                                          // a bare call without parens
+		"+AdminUser#full_name>User#full_name@approx",                                   // super
+		"+AdminUser.build>User#initialize@approx",                                      // Const.new, initialize inherited
+		"+Report#deliver>Notifier#call@approx",                                         // Const.new.m
+		"Report.generate>Report#initialize@approx",                                     // new(…) in a class method
+		"Report.generate>Report#build@approx",                                          // new(…).m
+		"UsersController#show>Report.generate@approx",                                  // a caller in an unchanged file
+		`test:spec/models/report_spec.rb#it "generates">Report.generate@approx`,        // a spec example
 		"+view:app/views/users/show.html.erb>UsersHelper#title_for@approx",             // a helper
 		"view:app/views/users/show.html.erb>ApplicationController#current_user@approx", // a helper_method
 	} {
@@ -416,7 +416,7 @@ func TestRbCalls(t *testing.T) {
 			if f.Name != "users/show.html.erb" {
 				t.Errorf("view name %q", f.Name)
 			}
-		case "main:spec/models/report_spec.rb":
+		case `test:spec/models/report_spec.rb#it "generates"`:
 			if !f.Test {
 				t.Errorf("spec not a test: %+v", f)
 			}
