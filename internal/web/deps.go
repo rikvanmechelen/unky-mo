@@ -139,6 +139,14 @@ type GitFiles interface {
 	// FetchBase updates origin's copy of an overview's base ("origin/main"):
 	// the Overview's "Fetch" when that copy is old.
 	FetchBase(root, base string) error
+	// ResolveSelection checks that hashes (full commit ids) are consecutive
+	// commits of the checkout containing dir, and returns the two commits
+	// their change lies between (gitfiles.ErrBadSelection,
+	// *gitfiles.SelectionError or ErrUnknownCommit otherwise).
+	ResolveSelection(dir string, hashes []string) (*gitfiles.Selection, error)
+	// OverviewRange reads the change from commit base to commit head: the
+	// Overview of selected commits.
+	OverviewRange(root, base, head string) (*gitfiles.Overview, error)
 }
 
 // ChangeAnalyzer works out a change's architecture delta (package imports
@@ -537,6 +545,18 @@ func (g realGitFiles) OverviewAt(root, branch, head, base string) (*gitfiles.Ove
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	return gitfiles.GetOverviewAt(ctx, g.cmd, root, branch, head, base)
+}
+
+func (g realGitFiles) ResolveSelection(dir string, hashes []string) (*gitfiles.Selection, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.ResolveSelection(ctx, g.cmd, dir, hashes)
+}
+
+func (g realGitFiles) OverviewRange(root, base, head string) (*gitfiles.Overview, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetOverviewRange(ctx, g.cmd, root, base, head)
 }
 
 func (g realGitFiles) FetchBase(root, base string) error {

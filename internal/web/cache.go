@@ -47,7 +47,20 @@ func (c *ttlCache) get(key string, fetch func() (any, error)) (any, error) {
 	value, err := fetch()
 
 	c.mu.Lock()
-	c.items[key] = cacheEntry{value: value, err: err, fetchedAt: c.now()}
+	now := c.now()
+	c.items[key] = cacheEntry{value: value, err: err, fetchedAt: now}
+	if len(c.items) > cachePruneAt {
+		for k, e := range c.items {
+			if now.Sub(e.fetchedAt) >= c.ttl {
+				delete(c.items, k)
+			}
+		}
+	}
 	c.mu.Unlock()
 	return value, err
 }
+
+// cachePruneAt is the size past which a store drops expired entries. Most
+// caches have a key per checkout, but Git log selections have no bound;
+// pruning keeps a cache to what was fetched within one TTL.
+const cachePruneAt = 128

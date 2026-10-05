@@ -27,20 +27,11 @@ type callsResponse struct {
 // handleCalls serves the call graph of a live session's change, for the
 // same ?base= modes as handleOverview.
 func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request) {
-	windowID, mode := r.PathValue("windowID"), r.URL.Query().Get("base")
-	if mode == "" {
-		mode = gitfiles.ModeBranch
-	}
-	if mode != gitfiles.ModeBranch && mode != gitfiles.ModeHead {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown base %q", mode))
-		return
-	}
-	dir, ok := s.sessionPath(windowID)
+	dir, q, ok := s.sessionChange(w, r)
 	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
-	s.serveCalls(w, r, dir+"\x00"+mode, func() (*gitfiles.Overview, error) { return s.overview(dir, mode) })
+	s.serveCalls(w, r, q.key(dir), func() (*gitfiles.Overview, error) { return s.change(dir, q) })
 }
 
 // handleBranchCalls is handleCalls for the reviewer view's targets.
@@ -71,7 +62,7 @@ func (s *Server) serveCalls(w http.ResponseWriter, r *http.Request, key string, 
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
+		writeError(w, changeStatus(err), err)
 		return
 	}
 	body, err := s.callCache.get(key, changeFingerprint(o), func() ([]byte, error) {

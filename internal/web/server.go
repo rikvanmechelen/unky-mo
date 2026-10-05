@@ -30,6 +30,8 @@ type Server struct {
 	overviewCache *ttlCache
 	archCache     *ttlCache
 	callCache     *fingerprintCache
+	// selectionCache resolves Git log selections (see changeQuery).
+	selectionCache *ttlCache
 	// Reviewer view: a branch's head commit (localCache) or a PR branch's,
 	// fetched from origin at most every few minutes (fetchCache).
 	localRefCache *ttlCache
@@ -69,26 +71,27 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 	}
 
 	s := &Server{
-		deps:          deps,
-		modeSettle:    25 * time.Millisecond,
-		mux:           http.NewServeMux(),
-		tmuxSession:   tmuxSession,
-		prCache:       newTTLCache(90 * time.Second),
-		ticketCache:   newTTLCache(ticketRefresh),
-		transcripts:   newTranscriptHub(),
-		filesCache:    newTTLCache(2 * time.Second),
-		treeCache:     newTTLCache(10 * time.Second),
-		logCache:      newTTLCache(2 * time.Second),
-		overviewCache: newTTLCache(2 * time.Second),
-		archCache:     newTTLCache(3 * time.Second),
-		callCache:     newFingerprintCache(),
-		localRefCache: newTTLCache(5 * time.Second),
-		fetchCache:    newTTLCache(5 * time.Minute),
-		branchCache:   newTTLCache(15 * time.Second),
-		shellsCache:   newTTLCache(2 * time.Second),
-		agentsCache:   newTTLCache(time.Second),
-		cmdsCache:     newTTLCache(30 * time.Second),
-		bootID:        newBootID(),
+		deps:           deps,
+		modeSettle:     25 * time.Millisecond,
+		mux:            http.NewServeMux(),
+		tmuxSession:    tmuxSession,
+		prCache:        newTTLCache(90 * time.Second),
+		ticketCache:    newTTLCache(ticketRefresh),
+		transcripts:    newTranscriptHub(),
+		filesCache:     newTTLCache(2 * time.Second),
+		treeCache:      newTTLCache(10 * time.Second),
+		logCache:       newTTLCache(2 * time.Second),
+		overviewCache:  newTTLCache(2 * time.Second),
+		archCache:      newTTLCache(3 * time.Second),
+		callCache:      newFingerprintCache(),
+		selectionCache: newTTLCache(10 * time.Minute),
+		localRefCache:  newTTLCache(5 * time.Second),
+		fetchCache:     newTTLCache(5 * time.Minute),
+		branchCache:    newTTLCache(15 * time.Second),
+		shellsCache:    newTTLCache(2 * time.Second),
+		agentsCache:    newTTLCache(time.Second),
+		cmdsCache:      newTTLCache(30 * time.Second),
+		bootID:         newBootID(),
 	}
 	s.routes()
 	return s

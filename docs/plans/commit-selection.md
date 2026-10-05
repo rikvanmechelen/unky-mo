@@ -185,3 +185,72 @@ r ─ c1 ─ c2 ─ c3 ─────── m ─ c5      (main)
   - a tree id, a blob id → `ErrUnknownCommit`.
 - `GetOverviewRange(c1, c3)`: files and line counts match `git diff --numstat c1 c3`, a rename in the range shows `OldPath`, a generated header is read from `head`, and a dirty working tree doesn't leak in (edit a file after the commits). Bad ids → `ErrUnknownCommit`.
 - `TestGetOverviewAt` keeps passing unchanged (guards the refactor).
+
+## Step 2 in detail: web endpoints
+
+### Interface
+
+`GitFiles` (`deps.go`) gains, with `realGitFiles` wrappers and `make mocks`:
+
+```go
+// ResolveSelection checks that hashes are consecutive commits of the checkout containing dir (gitfiles.ResolveSelection).
+ResolveSelection(dir string, hashes []string) (*gitfiles.Selection, error)
+// OverviewRange reads the change between two commits (gitfiles.GetOverviewRange).
+OverviewRange(root, base, head string) (*gitfiles.Overview, error)
+```
+
+### Which change a request asks for (`handlers_overview.go`)
+
+```go
+// changeQuery is the change an Overview request asks for.
+type changeQuery struct {
+	mode    string   // gitfiles.ModeBranch, ModeHead or ModeCommits
+	commits []string // ModeCommits only: sorted, deduplicated full ids
+}
+func parseChange(r *http.Request) (changeQuery, error)
+func (q changeQuery) key(dir string) string // dir + "\x00" + mode [+ "\x00" + joined commits]
+```
+
+- `?base=` defaults to branch, as today. `?commits=` is a comma-separated list, required with `base=commits` and refused with any other mode. Syntax only (non-empty, `MaxSelection`, hex shape); the deep checks stay in `gitfiles`. Everything here is a 400.
+- `s.sessionChange(w, r) (dir string, q changeQuery, ok bool)` does the parse plus `sessionPath` and writes the 400/404, so `handleOverview`, `handleArchitecture` and `handleCalls` each lose their copy of the `?base=` checks.
+- `s.change(dir string, q changeQuery) (*gitfiles.Overview, error)`:
+  - branch/head: `s.overview(dir, mode)`, as now;
+  - commits: `s.selection(dir, q.commits)` then `overviewCache` under `root + "\x00range\x00" + base + "\x00" + head` → `Git.OverviewRange`.
+- `s.selection(dir, commits)`: a new `selectionCache` (`ttlCache`, 10 minutes) keyed by `q.key(dir)`. A commit's parents never change, so the answer only goes stale if the checkout is deleted, and a long TTL is safe. Errors are cached too (a refused selection stays refused).
+- The three handlers use `q.key(dir)` as the `archCache`/`callCache` key, which needs no resolution, so a cached graph is served without any git call.
+
+### Errors
+
+`changeStatus(err) int` maps:
+- `ErrBadSelection` → 400;
+- `*SelectionError` → 422, with its message as the `error` body the browser shows;
+- `ErrUnknownCommit` → 404 (e.g. a commit gone after a rebase + gc);
+- anything else → 502.
+
+`writeOverview`, `serveArchitecture` and `serveCalls` use it in place of their fixed 502. `ErrNotRepo` keeps its `{repo:false}` answer.
+
+`POST /scope` keeps its own check, which already rejects any mode but branch/head with a 400, so `base=commits` is refused there.
+
+### Files: `rev=sel-base` / `rev=sel-head`
+
+In `handleSessionFile`, these two revs require `commits=` (400 otherwise) and skip `listedPath`. Instead:
+- the path must be in the selection's overview `Files` (404 otherwise, with no read);
+- `sel-head` reads `ReadAt(root, head, path)`;
+- `sel-base` reads `ReadAt(root, base, oldPath or path)` with `Path` set back to the new name, like `readBase`;
+- the answer is `readOnly: true`.
+
+Errors go through `changeStatus` as well.
+
+### Bounding the caches
+
+`ttlCache` never forgets a key, which was fine for a handful of checkouts and modes. Selections make keys unbounded. On every store, if the map holds more than 128 entries, entries older than the TTL are dropped. Live entries are at most what was fetched within one TTL, and selection entries are small, so this keeps memory bounded without an LRU. Test it with the injected `now`.
+
+### Tests
+
+New file `handlers_selection_test.go`:
+- `/overview?base=commits&commits=b,a,a` reaches `ResolveSelection` with `[a b]` and `OverviewRange` with its answer.
+- `/architecture` and `/calls` for the same commits in another order reuse one `ResolveSelection` and one `OverviewRange` (`.Times(1)`), and `Analyze`/`Calls` are called once.
+- 400 with no `GitFiles` call for: `commits` missing, `commits` with `base=branch`, a short id, 201 ids.
+- `SelectionError` → 422 with its message; `ErrUnknownCommit` → 404.
+- `/file?rev=sel-head` and `rev=sel-base` read the head and base (base under a rename's old path), are read-only, and a path outside the selection's files is a 404 with no `ReadAt`.
+- `ttlCache` pruning: past 128 keys, expired entries go and fresh ones stay.

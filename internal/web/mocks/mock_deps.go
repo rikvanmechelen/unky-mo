@@ -710,6 +710,21 @@ func (mr *MockGitFilesMockRecorder) OverviewAt(root, branch, head, base any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OverviewAt", reflect.TypeOf((*MockGitFiles)(nil).OverviewAt), root, branch, head, base)
 }
 
+// OverviewRange mocks base method.
+func (m *MockGitFiles) OverviewRange(root, base, head string) (*gitfiles.Overview, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OverviewRange", root, base, head)
+	ret0, _ := ret[0].(*gitfiles.Overview)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OverviewRange indicates an expected call of OverviewRange.
+func (mr *MockGitFilesMockRecorder) OverviewRange(root, base, head any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OverviewRange", reflect.TypeOf((*MockGitFiles)(nil).OverviewRange), root, base, head)
+}
+
 // ReadAt mocks base method.
 func (m *MockGitFiles) ReadAt(root, rev, path string) (*gitfiles.Content, error) {
 	m.ctrl.T.Helper()
@@ -783,6 +798,21 @@ func (m *MockGitFiles) ResolvePR(root string, n int, base string) (string, error
 func (mr *MockGitFilesMockRecorder) ResolvePR(root, n, base any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolvePR", reflect.TypeOf((*MockGitFiles)(nil).ResolvePR), root, n, base)
+}
+
+// ResolveSelection mocks base method.
+func (m *MockGitFiles) ResolveSelection(dir string, hashes []string) (*gitfiles.Selection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveSelection", dir, hashes)
+	ret0, _ := ret[0].(*gitfiles.Selection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveSelection indicates an expected call of ResolveSelection.
+func (mr *MockGitFilesMockRecorder) ResolveSelection(dir, hashes any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveSelection", reflect.TypeOf((*MockGitFiles)(nil).ResolveSelection), dir, hashes)
 }
 
 // Tree mocks base method.

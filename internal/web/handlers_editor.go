@@ -14,7 +14,8 @@ import (
 // view's editor tabs: the working-tree version, or with ?rev=HEAD the
 // committed one (the left side of a diff tab), or with ?rev=base the one
 // at the branch's merge base (the left side of a branch diff, see
-// readBase).
+// readBase), or with ?rev=sel-base / sel-head either side of a file the
+// commits selected in the Git log tab changed (serveSelectionFile).
 //
 // The path comes from the browser, so it must be one the Files panel lists:
 // a tracked or untracked-but-not-ignored file (Tree), or a changed one
@@ -31,6 +32,18 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("missing path"))
 		return
 	}
+	if rev == "sel-base" || rev == "sel-head" {
+		dir, q, ok := s.sessionChange(w, r)
+		if !ok {
+			return
+		}
+		if q.mode != gitfiles.ModeCommits {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("rev %s needs base=commits", rev))
+			return
+		}
+		s.serveSelectionFile(w, r, dir, q, path, rev == "sel-base")
+		return
+	}
 	if rev != "" && rev != "HEAD" && rev != "base" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported rev %q", rev))
 		return
@@ -41,6 +54,42 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveFile(w, r, dir, path, rev)
+}
+
+// serveSelectionFile answers with one side of a file the selected commits
+// changed (rev=sel-base or sel-head): as it was just before the selection
+// (under its old name for a rename), or in the newest selected commit. Only
+// paths the selection's overview lists are served, always read-only.
+func (s *Server) serveSelectionFile(w http.ResponseWriter, r *http.Request, dir string, q changeQuery, path string, before bool) {
+	o, err := s.change(dir, q)
+	if err != nil {
+		writeError(w, changeStatus(err), err)
+		return
+	}
+	var file *gitfiles.OverviewFile
+	for i := range o.Files {
+		if o.Files[i].Path == path {
+			file = &o.Files[i]
+		}
+	}
+	if file == nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s isn't changed in the selected commits", path))
+		return
+	}
+	rev, at := o.Head, path
+	if before {
+		rev = o.Rev
+		if file.OldPath != "" {
+			at = file.OldPath
+		}
+	}
+	c, err := s.deps.Git.ReadAt(o.Root, rev, at)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	c.Path = path
+	writeContent(w, r, c, true)
 }
 
 // serveFile answers with one file of the checkout containing dir (see

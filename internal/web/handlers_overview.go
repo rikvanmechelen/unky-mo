@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/rvanmech/unky-mo/internal/gitfiles"
 	"github.com/rvanmech/unky-mo/internal/review"
@@ -23,25 +26,128 @@ type overviewResponse struct {
 
 // handleOverview serves a live session's change for the Overview tab:
 // ?base=branch (default: everything since the branch split off the default
-// branch) or head (uncommitted only). The browser picks a mode, never a
-// revision. The ETag is a hash of the body, so the tab's poll gets a
-// body-less 304 while nothing changed.
+// branch), head (uncommitted only) or commits (&commits=: consecutive
+// commits selected in the Git log tab). The browser picks a mode or names
+// commits, never a revision to compare with. The ETag is a hash of the
+// body, so the tab's poll gets a body-less 304 while nothing changed.
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
-	windowID, mode := r.PathValue("windowID"), r.URL.Query().Get("base")
-	if mode == "" {
-		mode = gitfiles.ModeBranch
-	}
-	if mode != gitfiles.ModeBranch && mode != gitfiles.ModeHead {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown base %q", mode))
+	dir, q, ok := s.sessionChange(w, r)
+	if !ok {
 		return
 	}
+	o, err := s.change(dir, q)
+	writeOverview(w, r, o, err, nil)
+}
+
+// changeQuery is the change an Overview request asks for.
+type changeQuery struct {
+	mode    string   // gitfiles.ModeBranch, ModeHead or ModeCommits
+	commits []string // ModeCommits only: sorted, without duplicates
+}
+
+// parseChange reads ?base= (default branch) and, for base=commits, the
+// comma-separated full commit ids in ?commits=. Only the syntax is checked
+// here; gitfiles checks the commits themselves.
+func parseChange(r *http.Request) (changeQuery, error) {
+	q := changeQuery{mode: r.URL.Query().Get("base")}
+	if q.mode == "" {
+		q.mode = gitfiles.ModeBranch
+	}
+	list := r.URL.Query().Get("commits")
+	switch q.mode {
+	case gitfiles.ModeBranch, gitfiles.ModeHead:
+		if list != "" {
+			return q, fmt.Errorf("commits only go with base=commits")
+		}
+		return q, nil
+	case gitfiles.ModeCommits:
+	default:
+		return q, fmt.Errorf("unknown base %q", q.mode)
+	}
+	for _, h := range strings.Split(list, ",") {
+		if !commitIDRe.MatchString(h) {
+			return q, fmt.Errorf("bad commit id %q", h)
+		}
+		q.commits = append(q.commits, h)
+	}
+	slices.Sort(q.commits)
+	q.commits = slices.Compact(q.commits)
+	if len(q.commits) > gitfiles.MaxSelection {
+		return q, fmt.Errorf("at most %d commits", gitfiles.MaxSelection)
+	}
+	return q, nil
+}
+
+var commitIDRe = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// key caches what q asks for in the checkout at dir.
+func (q changeQuery) key(dir string) string {
+	k := dir + "\x00" + q.mode
+	if q.mode == gitfiles.ModeCommits {
+		k += "\x00" + strings.Join(q.commits, ",")
+	}
+	return k
+}
+
+// sessionChange reads the change a session endpoint asks for and the
+// session's checkout, or answers with why it can't.
+func (s *Server) sessionChange(w http.ResponseWriter, r *http.Request) (string, changeQuery, bool) {
+	q, err := parseChange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return "", q, false
+	}
+	windowID := r.PathValue("windowID")
 	dir, ok := s.sessionPath(windowID)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
-		return
+		return "", q, false
 	}
-	o, err := s.overview(dir, mode)
-	writeOverview(w, r, o, err, nil)
+	return dir, q, true
+}
+
+// change reads (through the caches) the change q asks for in the checkout
+// at dir.
+func (s *Server) change(dir string, q changeQuery) (*gitfiles.Overview, error) {
+	if q.mode != gitfiles.ModeCommits {
+		return s.overview(dir, q.mode)
+	}
+	sel, err := s.selection(dir, q)
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.overviewCache.get(sel.Root+"\x00range\x00"+sel.Base+"\x00"+sel.Head, func() (any, error) {
+		return s.deps.Git.OverviewRange(sel.Root, sel.Base, sel.Head)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*gitfiles.Overview), nil
+}
+
+// selection resolves q's commits to the two commits their change lies
+// between. A commit's parents never change, so the answer is kept long.
+func (s *Server) selection(dir string, q changeQuery) (*gitfiles.Selection, error) {
+	v, err := s.selectionCache.get(q.key(dir), func() (any, error) { return s.deps.Git.ResolveSelection(dir, q.commits) })
+	if err != nil {
+		return nil, err
+	}
+	return v.(*gitfiles.Selection), nil
+}
+
+// changeStatus is the HTTP status for a failure to read a change: a
+// malformed or non-consecutive selection is the request's fault.
+func changeStatus(err error) int {
+	var se *gitfiles.SelectionError
+	switch {
+	case errors.Is(err, gitfiles.ErrBadSelection):
+		return http.StatusBadRequest
+	case errors.As(err, &se):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, gitfiles.ErrUnknownCommit):
+		return http.StatusNotFound
+	}
+	return http.StatusBadGateway
 }
 
 // writeOverview answers with an overview (or why there's none).
@@ -51,7 +157,7 @@ func writeOverview(w http.ResponseWriter, r *http.Request, o *gitfiles.Overview,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
+		writeError(w, changeStatus(err), err)
 		return
 	}
 	body, err := json.Marshal(overviewResponse{Repo: true, Overview: o, Target: target})
@@ -73,20 +179,11 @@ type architectureResponse struct {
 // a live session's change, for the same ?base= modes as handleOverview. It
 // analyzes the (shared, cached) overview, so both views agree on the files.
 func (s *Server) handleArchitecture(w http.ResponseWriter, r *http.Request) {
-	windowID, mode := r.PathValue("windowID"), r.URL.Query().Get("base")
-	if mode == "" {
-		mode = gitfiles.ModeBranch
-	}
-	if mode != gitfiles.ModeBranch && mode != gitfiles.ModeHead {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown base %q", mode))
-		return
-	}
-	dir, ok := s.sessionPath(windowID)
+	dir, q, ok := s.sessionChange(w, r)
 	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
-	s.serveArchitecture(w, r, dir+"\x00"+mode, func() (*gitfiles.Overview, error) { return s.overview(dir, mode) })
+	s.serveArchitecture(w, r, q.key(dir), func() (*gitfiles.Overview, error) { return s.change(dir, q) })
 }
 
 // serveArchitecture analyzes the overview get returns, cached under key.
@@ -107,7 +204,7 @@ func (s *Server) serveArchitecture(w http.ResponseWriter, r *http.Request, key s
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
+		writeError(w, changeStatus(err), err)
 		return
 	}
 	writeHashed(w, r, v.([]byte))

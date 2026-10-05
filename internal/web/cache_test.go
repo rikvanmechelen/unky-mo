@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -51,5 +52,27 @@ func TestTTLCacheKeysAreIndependent(t *testing.T) {
 
 	if calls != 2 {
 		t.Fatalf("want distinct keys to fetch independently, got %d calls", calls)
+	}
+}
+
+// Past cachePruneAt keys, a store drops the expired entries and keeps the
+// fresh ones.
+func TestTTLCachePrunesExpired(t *testing.T) {
+	c := newTTLCache(time.Minute)
+	now := time.Now()
+	c.now = func() time.Time { return now }
+	fetch := func() (any, error) { return 1, nil }
+
+	for i := 0; i < cachePruneAt-1; i++ {
+		c.get(fmt.Sprintf("old%d", i), fetch)
+	}
+	now = now.Add(2 * time.Minute)
+	c.get("fresh", fetch)
+	if len(c.items) != cachePruneAt {
+		t.Fatalf("at the limit nothing is pruned yet: %d items", len(c.items))
+	}
+	c.get("fresh2", fetch)
+	if len(c.items) != 2 {
+		t.Fatalf("want only the 2 fresh entries left, got %d", len(c.items))
 	}
 }
