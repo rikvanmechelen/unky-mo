@@ -666,8 +666,12 @@ func reachedByTest(id string, s *callSet, callers map[string][]callerRef, hops i
 		to := queue[0]
 		queue = queue[1:]
 		for _, c := range callers[to] {
+			// Free steps: an interface method to its implementation (a test
+			// calling through an interface reaches them all), and a Rails
+			// route or URL helper to what it routes to (a request test's
+			// get ticket_path(t) reaches the action).
 			cost := 1
-			if c.site.kind == CallImpl {
+			if c.site.kind == CallImpl || strings.HasPrefix(c.from, "route:") {
 				cost = 0
 			}
 			d := dist[to] + cost

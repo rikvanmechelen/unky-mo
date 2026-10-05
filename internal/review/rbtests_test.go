@@ -71,3 +71,25 @@ func TestRbConventionalCoverage(t *testing.T) {
 		t.Errorf("missing test-not-updated: %v", got)
 	}
 }
+
+// A request test reaches an action through its route helper: test →
+// ticket_path → the route → TicketsController#show, with the route hops
+// free.
+func TestRbRequestTestReachesAction(t *testing.T) {
+	dir := railsRepo(t)
+	write(t, dir, "config/routes.rb", "Rails.application.routes.draw do\n  resources :tickets, only: [:show]\nend\n")
+	write(t, dir, "app/controllers/application_controller.rb", "class ApplicationController < ActionController::Base\nend\n")
+	write(t, dir, "app/controllers/tickets_controller.rb", "class TicketsController < ApplicationController\n  def show\n    head :ok\n  end\n\n  def unrouted\n    head :ok\n  end\nend\n")
+	// Not the controller's conventional test file: reachability, not naming.
+	write(t, dir, "test/integration/booking_flow_test.rb", "require \"test_helper\"\n\nclass BookingFlowTest < ActionDispatch::IntegrationTest\n  test \"shows a ticket\" do\n    get ticket_path(1)\n  end\nend\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "tickets")
+	write(t, dir, "app/controllers/tickets_controller.rb", "class TicketsController < ApplicationController\n  def show\n    head :no_content\n  end\n\n  def unrouted\n    head :no_content\n  end\nend\n")
+	got := findingKeys(callGraphOf(t, dir, gitfiles.ModeHead))
+	if contains(got, "untested:TicketsController#show") {
+		t.Errorf("show is reached by a request test through its route: %v", got)
+	}
+	if !contains(got, "untested:TicketsController#unrouted") {
+		t.Errorf("unrouted has no route and no test: %v", got)
+	}
+}
