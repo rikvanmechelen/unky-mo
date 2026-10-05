@@ -74,7 +74,7 @@ test("parseUnifiedDiff reads git diff output", () => {
     [10, 10, ["-ten", "+TEN", "+eleven"]],
   ]);
   assert.equal(files[1].path, "new.txt");
-  assert.equal(files[1].added, true);
+  assert.equal(files[1].created, true);
   assert.deepEqual(files[1].hunks[0].lines, ["+hello"]);
   assert.equal(files[2].path, "old.txt");
   assert.equal(files[2].deleted, true);
@@ -126,4 +126,34 @@ test("splitCommand leaves unterminated heredocs and plain commands alone", () =>
   assert.deepEqual(d.splitCommand("cat <<EOF\nnever ends").map((p) => p.body), [false]);
   assert.deepEqual(d.splitCommand("go test ./... 2>&1 | tail"), [{ text: "go test ./... 2>&1 | tail", path: "command.sh", body: false }]);
   assert.equal(d.heredocTarget("cat 2>&1").path, null);
+});
+
+test("bashDiffFiles merges git's counts with the parsed diff", () => {
+  const files = d.bashDiffFiles({
+    files: [
+      { path: "a.go", added: 1, removed: 1 },
+      { path: "gone.txt", added: 0, removed: 1 },
+      { path: "img.png", binary: true },
+      { path: "new.md", oldPath: "old.md", added: 0, removed: 0 },
+    ],
+    patch: [
+      "diff --git a/a.go b/a.go", "--- a/a.go", "+++ b/a.go", "@@ -1 +1 @@", "-x", "+y",
+      "diff --git a/gone.txt b/gone.txt", "deleted file mode 100644", "--- a/gone.txt", "+++ /dev/null", "@@ -1 +0,0 @@", "-bye",
+      "diff --git a/img.png b/img.png", "Binary files a/img.png and b/img.png differ",
+      "diff --git a/old.md b/new.md", "similarity index 100%", "rename from old.md", "rename to new.md",
+    ].join("\n"),
+  });
+  assert.deepEqual(files.map((f) => [f.path, f.hunks.length, f.deleted, f.binary, f.added]), [
+    ["a.go", 1, false, false, 1],
+    ["gone.txt", 1, true, false, 0],
+    ["img.png", 0, false, true, undefined],
+    ["new.md", 0, false, false, 0],
+  ]);
+  assert.equal(files[3].oldPath, "old.md");
+  assert.deepEqual(d.bashDiffFiles(null), []);
+});
+
+test("bashChangeTotals sums a change", () => {
+  assert.deepEqual(d.bashChangeTotals({ files: [{ added: 3, removed: 1 }, { binary: true }, { added: 2, removed: 0 }] }), { files: 3, added: 5, removed: 1 });
+  assert.deepEqual(d.bashChangeTotals(null), { files: 0, added: 0, removed: 0 });
 });

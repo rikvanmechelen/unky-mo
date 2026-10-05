@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/rvanmech/unky-mo/internal/bashsnap"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
@@ -32,7 +33,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,CallGrapher,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,Restarter
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,CallGrapher,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,BashChanges,Restarter
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -237,6 +238,16 @@ func (realSlashCommands) List(path, sessionID string) []claude.SlashCommand {
 	return claude.SlashCommands(path, sessionID)
 }
 
+// BashChanges reads what a session's Bash calls changed in its checkout,
+// from the snapshots `mo snapshot` takes around each call (internal/bashsnap).
+// sessionID always comes from the state file's row for the requested window.
+type BashChanges interface {
+	// List returns the calls that changed something, by tool use id.
+	List(ctx context.Context, sessionID string) (map[string]bashsnap.Change, error)
+	// Diff reads one call's change; bashsnap.ErrNoRecord when it has none.
+	Diff(ctx context.Context, sessionID, toolUseID string) (root string, d *bashsnap.Diff, err error)
+}
+
 // Deps bundles the data sources a Server reads from.
 type Deps struct {
 	State     StateReader
@@ -258,7 +269,9 @@ type Deps struct {
 	ClaudePane ClaudePane
 	Subagents  Subagents
 	// Commands feeds the composer's "/" completion.
-	Commands  SlashCommands
+	Commands SlashCommands
+	// BashDiffs shows what each Bash call changed; nil when snapshots are off.
+	BashDiffs BashChanges
 	Restarter Restarter
 	// Attachments holds images uploaded from the composer until the prompt
 	// that references them is sent.

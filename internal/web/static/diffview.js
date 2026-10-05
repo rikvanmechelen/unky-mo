@@ -122,8 +122,8 @@ function diffPath(raw) {
 }
 
 // parseUnifiedDiff reads the unified diffs in a command's output (git diff,
-// git show, diff -u) as [{path, oldPath, hunks: [{oldStart, newStart,
-// lines}]}], in the same hunk shape as an Edit's structuredPatch. Text
+// git show, diff -u) as [{path, oldPath, created, deleted, hunks:
+// [{oldStart, newStart, lines}]}], in the same hunk shape as an Edit's structuredPatch. Text
 // around the diffs (a commit message) is skipped. Returns null when the
 // output holds no hunk.
 function parseUnifiedDiff(text) {
@@ -157,7 +157,7 @@ function parseUnifiedDiff(text) {
       const path = diffPath(line.slice(4));
       file = { path: path || pendingOld, oldPath: path && pendingOld && pendingOld !== path ? pendingOld : null, hunks: [] };
       if (path === null) file.deleted = true;
-      if (pendingOld === null) file.added = true;
+      if (pendingOld === null) file.created = true;
       files.push(file);
       pendingOld = undefined;
       continue;
@@ -229,6 +229,31 @@ function splitCommand(command) {
   return parts;
 }
 
+// bashDiffFiles merges a Bash call's diff (/bash-changes/{id}: git's file
+// counts plus its unified diff) into renderFileDiffs' file list.
+function bashDiffFiles(d) {
+  const parsed = parseUnifiedDiff(d?.patch || "") || [];
+  const byPath = new Map(parsed.map((f) => [f.path, f]));
+  return (d?.files || []).map((f) => {
+    const p = byPath.get(f.path) || {};
+    return {
+      path: f.path, oldPath: f.oldPath || null, binary: !!f.binary,
+      ...(f.binary ? {} : { added: f.added || 0, removed: f.removed || 0 }),
+      created: !!p.created, deleted: !!p.deleted, hunks: p.hunks || [],
+    };
+  });
+}
+
+// bashChangeTotals sums a listed change's files for its card's summary.
+function bashChangeTotals(change) {
+  const files = change?.files || [];
+  return {
+    files: files.length,
+    added: files.reduce((n, f) => n + (f.added || 0), 0),
+    removed: files.reduce((n, f) => n + (f.removed || 0), 0),
+  };
+}
+
 if (typeof module === "object" && module.exports) {
-  module.exports = { highlightText, highlightHunk, parseUnifiedDiff, splitCommand, heredocTarget, HIGHLIGHT_MAX_LINES };
+  module.exports = { bashDiffFiles, bashChangeTotals, highlightText, highlightHunk, parseUnifiedDiff, splitCommand, heredocTarget, HIGHLIGHT_MAX_LINES };
 }

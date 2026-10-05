@@ -146,6 +146,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/subagents", s.handleSubagents)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/subagents/{agentID}/transcript", s.handleSubagentTranscript)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/commands", s.handleCommands)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/bash-changes", s.handleBashChanges)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/bash-changes/{toolUseID}", s.handleBashDiff)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals", s.handleTerminals)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/terminals", s.handleNewTerminal)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/terminals/{pane}/output", s.handleTerminalOutput)

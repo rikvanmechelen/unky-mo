@@ -524,12 +524,13 @@ function renderAdded(content, path, max = 400) {
 }
 
 // renderFileDiffs renders several files' hunks ([{path, oldPath, hunks,
-// added, deleted, binary}]), each under a header naming the file. onOpen
+// created, deleted, binary, added, removed}], the counts optional), each
+// under a header naming the file. onOpen
 // (repo-relative path), when given, adds an "Open" button.
 function renderFileDiffs(files, onOpen) {
   return el("div", { class: "tool-card__files" }, files.map((f) => {
     const name = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-    const tag = f.binary ? "binary" : f.added ? "new" : f.deleted ? "deleted" : "";
+    const tag = f.binary ? "binary" : f.created ? "new" : f.deleted ? "deleted" : "";
     const head = el("div", { class: "tool-card__file" }, [
       el("span", { class: "tool-card__file-path", text: name }),
       ...(tag ? [el("span", { class: "tool-card__file-tag", text: tag })] : []),
@@ -571,6 +572,56 @@ function renderCommand(command) {
   return pre;
 }
 
+// createBashChanges keeps what the window's Bash calls changed in its
+// checkout (/bash-changes, from the snapshots `mo snapshot` takes around
+// each call). It's loaded when a session connects and after each Bash
+// result: the snapshot after a command lands about when its result does,
+// so a second load follows shortly after.
+function createBashChanges() {
+  let windowID = null;
+  let etag = null;
+  let changes = {};
+  let timers = [];
+  let gen = 0;
+  const subs = new Set();
+  const base = () => `/api/sessions/${encodeURIComponent(windowID)}/bash-changes`;
+
+  async function load() {
+    if (!windowID) return;
+    const g = gen;
+    try {
+      const res = await fetch(base(), { headers: etag ? { "If-None-Match": etag } : {} });
+      if (g !== gen || res.status === 304 || !res.ok) return;
+      etag = res.headers.get("ETag");
+      changes = await res.json();
+      for (const fn of subs) fn();
+    } catch (_) { /* offline: try again on the next result */ }
+  }
+
+  return {
+    setWindow(id) {
+      windowID = id;
+      etag = null;
+      changes = {};
+      gen++;
+      timers.forEach(clearTimeout);
+      load();
+    },
+    // refresh is debounced: replaying a backlog fills many Bash cards at once.
+    refresh() {
+      timers.forEach(clearTimeout);
+      timers = [setTimeout(load, 300), setTimeout(load, 1800)];
+    },
+    get: (id) => changes[id] || null,
+    subscribe: (fn) => subs.add(fn),
+    async diff(id) {
+      const res = await fetch(`${base()}/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error((await res.text()) || res.statusText);
+      return res.json();
+    },
+  };
+}
+
 // navGroups groups the state file's live sessions by project for the left
 // nav, keeping state-file order; external (stray) sessions come last.
 function navGroups(projects) {
@@ -605,7 +656,8 @@ function isAgentTool(name) {
 // tool card it creates, so the caller can decorate it. With
 // opts.onOpenFile(absPath), file tools (Read/Edit/Write/…) get an "Open"
 // button that calls it; opts.onOpenDiff(path) opens a repo-relative path
-// from a diff a command printed or made.
+// from a diff a command printed or made. opts.bashChanges (createBashChanges)
+// gives Bash cards the change their command made to the checkout.
 function createTranscriptView(container, scrollEl, opts = {}) {
   const transcript = container;
   const transcriptScroll = scrollEl;
@@ -621,6 +673,8 @@ function createTranscriptView(container, scrollEl, opts = {}) {
   let leaf = null;
   const toolCards = new Map(); // tool_use_id -> {card, body, ...} — persists across messages
   let previewed = null; // the toolCards entry currently auto-opened by previewToolCard
+  let cardSeq = 0; // tool cards in transcript order, so a late change never previews an older card
+  if (opts.bashChanges) opts.bashChanges.subscribe(() => withPin(() => toolCards.forEach(applyBashChange)));
 
   // Auto-scroll only follows new content if the viewport was already pinned
   // to the bottom — if you've scrolled up to read something, new messages
@@ -722,7 +776,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     }
     const card = el("div", { class: "tool-card" }, [head, body]);
     const entry = {
-      card, body, action, name: block.name, rawInput: block.input,
+      card, body, action, name: block.name, rawInput: block.input, id: block.id, seq: ++cardSeq,
       input: block.name === "Bash" && typeof block.input?.command === "string"
         ? renderCommand(block.input.command)
         : el("pre", { text: JSON.stringify(block.input, null, 2) }),
@@ -756,6 +810,42 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     if (previewed && previewed !== entry) setCardOpen(previewed, false);
     previewed = entry;
     setCardOpen(entry, true, true);
+  }
+
+  // applyBashChange shows what a finished Bash call changed in the
+  // checkout: a +/− summary on the card, and the files' diffs, loaded
+  // when the card first opens. The newest such card is previewed, like an
+  // Edit's diff.
+  function applyBashChange(entry) {
+    if (entry.name !== "Bash" || !entry.filled || entry.change || !opts.bashChanges) return;
+    const change = opts.bashChanges.get(entry.id);
+    if (!change) return;
+    entry.change = change;
+    const t = bashChangeTotals(change);
+    entry.card.classList.add("has-diff", "has-change");
+    entry.action.before(el("span", {
+      class: "tool-card__stat",
+      title: change.overlaps ? `Ran alongside ${change.overlaps} other command${change.overlaps > 1 ? "s" : ""} that changed files: their changes show here too` : "",
+    }, [
+      el("span", { class: "is-add", text: `+${t.added}` }),
+      el("span", { class: "is-del", text: ` −${t.removed}` }),
+      el("span", { text: ` · ${t.files} file${t.files === 1 ? "" : "s"}${change.overlaps ? " · overlapping" : ""}` }),
+    ]));
+    const box = el("div", { class: "tool-card__files" }, [el("div", { class: "tool-card__loading", text: "Loading changes…" })]);
+    entry.body.prepend(box);
+    deferHighlight(box, async () => {
+      try {
+        const files = bashDiffFiles(await opts.bashChanges.diff(entry.id));
+        withPin(() => {
+          box.replaceWith(renderFileDiffs(files, opts.onOpenDiff));
+          runHighlights(entry.body);
+        });
+      } catch (err) {
+        box.replaceChildren(el("div", { class: "tool-card__loading", text: "Couldn't load the changes: " + err.message }));
+      }
+    });
+    if (entry.body.style.display !== "none") runHighlights(entry.body);
+    if (!previewed || previewed === entry || previewed.seq < entry.seq) previewToolCard(entry);
   }
 
   function fillToolResult(block, toolUseResult) {
@@ -817,7 +907,12 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       el("span", { class: "tool-card__field-label", text: "Output" }),
       el("pre", { text }),
     ]));
-    if (entry.name === "Bash" && text.trim()) previewToolCard(entry);
+    if (entry.name === "Bash" && (text.trim() || diffs)) previewToolCard(entry);
+    if (entry.name === "Bash") {
+      entry.filled = true;
+      applyBashChange(entry);
+      if (!entry.change && opts.bashChanges) opts.bashChanges.refresh();
+    }
   }
 
   function renderMessage(msg) {
@@ -1039,7 +1134,10 @@ function main() {
   const spinner = createSpinner(document.getElementById("spinner"));
   const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
     (msg) => { sendError.textContent = msg; });
-  const subagents = createSubagents(document.getElementById("agent-strip"));
+  const bashChanges = createBashChanges();
+  const onOpenDiff = (path) => editor.open(path, "diff");
+  // A subagent's Bash calls are recorded under the session that spawned it.
+  const subagents = createSubagents(document.getElementById("agent-strip"), { bashChanges, onOpenDiff });
   // Paths in tool cards (and the permission banner) are absolute; editor
   // tabs take them relative to the repo root. Outside the checkout (or
   // before the first files poll) the path is passed as-is and the tab
@@ -1051,7 +1149,8 @@ function main() {
   const view = createTranscriptView(transcript, transcriptScroll, {
     onToolCard: subagents.decorateCard,
     onOpenFile: openAbsFile,
-    onOpenDiff: (path) => editor.open(path, "diff"),
+    onOpenDiff,
+    bashChanges,
   });
 
   // Per-session state — reset by resetSession when the nav switches to
@@ -1089,6 +1188,7 @@ function main() {
   function connectTranscript(sessionID) {
     clearTranscript();
     streamSessionID = sessionID;
+    bashChanges.setWindow(windowID);
     const stream = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
     es = stream;
     stream.addEventListener("transcript", (e) => {

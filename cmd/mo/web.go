@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rvanmech/unky-mo/internal/bashsnap"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
@@ -62,6 +63,11 @@ func webCmd() *cobra.Command {
 			}
 			if deps.Attachments, err = web.NewAttachmentStore(); err != nil {
 				return err
+			}
+			if !cfg.Web.DisableBashDiffs {
+				if store, err := bashsnap.NewStore(moexec.DefaultCommander); err == nil {
+					deps.BashDiffs = web.NewBashChanges(store)
+				}
 			}
 
 			credsPath := webCredentialsPath()

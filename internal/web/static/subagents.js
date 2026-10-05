@@ -36,7 +36,7 @@ function subagentProgress(a) {
   return parts.filter(Boolean).join(" · ");
 }
 
-function createSubagents(strip) {
+function createSubagents(strip, { bashChanges, onOpenDiff } = {}) {
   let windowID = null;
   let gen = 0; // bumped on every switch so a late poll is dropped
   let timer = null;
@@ -62,7 +62,7 @@ function createSubagents(strip) {
     dlgBody,
   ]);
   document.body.appendChild(dialog);
-  const view = createTranscriptView(dlgInner, dlgBody, { userLabel: "Task" });
+  const view = createTranscriptView(dlgInner, dlgBody, { userLabel: "Task", bashChanges, onOpenDiff });
   let dlgStream = null;
   let dlgAgent = null; // id of the agent shown
 
