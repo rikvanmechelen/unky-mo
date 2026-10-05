@@ -107,7 +107,35 @@ func (g *goCalls) funcs(idx *index, files []string, full bool) (*callSet, error)
 	if full {
 		l.addImpls(set)
 	}
+	l.addCallees(set)
 	return set, nil
+}
+
+// addCallees gives called functions that weren't walked (their package was
+// only type-checked as a dependency) a context node with their position.
+func (l *goLoader) addCallees(set *callSet) {
+	for _, id := range sortedKeys(l.callees) {
+		if set.funcs[id] != nil {
+			continue
+		}
+		obj := l.callees[id]
+		pos := l.fset.Position(obj.Pos())
+		if pos.Filename == "" {
+			continue
+		}
+		name := obj.Name()
+		if recv := obj.Signature().Recv(); recv != nil {
+			t := recv.Type()
+			if p, ok := t.(*types.Pointer); ok {
+				t = p.Elem()
+			}
+			if n, ok := types.Unalias(t).(*types.Named); ok {
+				name = n.Obj().Name() + "." + name
+			}
+		}
+		set.add(&fn{Func: Func{ID: id, Name: name, Path: pos.Filename, Line: pos.Line, End: pos.Line,
+			Unit: pkgDir(pos.Filename), Lang: "go", Test: strings.HasSuffix(pos.Filename, "_test.go")}, synthetic: true})
+	}
 }
 
 // maxImplPackages caps the extra packages loaded to find an interface's
@@ -235,6 +263,9 @@ type goLoader struct {
 	// ifaces are the interface methods called dynamically: ID → the
 	// interface and the method's object.
 	ifaces map[string]ifaceMethod
+	// callees are the module's functions something walked calls, so the
+	// ones in packages that were only type-checked still get a position.
+	callees map[string]*types.Func
 }
 
 type ifaceMethod struct {
@@ -248,7 +279,7 @@ const goBudget = 8 * time.Second
 
 func newGoLoader(idx *index, module string) *goLoader {
 	l := &goLoader{idx: idx, module: module, fset: token.NewFileSet(), pkgs: map[string]*goPkg{},
-		busy: map[string]bool{}, fake: map[string]*types.Package{}, unparsed: map[string]bool{}, start: time.Now(), ifaces: map[string]ifaceMethod{}}
+		busy: map[string]bool{}, fake: map[string]*types.Package{}, unparsed: map[string]bool{}, start: time.Now(), ifaces: map[string]ifaceMethod{}, callees: map[string]*types.Func{}}
 	// The build rules of `go build` for this machine, reading from the index.
 	l.bctx = build.Default
 	l.bctx.CgoEnabled = false
@@ -671,9 +702,11 @@ func (l *goLoader) calls(pkg *goPkg, n ast.Node, f *fn) {
 			}
 			// The selector's Sel is visited again as an Ident: skip it then.
 			f.calls = append(f.calls, callSite{to: l.id(obj), kind: kind, line: l.line(id)})
+			l.callees[l.id(obj)] = obj
 			return false
 		}
 		f.calls = append(f.calls, callSite{to: l.id(obj), kind: kind, line: l.line(id)})
+		l.callees[l.id(obj)] = obj
 		return true
 	})
 }

@@ -43,6 +43,7 @@ func main() {
 	rootCmd.AddCommand(importCmd())
 	rootCmd.AddCommand(concurrentCmd())
 	rootCmd.AddCommand(architectureCmd())
+	rootCmd.AddCommand(callsCmd())
 	rootCmd.AddCommand(hooksCmd())
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(jiraCmd())
