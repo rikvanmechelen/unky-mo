@@ -24,6 +24,11 @@ type rbCalls struct {
 	r       *hResolver
 	classes map[string][]string
 	ext     *rbRails // routes and Stimulus (rbrails.go), per version
+	// helpers are app/helpers' classes, and helperIDs memoizes which of
+	// their methods a name finds: views call the same names (link_to, t)
+	// thousands of times.
+	helpers   []hClassRef
+	helperIDs map[string][]string
 }
 
 const (
@@ -889,10 +894,14 @@ func (l *rbCalls) prepare(r *hResolver) {
 		return
 	}
 	l.r, l.classes = r, map[string][]string{}
+	l.helpers, l.helperIDs = nil, map[string][]string{}
 	for _, p := range r.paths {
 		for _, c := range r.files[p].Classes {
 			if strings.HasSuffix(c.Name, rbSelf) {
 				continue
+			}
+			if strings.Contains("/"+p, "/app/helpers/") {
+				l.helpers = append(l.helpers, hClassRef{p, c.Name})
 			}
 			if fs := l.classes[c.Name]; len(fs) == 0 || fs[len(fs)-1] != p {
 				l.classes[c.Name] = append(fs, p)
@@ -1125,18 +1134,19 @@ func (l *rbCalls) viewCall(r *hResolver, p, name string) (string, []string) {
 		}
 	}
 	found := map[string]bool{}
-	for _, hp := range r.paths {
-		if !strings.Contains("/"+hp, "/app/helpers/") {
-			continue
-		}
-		for _, cls := range r.files[hp].Classes {
-			if strings.HasSuffix(cls.Name, rbSelf) {
-				continue
-			}
-			if def, dp := r.method(hClassRef{hp, cls.Name}, name, l.base); def != nil {
-				found[l.id(dp, def)] = true
+	ids, ok := l.helperIDs[name]
+	if !ok {
+		seen := map[string]bool{}
+		for _, h := range l.helpers {
+			if def, dp := r.method(h, name, l.base); def != nil && !seen[l.id(dp, def)] {
+				seen[l.id(dp, def)] = true
+				ids = append(ids, l.id(dp, def))
 			}
 		}
+		l.helperIDs[name] = ids
+	}
+	for _, id := range ids {
+		found[id] = true
 	}
 	if c, fs := l.viewController(rel); len(fs) > 0 {
 		for _, cr := range l.chain(r, fs, c) {
