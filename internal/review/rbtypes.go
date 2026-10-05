@@ -338,9 +338,16 @@ func (l *rbCalls) ivarType(r *hResolver, cls, name string) (rbType, bool) {
 		if len(types) == 0 {
 			continue
 		}
+		// Two classes where one inherits the other (a model and its STI
+		// subclass) give the base; any other disagreement leaves it unknown.
 		found, ok = types[0], true
 		for _, t := range types[1:] {
-			if t != found {
+			switch {
+			case t == found:
+			case t.kind == found.kind && l.isAncestor(r, t.cls, found.cls):
+				found = t
+			case t.kind == found.kind && l.isAncestor(r, found.cls, t.cls):
+			default:
 				ok = false
 			}
 		}
@@ -351,6 +358,16 @@ func (l *rbCalls) ivarType(r *hResolver, cls, name string) (rbType, bool) {
 	}
 	l.memo[key] = found
 	return found, ok
+}
+
+// isAncestor reports whether class base is in class cls's chain.
+func (l *rbCalls) isAncestor(r *hResolver, base, cls string) bool {
+	for _, c := range l.chain(r, l.classes[cls], cls) {
+		if c.owner == base {
+			return true
+		}
+	}
+	return false
 }
 
 // selfType is the type self has in definition d of file p, and the class
@@ -390,6 +407,16 @@ func (l *rbCalls) viewClass(p string) string {
 	return c
 }
 
+// rbPartialLocal is the local a partial's object goes by
+// (app/views/line_items/_line_item.html.erb → line_item), "" for a
+// template that isn't a partial.
+func rbPartialLocal(p string) string {
+	if b := path.Base(rbStem(p)); strings.HasPrefix(b, "_") {
+		return b[1:]
+	}
+	return ""
+}
+
 // rbAppRel is p from its app/ folder on (the app may sit in a subfolder).
 func rbAppRel(p string) string {
 	if i := strings.Index("/"+p, "/app/"); i >= 0 {
@@ -412,10 +439,22 @@ func (l *rbCalls) typeOf(r *hResolver, p string, d *hDef, expr string) (rbType, 
 	head := steps[0]
 	var t rbType
 	switch {
+	case head == "self" && d.Name == rbViewName:
+		// A view's self is the view context. In a partial, the local named
+		// after it is the object rendered: line_item in _line_item.html.erb.
+		n := rbPartialLocal(p)
+		if n == "" || len(steps) < 2 || steps[1] != n {
+			return rbType{}, false
+		}
+		cp, fs := l.constant("", rbCamelize(n))
+		if len(fs) == 0 {
+			return rbType{}, false
+		}
+		t, steps = rbType{cls: cp, kind: 'i'}, steps[1:]
 	case head == "self":
 		st, ok := l.selfType(r, p, d)
-		if !ok || d.Name == rbViewName {
-			return rbType{}, false // a view's self is the view context
+		if !ok {
+			return rbType{}, false
 		}
 		t = st
 	case strings.HasPrefix(head, "@"):
@@ -432,6 +471,21 @@ func (l *rbCalls) typeOf(r *hResolver, p string, d *hDef, expr string) (rbType, 
 			return rbType{}, false
 		}
 		t = rbType{cls: cp, kind: 's'}
+	case strings.HasPrefix(head, "factory:") || strings.HasPrefix(head, "factories:"):
+		// FactoryBot: create(:ticket) is a record of the factory's class.
+		kind, name, _ := strings.Cut(head, ":")
+		cls := l.factories[name]
+		if cls == "" {
+			cls = rbCamelize(name)
+		}
+		cp, fs := l.constant("", cls)
+		if len(fs) == 0 {
+			return rbType{}, false
+		}
+		t = rbType{cls: cp, kind: 'i'}
+		if kind == "factories" {
+			t.kind = 'c'
+		}
 	default:
 		return rbType{}, false
 	}
@@ -581,7 +635,7 @@ func (l *rbCalls) resolveTyped(r *hResolver, p string, d *hDef, c hCall) (string
 // rbChainRecv reports whether a receiver is a chain for resolveTyped
 // rather than one of the plain forms (Const, Const.new, self.new).
 func rbChainRecv(recv string) bool {
-	if strings.HasPrefix(recv, "@") {
+	if strings.HasPrefix(recv, "@") || strings.HasPrefix(recv, "factory:") || strings.HasPrefix(recv, "factories:") {
 		return true
 	}
 	i := strings.IndexByte(recv, '.')

@@ -160,6 +160,9 @@ func rbParseChain(s string, i int, locals map[string]string, bind func(name, typ
 			expr, known = t, t != ""
 		default:
 			expr = "self." + id
+			if e, end := rbFactoryExpr(s, id, j); e != "" {
+				expr, j = e, end
+			}
 		}
 		i = j
 	default:
@@ -231,6 +234,35 @@ func rbParseChain(s string, i int, locals map[string]string, bind func(name, typ
 		return "", i
 	}
 	return expr, i
+}
+
+// rbFactoryBuilds are FactoryBot's methods returning a record ('i') or a
+// list of them ('c').
+var rbFactoryBuilds = map[string]byte{"create": 'i', "build": 'i', "build_stubbed": 'i',
+	"create_list": 'c', "build_list": 'c', "build_stubbed_list": 'c', "create_pair": 'c', "build_pair": 'c'}
+
+// rbFactoryExpr reads a FactoryBot call whose name id ends at s[j]
+// (create(:ticket, …), create :ticket): the expression "factory:ticket"
+// ("factories:ticket" for a list) and where the call ends.
+func rbFactoryExpr(s, id string, j int) (string, int) {
+	kind, ok := rbFactoryBuilds[id]
+	if !ok || j >= len(s) || (s[j] != '(' && s[j] != ' ') {
+		return "", j
+	}
+	end := len(s)
+	if s[j] == '(' {
+		if cl := matchingParen(s, j); cl > j {
+			end = cl + 1
+		}
+	}
+	sm := rbSymAtRe.FindStringSubmatch(s[rbSkipSpaces(s, j+1):])
+	if sm == nil {
+		return "", j
+	}
+	if kind == 'c' {
+		return "factories:" + sm[1], end
+	}
+	return "factory:" + sm[1], end
 }
 
 // rbExprAt is the expression assigned at s[i:], when the chain is all
@@ -953,9 +985,17 @@ func (l *rbCalls) resolveRender(r *hResolver, p string, d *hDef, spec string) (s
 	if stem == "" {
 		return "", nil
 	}
-	full := rbAppRoot(p) + "app/views/" + strings.TrimPrefix(stem, "/")
+	root := rbAppRoot(p) + "app/views/"
+	full := root + strings.TrimPrefix(stem, "/")
 	if ps := l.views[full]; len(ps) > 0 {
 		return "view:" + ps[0], nil
+	}
+	if (kind == "s" || kind == "p") && !strings.Contains(arg, "/") {
+		// A relative partial falls back to app/views/application, the
+		// view path every controller inherits.
+		if ps := l.views[root+"application/_"+arg]; len(ps) > 0 {
+			return "view:" + ps[0], nil
+		}
 	}
 	want := make([]string, 0, len(rbViewExts))
 	for _, e := range rbViewExts {

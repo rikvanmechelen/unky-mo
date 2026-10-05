@@ -1027,6 +1027,9 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 					if !rbSkip[head] && !rbSendNames[head] {
 						out = append(out, hCall{Name: head, Line: lineNo})
 						recv = "self." + head
+						if f, _ := rbFactoryExpr(line, head, e); f != "" && paren {
+							recv = f // create(:ticket).m: a ticket
+						}
 					} else {
 						recv = "?"
 					}
@@ -1225,6 +1228,11 @@ func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []s
 	ctx := d.Class // where self is: "C", "C.self", or "" (top level, views)
 	scope := strings.TrimSuffix(ctx, rbSelf)
 	switch {
+	case d.Name == rbViewName && recv == "" && c.Name == rbPartialLocal(p):
+		if id, want := l.viewCall(r, p, c.Name); id != "" {
+			return id, want
+		}
+		return hExternal, nil // the object a partial renders, as its local
 	case d.Name == rbViewName && (recv == "" || recv == "self"):
 		return l.viewCall(r, p, c.Name)
 	case recv == "" || recv == "self":
@@ -1270,6 +1278,9 @@ func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []s
 		cp, files := l.constant(scope, strings.TrimSuffix(recv, ".new"))
 		if len(files) == 0 {
 			// Not a class here: a gem's, or one the change removed.
+			if c.Name == "new" && !inst {
+				return hExternal, nil // Class#new: no ID it could have had
+			}
 			w := strings.TrimPrefix(strings.TrimSuffix(recv, ".new"), "::")
 			if !inst {
 				w += rbSelf

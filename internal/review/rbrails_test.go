@@ -223,7 +223,7 @@ end
 `
 	got = rbDefsOf(l.scanFile("test/controllers/tickets_controller_test.rb", tests))
 	for k, w := range map[string]string{
-		"TicketsControllerTest.setup":                 "setup create <ivar>@ticket.self.create@ref <factory>.<ticket@ref [4-6]",
+		"TicketsControllerTest.setup":                 "setup create <ivar>@ticket.factory:ticket@ref <factory>.<ticket@ref [4-6]",
 		`TicketsControllerTest.test "shows a ticket"`: "test get <action>.<show assert_response [8-11]",
 		"TicketsControllerTest.test_old_style":        "post <action>.<create [13-15]",
 		`it 'works'`:                                  "it run [19-21]",
@@ -404,6 +404,21 @@ end
   end
 end
 `,
+		"app/models/vip_ticket.rb": "class VipTicket < Ticket\nend\n",
+		"app/controllers/vip_controller.rb": `class VipController < ApplicationController
+  def a
+    @t = Ticket.find(1)
+    @u = User.find(1)
+  end
+
+  def b
+    @t = VipTicket.find(2)
+    @t.summary
+    @u = Ticket.find(2)
+    @u.summary
+  end
+end
+`,
 		"app/views/tickets/index.html.erb": "<% @tickets.each do |t| %><%= t.summary %><% end %>\n",
 		"app/views/tickets/show.html.erb": `<h1><%= @ticket.event.headline %></h1>
 <%= render "shared/card" %>
@@ -411,9 +426,11 @@ end
 <%= render partial: "row" %>
 <% if policy(@ticket).edit? %>edit<% end %>
 <%= render(BadgeComponent.new(t: 1)) %>
+<%= render "flash" %>
 `,
 		"app/views/tickets/form.html.erb":          "<p>form</p>\n",
-		"app/views/tickets/_ticket.html.erb":       "<p>ticket</p>\n",
+		"app/views/tickets/_ticket.html.erb":       "<p><%= ticket.summary %></p>\n",
+		"app/views/application/_flash.html.erb":    "<p>flash</p>\n",
 		"app/views/tickets/_row.html.erb":          "<p>row</p>\n",
 		"app/views/shared/_card.html.erb":          "<p>card</p>\n",
 		"app/views/ticket_mailer/receipt.html.erb": "<p>receipt</p>\n",
@@ -459,9 +476,11 @@ class TicketsControllerTest < ActionController::TestCase
     @ticket = create(:ticket)
   end
 
-  test "shows" do
+    test "shows" do
     get :show, params: { id: @ticket }
     assert_response :success
+    @ticket.summary
+    create(:buyer).greet
   end
 end
 `,
@@ -573,6 +592,13 @@ func TestRbRailsResolution(t *testing.T) {
 		// Tests: a functional test's action, factories.
 		`TicketsControllerTest#test "shows" > TicketsController#show@9`,
 		"TicketsControllerTest#setup > Ticket@5",
+		// A model and its subclass assigned to one instance variable: the model.
+		"VipController#b > Ticket#summary@9",
+		`TicketsControllerTest#test "shows" > Ticket#summary@11`, // an instance variable from a factory
+		`TicketsControllerTest#test "shows" > User#greet@12`,
+		// A partial's own object; a partial found in app/views/application.
+		"view:app/views/tickets/_ticket.html.erb > Ticket#summary@1",
+		"view:app/views/tickets/show.html.erb > view:app/views/application/_flash.html.erb@7",
 		"main:test/factories/tickets.rb > Ticket@2",
 		"main:test/factories/tickets.rb > User@6",
 	} {
@@ -588,6 +614,7 @@ func TestRbRailsResolution(t *testing.T) {
 			"TicketsController#edit > view:app/views/tickets/edit",
 			"TicketsController#create > view:",
 			"upcoming_missing",
+			"VipController#b > Ticket#summary@11", // @u is a ticket or a user
 		} {
 			if strings.Contains(e+" ", bad) {
 				t.Errorf("unexpected edge %s", e)
