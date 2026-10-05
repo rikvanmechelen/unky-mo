@@ -193,7 +193,8 @@ type stimBinding struct {
 // stimulusBindings reads the Stimulus bindings in a template's or Ruby
 // file's original source (attributes and Ruby hash forms), in order.
 func stimulusBindings(src string) []stimBinding {
-	if !strings.Contains(src, "data") {
+	// Every binding names a controller, an action or a target.
+	if !strings.Contains(src, "data") || !(strings.Contains(src, "controller") || strings.Contains(src, "action") || strings.Contains(src, "target")) {
 		return nil
 	}
 	lineAt := func(off int) int { return 1 + strings.Count(src[:off], "\n") }
@@ -202,7 +203,11 @@ func stimulusBindings(src string) []stimBinding {
 		key, val string
 	}
 	var hits []hit
+	hasDash, hasUnder := strings.Contains(src, "data-"), strings.Contains(src, "data_")
 	for _, re := range []*regexp.Regexp{stimAttrRe, stimRocketRe, stimDataKwRe} {
+		if (re == stimDataKwRe && !hasUnder) || (re != stimDataKwRe && !hasDash) {
+			continue // each pattern needs its prefix
+		}
 		for _, m := range re.FindAllStringSubmatchIndex(src, -1) {
 			val := ""
 			if m[4] >= 0 {

@@ -877,41 +877,56 @@ func rbCallbackRefs(code []string, i int, macro string) []hCall {
 // parameters, rescue => e, for x in), with the expression (rbParseChain)
 // of those assigned a receiver chain, and of iterators' block parameters.
 func rbAddLocals(line string, locals map[string]string) {
-	typed := map[string]string{}
-	for _, m := range rbAssignRe.FindAllStringSubmatchIndex(line, -1) {
-		name := line[m[2]:m[3]]
-		if rbKeywords[name] {
-			continue
+	// Each pattern only runs on lines with the character or word it needs:
+	// these regexps are most of a cold scan's time.
+	if strings.IndexByte(line, '=') >= 0 {
+		typed := map[string]string{}
+		var plain []string
+		for _, m := range rbAssignRe.FindAllStringSubmatchIndex(line, -1) {
+			name := line[m[2]:m[3]]
+			if rbKeywords[name] {
+				continue
+			}
+			eq := strings.IndexByte(line[m[3]:], '=') + m[3]
+			if op := strings.TrimSpace(line[m[3]:eq]); op == "" || op == "||" {
+				typed[name] = rbExprAt(line, eq+1, locals) // x = …, x ||= …
+			} else {
+				plain = append(plain, name)
+			}
 		}
-		eq := strings.IndexByte(line[m[3]:], '=') + m[3]
-		if op := strings.TrimSpace(line[m[3]:eq]); op == "" || op == "||" {
-			typed[name] = rbExprAt(line, eq+1, locals) // x = …, x ||= …
+		for name, t := range typed {
+			locals[name] = t
+		}
+		for _, name := range plain {
+			if _, ok := typed[name]; !ok {
+				locals[name] = ""
+			}
+		}
+		if strings.IndexByte(line, ',') >= 0 {
+			if m := rbMultiRe.FindStringSubmatch(line); m != nil {
+				for _, n := range strings.Split(m[1], ",") {
+					locals[strings.TrimLeft(strings.TrimSpace(n), "*")] = ""
+				}
+			}
 		}
 	}
-	for name, t := range typed {
-		locals[name] = t
+	if strings.IndexByte(line, '|') >= 0 {
+		for _, m := range rbBlockPRe.FindAllStringSubmatch(line, -1) {
+			for _, pm := range rbParamRe.FindAllStringSubmatch(m[1], -1) {
+				locals[pm[1]] = ""
+			}
+		}
 	}
-	for _, m := range rbAssignRe.FindAllStringSubmatch(line, -1) {
-		if _, ok := typed[m[1]]; !ok && !rbKeywords[m[1]] {
+	if strings.Contains(line, "rescue") {
+		if m := rbRescueRe.FindStringSubmatch(line); m != nil {
 			locals[m[1]] = ""
 		}
 	}
-	if m := rbMultiRe.FindStringSubmatch(line); m != nil {
-		for _, n := range strings.Split(m[1], ",") {
-			locals[strings.TrimLeft(strings.TrimSpace(n), "*")] = ""
-		}
-	}
-	for _, m := range rbBlockPRe.FindAllStringSubmatch(line, -1) {
-		for _, pm := range rbParamRe.FindAllStringSubmatch(m[1], -1) {
-			locals[pm[1]] = ""
-		}
-	}
-	if m := rbRescueRe.FindStringSubmatch(line); m != nil {
-		locals[m[1]] = ""
-	}
-	if m := rbForRe.FindStringSubmatch(line); m != nil {
-		for _, n := range strings.Split(m[1], ",") {
-			locals[strings.TrimSpace(n)] = ""
+	if strings.Contains(line, "for") {
+		if m := rbForRe.FindStringSubmatch(line); m != nil {
+			for _, n := range strings.Split(m[1], ",") {
+				locals[strings.TrimSpace(n)] = ""
+			}
 		}
 	}
 	rbBindBlocks(line, locals)
@@ -943,8 +958,11 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 		}
 		return "?"
 	}
-	for _, m := range rbSendRe.FindAllStringSubmatch(line, -1) {
-		out = append(out, hCall{Recv: recvOf(m[1]), Name: m[3], Line: lineNo, Ref: m[2] == "method"})
+	// The pattern needs one of these words: skip the regexp without them.
+	if strings.Contains(line, "send") || strings.Contains(line, "try") || strings.Contains(line, "method") {
+		for _, m := range rbSendRe.FindAllStringSubmatch(line, -1) {
+			out = append(out, hCall{Recv: recvOf(m[1]), Name: m[3], Line: lineNo, Ref: m[2] == "method"})
+		}
 	}
 	// recvAt maps the ")", "]" or "}" closing a call's arguments, an index
 	// or a block to the chain it ends: the receiver of what hangs off it.
