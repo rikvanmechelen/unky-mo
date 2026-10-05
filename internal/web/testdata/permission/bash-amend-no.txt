@@ -1,0 +1,45 @@
+ ▐▛███▛█   Claude Code v2.1.289
+▝▜██████▀  Sonnet 5.5 · Claude Enterprise
+ ▝▝   ▝▝   /tmp/claude-1000/-home-rvanmech-workspace-unky-mo/90630adf-e4af-4a70-8be8-fc2ad2c835a0/scratchpad/probe2
+
+
+❯ Run exactly this bash command and nothing else: echo probe > out.txt
+
+● Bash(echo probe > out.txt)
+  ⎿  (No output)
+
+❯ then say done
+
+● Done.
+
+✻ Baked for 3s · done 6:09 PM
+
+❯ Run exactly this bash command and nothing else: echo two >> out.txt
+
+● Bash(echo two >> out.txt)
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Brewed for 1s · done 6:10 PM
+
+❯ Run exactly this bash command and nothing else: echo three >> out.txt
+
+● Bash(echo three >> out.txt)
+  ⎿  Waiting…
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Append "three" to out.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ echo three >> out.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+   1. Yes
+   2. Yes, and always allow access to
+      /tmp/claude-1000/-home-rvanmech-workspace-unky-mo/90630adf-e4af-4a70-8be8-fc2ad2c835a0/scratchpad/probe2 from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+ ❯ 4. No, use printf instead
+
+ Esc to cancel
+
+

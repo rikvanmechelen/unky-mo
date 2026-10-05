@@ -82,3 +82,64 @@ Per the usual rule, each step gets a "Step N in detail" section here before it's
 
 - The transcript's tool card for the pending call could show "waiting for permission" with the same buttons, instead of only the banner.
 - Answering from the dashboard's session list (a compact Allow / Deny for Bash) once the banner has proven itself.
+
+## Step 1 in detail: probing the dialogs
+
+- A temp git repo in the session scratchpad with one file, a throwaway `claude --setting-sources project --strict-mcp-config` in it on its own tmux server (`tmux -L moprobe`, 140×45), so no unky-mo hook fires and the TUI never sees it. Default permission mode.
+- For each dialog: prompt Claude to trigger it, capture the pane (`capture-pane -p`, and `-e` once to see how the cursor row is styled), check the transcript's tail for the unanswered `tool_use`, then answer with a different key each time to learn the keys. The prompts:
+  - Bash: `run: echo probe > out.txt` (a write, so not auto-allowed). Answer with `1`.
+  - Bash again, answered with `3` ("No, and tell Claude…") to see whether it opens a text field or rejects straight away.
+  - Edit on `notes.txt`. Answer with `2` ("don't ask again" for edits), and check what that changes.
+  - Write of a new file (if `2` above switched to accept-edits, probe this first).
+  - WebFetch of a URL. Answer with Esc.
+  - A read outside the cwd (`/etc/hostname`).
+  - Plan approval: shift+tab into plan mode, ask for a tiny plan. Answer with `3` plus text, and look for the "shift+tab to approve with this feedback" behavior.
+- Save each capture as `internal/web/testdata/permission/<name>.txt` (plus a `.ansi` for one). Write the findings below as "Step 1 findings": layout rules, the key per row type, the text rows, Esc, and whether the transcript had the call.
+- Kill the tmux server and delete the temp repo when done. Commit the fixtures and findings.
+
+## Step 1 findings (Claude Code 2.1.289, probed 2026-10-05)
+
+Captures are in `internal/web/testdata/permission/`: `bash`, `bash-amend-yes`, `bash-amend-no`, `edit`, `write`, `webfetch`, `read-outside`, `plan`, `plan-feedback` (`.txt`, plus `bash.ansi` with colours), and `trust-folder` (the startup trust dialog, which must **not** parse as a permission prompt: its rows have no numbers).
+
+### Layout
+
+Every permission dialog is one block at the bottom of the screen:
+
+```
+────────────────────────  full-width rule (U+2500) opens the dialog
+ <Title>                   "Bash command", "Edit file", "Create file", "Fetch", "Read file", "Ready to code?"
+ <subtitle lines>          optional: a tip, the file path, "Claude wants to fetch content from example.com", "Here is Claude's plan:"
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  dashed rule (U+254C) around the preview: command, numbered diff, url + prompt, Read(path), the plan
+ <preview>
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ <question>?               "Do you want to proceed?", "Do you want to make this edit to notes.txt?", …
+ ❯ 1. <label>              rows; a long label wraps onto indented lines with no number
+   2. <label>
+      <hint>               plan's row 3 has "shift+tab to approve with this feedback" under it
+ <footer>                  "Esc to cancel · Tab to amend", "Esc to cancel", "ctrl+g to edit in VS Code · <plan file>", or none (WebFetch)
+```
+
+The plan dialog has a second full-width rule between the plan and the question; the question block is what follows the **last** rule. Blank lines separate the parts (`capture-pane` keeps them).
+
+### Keys
+
+- **A digit picks its row at once**, for any row that isn't a text row. "No" (and the WebFetch "No, and tell Claude what to do differently (esc)") rejects the call and **ends the turn**: the transcript gets "Interrupted · What should Claude do instead?" and the session goes back to the prompt, so the web composer works again for the "tell Claude" part.
+- **Esc** = No.
+- **Tab to amend** (Bash, Edit, Write, Read; shown in the footer): on the "Yes" row, Tab turns it into "Yes, and tell Claude what to do next". Text typed then shows in place ("1. Yes, then say done"), and Enter accepts and sends the text as the next prompt. On the "No" row it's "No, and tell Claude what to do differently". Enter rejects, and Claude carries on with the text in the same turn (it retried with printf). Getting there takes moving the cursor (↓ per row from row 1), Tab, the text, then Enter.
+- **Plan approval:** rows 1 and 2 are picked by their digit. Row 3 ("Tell Claude what to change") is a text row: its digit only moves the cursor there (like AskUserQuestion's "Type something"). Typed text replaces the label, and Enter sends it as feedback (Claude revises the plan and asks again). **shift+tab** with text approves the plan *with* the text as the next prompt, in row 1's mode (auto mode).
+- Picking "Yes, and switch to accept edits/auto mode" changes the session's mode, as in the terminal. The web's mode chip follows on its next poll.
+
+### Transcript
+
+- Bash, Edit, Write, Read and WebFetch: the assistant line with the `tool_use` is on disk while the dialog is open (last non-metadata line), as with AskUserQuestion. Recovery after a restart works for these.
+- **ExitPlanMode is not.** Its `tool_use` (`{plan, planFilePath}`) is written only once the dialog is answered. While it's open, the transcript's last call is the `ToolSearch` that loaded it. After a restart, the plan's content comes from the plan file named in the dialog's footer (`~/.claude/plans/<name>.md`). The hook's `tool_input` carries the same `{plan, planFilePath}` while TUI and hooks are up.
+
+### Changes to the plan
+
+- `ReadPendingTool` is not enough for plan approval. When the screen's footer names a plan file, `/permission` reads it, but only a `*.md` directly in `~/.claude/plans/`, opened with `O_NOFOLLOW` and capped like editor files, and returns it as `{tool: "ExitPlanMode", input: {plan}}`.
+- The POST takes `{sig, row, text?, approveWithText?}`:
+  - A plain row without text: its digit.
+  - Text on a Yes/No row of a dialog with "Tab to amend": ↓ to the row (checking the cursor on screen after each step), Tab, check the label changed to "… tell Claude …", type the text, check it's shown, Enter.
+  - Text on the plan's text row: its digit (moves there), type, check, then Enter (feedback) or BTab (`approveWithText`, approve in auto mode).
+  - A row's text is allowed only where the dialog offers it, which `rows[].text` tells the browser: the footer has "Tab to amend" (rows whose label starts with "Yes" or "No"), or the row has the shift+tab hint.
+- No separate Esc action: it does what the No row does.
