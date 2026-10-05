@@ -95,6 +95,10 @@ func WriteCallsText(w io.Writer, cg *CallGraph) {
 			what = "signature changed; callers not updated"
 		case FindingUntested:
 			what = "no test reaches it within 2 calls"
+		case FindingRouteWithoutAction:
+			what = "routes to an action its controller doesn't define"
+		case FindingStimulusUnbound:
+			what = "binds a Stimulus method or target that doesn't exist"
 		}
 		fmt.Fprintf(w, "%s: %s", name(x.Func), what)
 		var sites []string

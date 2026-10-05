@@ -422,20 +422,24 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     callsView.reset();
   }
 
-  // removedCalled counts removed functions something still calls, from the
-  // last /calls answer (only known once the Functions view was opened).
-  function removedCalled() {
-    return calls?.repo ? (calls.findings || []).filter((f) => f.kind === "removed-called").length : 0;
+  // redFindings counts the call findings that are bugs waiting to happen
+  // (a removed function still called, a view binding a Stimulus method that
+  // doesn't exist, a route to a missing action), from the last /calls
+  // answer (only known once the Functions view was opened).
+  const RED_FINDINGS = ["removed-called", "stimulus-unbound", "route-without-action"];
+  function redFindings() {
+    return calls?.repo ? (calls.findings || []).filter((f) => RED_FINDINGS.includes(f.kind)).length : 0;
   }
+  const redText = (n) => n === 1 ? "1 removed or missing function is still called" : `${n} removed or missing functions are still called`;
 
   function renderBadge() {
-    const v = arch?.violations || 0, r = removedCalled();
+    const v = arch?.violations || 0, r = redFindings();
     const n = v + r;
     badge.hidden = !n;
     badge.textContent = String(n);
     const parts = [];
     if (v) parts.push(v === 1 ? "1 import breaks a layer rule" : `${v} imports break a layer rule`);
-    if (r) parts.push(r === 1 ? "1 removed function is still called" : `${r} removed functions are still called`);
+    if (r) parts.push(redText(r));
     badge.title = parts.join("; ");
   }
 
@@ -461,8 +465,8 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     const parts = [];
     const v = arch?.repo ? arch.violations : 0;
     if (v) parts.push(el("span", { class: "overview-strip__bad", text: v === 1 ? "1 new import breaks a layer rule" : `${v} new imports break a layer rule` }));
-    const rc = removedCalled();
-    if (rc) parts.push(el("span", { class: "overview-strip__bad", text: rc === 1 ? "1 removed function is still called" : `${rc} removed functions are still called` }));
+    const rc = redFindings();
+    if (rc) parts.push(el("span", { class: "overview-strip__bad", text: redText(rc) }));
     const areas = data?.repo ? summarizeOverview(data).areas.filter((a) => !a.noise).length : 0;
     if (areas >= STRIP_AREAS) parts.push(el("span", { text: `${areas} areas touched` }));
     const drift = scope && scope.mode === data?.mode ? driftFiles().length : 0;

@@ -35,6 +35,12 @@ const (
 	FindingRemovedCalled    = "removed-called"    // a removed function something still calls
 	FindingSignatureCallers = "signature-callers" // a changed signature with callers the change doesn't touch
 	FindingUntested         = "untested"          // a changed function no test reaches within untestedHops calls
+	// A route (added, retargeted, or whose controller changed) to an action
+	// its controller doesn't define, with no template to render instead.
+	FindingRouteWithoutAction = "route-without-action"
+	// A view's data-action or data-*-target naming a method or target its
+	// Stimulus controller doesn't have.
+	FindingStimulusUnbound = "stimulus-unbound"
 )
 
 const (
@@ -123,6 +129,10 @@ type unresolvedSite struct {
 	// quiet sites are kept for matching want, not counted as unresolved
 	// (a method call on an unknown receiver that may well be external).
 	quiet bool
+	// flag is a finding kind this site is on its own (see hFlagger), raised
+	// when its function changed or one of the about files did.
+	flag  string
+	about []string
 }
 
 // countUnresolved counts the sites that aren't quiet.
@@ -247,6 +257,8 @@ func Calls(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Ca
 
 	idx := newIndex(r)
 	base := newIndexAt(r, r.rev)
+	var runs []langRun
+	var idle []callLang // detected, but the change has none of their files
 	for _, l := range languages() {
 		if !l.detect(idx) {
 			continue
@@ -271,6 +283,7 @@ func Calls(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Ca
 			}
 		}
 		if len(oldPaths)+len(newPaths) == 0 {
+			idle = append(idle, cl)
 			continue
 		}
 		before, after, err := callSides(cl, base, idx, oldPaths, newPaths)
@@ -287,7 +300,9 @@ func Calls(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Ca
 			}
 		}
 		cg.Languages = append(cg.Languages, LangInfo{Name: cl.name(), Exact: cl.exact(), Units: changed})
+		runs = append(runs, langRun{cl: cl, before: before, after: after})
 	}
+	crossPass(cg, base, idx, files, runs, idle)
 	capCallGraph(cg)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("call graph didn't finish in time: %w", err)
@@ -557,7 +572,8 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	// the new version that would have gone to it.
 	if len(gone) > 0 {
 		want := map[string][]EdgeFile{}
-		for _, f := range after.funcs {
+		for _, id := range sortedKeys(after.funcs) { // sites in a stable order
+			f := after.funcs[id]
 			for _, u := range f.unresolved {
 				for _, w := range u.want {
 					want[w] = appendSite(want[w], EdgeFile{Path: f.Path, Line: u.line})
@@ -570,6 +586,12 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			// they don't know: "~name" stands for any removed method
 			// called that (and is only emitted when none is left).
 			for _, s := range want["~"+bareName(id)] {
+				sites = appendSite(sites, s)
+			}
+			// "~" + the ID is a quiet want for exactly that function: a
+			// call that's most likely external unless the repo had it (a
+			// route helper the routes no longer define).
+			for _, s := range want["~"+id] {
 				sites = appendSite(sites, s)
 			}
 			if len(sites) > 0 {
@@ -811,8 +833,12 @@ func findingRank(kind string) int {
 	switch kind {
 	case FindingRemovedCalled:
 		return 0
-	case FindingSignatureCallers:
+	case FindingStimulusUnbound:
 		return 1
+	case FindingRouteWithoutAction:
+		return 2
+	case FindingSignatureCallers:
+		return 3
 	}
-	return 2
+	return 4
 }

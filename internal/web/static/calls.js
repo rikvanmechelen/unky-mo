@@ -11,6 +11,8 @@ const CALL_STATUS_TEXT = {
 const CALLS_COLLAPSE_AT = 60; // more changed functions than this start grouped by unit
 const CALL_FINDING_TEXT = {
   "removed-called": "removed but still called",
+  "stimulus-unbound": "binds a Stimulus method or target that doesn't exist",
+  "route-without-action": "routes to an action its controller doesn't define",
   "signature-callers": "signature changed; callers not updated",
   untested: "no test reaches it",
 };

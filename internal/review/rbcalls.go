@@ -23,6 +23,7 @@ type rbCalls struct {
 	// Per resolver: constant path → the files defining it, Zeitwerk's first.
 	r       *hResolver
 	classes map[string][]string
+	ext     *rbRails // routes and Stimulus (rbrails.go), per version
 }
 
 const (
@@ -66,6 +67,8 @@ func (l *rbCalls) id(p string, d *hDef) string {
 		return "view:" + p
 	case rbMainName:
 		return "main:" + p
+	case rbRouteDef, rbHelperDef:
+		return "route:" + d.Owner
 	}
 	if d.IsClass {
 		// A class reopened outside its autoloaded file (a monkey patch in an
@@ -103,6 +106,10 @@ func (l *rbCalls) display(p string, d *hDef) string {
 		return path.Base(p)
 	case d.Name == rbMainName:
 		return path.Base(p)
+	case d.Name == rbRouteDef:
+		return d.Owner
+	case d.Name == rbHelperDef:
+		return d.Owner + "_path"
 	case d.IsClass:
 		return last(d.Name)
 	case strings.HasSuffix(d.Owner, rbSelf):
@@ -227,10 +234,14 @@ func (l *rbCalls) scanFile(p, src string) hFile {
 	}
 	lines := strings.Split(code, "\n")
 	raw := strings.Split(src, "\n")
+	var f hFile
 	if view {
-		return rbScanView(raw, lines)
+		f = rbScanView(raw, lines)
+	} else {
+		f = rbScan(raw, lines)
 	}
-	return rbScan(raw, lines)
+	rbStimulus(&f, src, view) // data-controller/-action/-target bindings
+	return f
 }
 
 // rbERBMarkers blanks the "=" and "-" of <%= and <%- that erbCode keeps
@@ -1022,6 +1033,9 @@ func (l *rbCalls) filesOf(r *hResolver, p, owner string) []string {
 
 func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []string) {
 	l.prepare(r)
+	if to, want, ok := l.railsCall(r, d, c); ok { // routes, URL helpers, Stimulus
+		return to, want
+	}
 	recv := c.Recv
 	if recv == rbHelperRecv {
 		recv = rbSelfNew
