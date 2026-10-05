@@ -408,7 +408,11 @@ function createInspector(host, overview) {
       rel("Functions in this file", f.fns.map((x) => ({ id: x }))),
       M.traced ? (prompts.length ? why("Edited by", prompts) : why("Edited by", [{ n: 0, text: "Not edited in this conversation", notes: [], sub: "Bash, another session, or earlier work" }])) : null,
       rel("Contracts", cons.map((x) => ({ id: x.id, sub: x.catLabel }))),
-      actionsBar([...openActs(f.id, ovWhere(M, f.id)), overview.mention ? { label: "Mention in prompt", act: () => overview.mention(`\`${f.path}\``) } : null]),
+      actionsBar([
+        ...openActs(f.id, ovWhere(M, f.id)),
+        { label: f.reviewed ? "Unmark reviewed" : "Mark reviewed", title: "x", act: () => overview.toggleReviewed(f.path) },
+        overview.mention ? { label: "Mention in prompt", act: () => overview.mention(`\`${f.path}\``) } : null,
+      ]),
     ];
   }
 

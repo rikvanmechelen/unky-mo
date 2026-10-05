@@ -592,6 +592,7 @@ function main() {
     onVisible: (v) => {
       shell.classList.toggle("is-overview", v);
       inspectorEl.hidden = !v;
+      filesPane.setOverview(v ? reviewQueue : null);
     },
     onMention: insertMention,
     // The × after "Selected (N)": through the Git log, which owns the selection.
@@ -618,6 +619,7 @@ function main() {
   });
   const rails = createRails(shell);
   createInspector(inspectorEl, overview);
+  const reviewQueue = createReviewQueue(overview);
   const filesPane = createFilesPane(filesEl, {
     onCount: rails.setCount,
     onOpen: (path) => editor.open(path, "file"),

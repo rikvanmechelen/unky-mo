@@ -69,8 +69,10 @@
     <div class="files-pane__head">
       <span class="files-pane__title">Files</span>
       <span class="files-tabs">
+        <button class="files-tab" data-mode="review" type="button" hidden>Review <span id="review-count"></span></button>
         <button class="files-tab is-active" data-mode="changed" type="button">Changed <span id="files-count"></span></button>
         <button class="files-tab" data-mode="all" type="button">All files</button>
+        <button class="files-tab" data-mode="branch" type="button" hidden>Branch files</button>
         <button class="files-tab" data-mode="graph" type="button">Git log</button>
       </span>
     </div>
@@ -95,6 +97,7 @@
 <script src="/calls.js"></script>
 <script src="/overview.js"></script>
 <script src="/inspector.js"></script>
+<script src="/reviewqueue.js"></script>
 <script src="/attachments.js"></script>
 <script src="/commands.js"></script>
 <script src="/rails.js"></script>

@@ -5,7 +5,9 @@
 // totals and the upstream sync state.
 // Data comes from /api/sessions/{windowID}/files and /tree (gitfiles).
 // A changed file calls onOpenDiff(path) and a file in the tree onOpen(path);
-// the chat view opens an editor tab for either. Uses el() from common.js.
+// the chat view opens an editor tab for either. While the Overview tab
+// shows, setOverview adds its Review and Branch files tabs
+// (reviewqueue.js) and hides All files. Uses el() from common.js.
 // The graph's callbacks (onOpenCommitFile, onMention, onSelectionChange,
 // onShowSelection) are passed through.
 
@@ -59,6 +61,9 @@ function buildTree(paths) {
 function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention, onCount, onSelectionChange, onShowSelection } = {}) {
   const tabs = pane.querySelectorAll(".files-tab");
   const countEl = pane.querySelector("#files-count");
+  const reviewCountEl = pane.querySelector("#review-count");
+  let queue = null; // the Overview's review queue, while the Overview shows
+  let modeBefore = null; // the tab to go back to when the Overview closes
   const list = pane.querySelector("#files-list");
   const foot = pane.querySelector("#files-foot");
 
@@ -112,11 +117,20 @@ function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention
     renderedKey = JSON.stringify([note, changes, treeVersion]);
     tabs.forEach((t) => t.classList.toggle("is-active", t.dataset.mode === mode));
     countEl.textContent = changes?.repo ? String(changes.files?.length || 0) : "";
+    if (reviewCountEl) reviewCountEl.textContent = queue ? queue.count() : "";
     if (onCount) onCount(changes?.repo ? changes.files?.length || 0 : null);
 
     if (note) {
       list.replaceChildren(el("div", { class: "files-pane__note", text: note }));
       foot.replaceChildren();
+      return;
+    }
+    if (queue && (mode === "review" || mode === "branch")) {
+      if (mode === "review") queue.review(list); else queue.branchFiles(list);
+      foot.replaceChildren(
+        el("span", { class: "files-pane__keys", text: "j / k step · x reviewed · o diff · f file · Alt+← → back, forward · Esc" }),
+        ...(changes ? [el("span", { text: syncText(changes.sync) })] : []),
+      );
       return;
     }
     if (!changes) {
@@ -252,7 +266,36 @@ function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention
   document.addEventListener("visibilitychange", () => refresh(false));
   setInterval(() => refresh(false), FILES_POLL_MS);
 
+  // queueRender re-renders the list while a tab of the queue shows.
+  function queueRender() {
+    if (mode === "review" || mode === "branch") render();
+    else if (reviewCountEl && queue) reviewCountEl.textContent = queue.count();
+  }
+
   return {
+    // setOverview shows the Overview's tabs (q, a review queue) while the
+    // Overview is open, or (null) takes them away and goes back to the tab
+    // that was showing before.
+    setOverview(q) {
+      if (q === queue) return;
+      queue?.attach(null);
+      queue = q;
+      const on = !!q;
+      for (const t of tabs) {
+        if (t.dataset.mode === "review" || t.dataset.mode === "branch") t.hidden = !on;
+        if (t.dataset.mode === "all") t.hidden = on;
+      }
+      if (on) {
+        q.attach(queueRender);
+        if (mode !== "review" && mode !== "branch") modeBefore = mode;
+        mode = "review";
+        render();
+      } else {
+        if (mode === "review" || mode === "branch") mode = modeBefore || "changed";
+        render();
+        refresh(true);
+      }
+    },
     // clearSelection empties the Git log tab's commit selection.
     clearSelection: () => graph.clearSelection(),
     // showGraph switches the panel to the Git log tab.

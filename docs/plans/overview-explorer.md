@@ -529,6 +529,45 @@ it over. A step gets its detailed plan in this doc before coding
   file's `+added −removed status` (or a blob id if `/overview` gets one), so
   a file that changes after you ticked it un-ticks itself. Keys
   j/k/x/o/f/Esc and Alt+← / Alt+→. The progress bar goes in the header.
+
+  **F6 detail.**
+  - **Files panel tabs:** `chat.html` gains a Review tab (first) and a
+    Branch files tab, both hidden outside Overview mode; All files hides in
+    it. `files.js` gets `setOverview(queue | null)`. With a queue it
+    remembers the current tab, switches to Review and shows Review /
+    Changed / Branch files / Git log. With null it puts the remembered tab
+    back and hides the two.
+  - **`static/reviewqueue.js`, `createReviewQueue(overview)`:**
+    - **Review:** `ovReviewQueue(M, {area, hidden})` groups (Needs eyes,
+      Contracts, Logic to read, then folded Tests / Docs / Generated and
+      noise; a folded group opens while it holds the selection). Rows by
+      type:
+      - files: a tick box in Logic to read, otherwise the status letter;
+        the name, the dir, +/−, and a drift tag;
+      - findings: a severity square and the title;
+      - imports: a red square and from → to;
+      - contracts: the op and the name.
+    - **Branch files:** every file of the change, by path.
+    - Click selects, double-click opens the diff. The selected row is
+      inverted; with something selected or hovered, related rows get a bar
+      and the rest dim.
+    - Filter chips above the list (Area: x ×, N kinds hidden ×).
+    - The tab's count is the Needs eyes count. A Review list that's empty
+      while the change has files says why.
+    - It re-renders on select, hover (coalesced per frame) and model.
+  - **`overview` gains** `area()` / `setArea(a)` (the Footprint filter,
+    now shared), `clearHidden()`, and `toggleReviewed(path)`. Ticks are
+    stored as `mo.overview.reviewed.<key> = {path: reviewSig}`; a file
+    whose +/− or status changes loses its tick.
+  - **Progress:** "Reviewed X of Y" and a bar in the header's mode row
+    (`ovProgress`). The file inspector gets Mark / Unmark reviewed.
+  - **Keys** (Overview visible, not in a field, no dialog): j/k and ↓/↑
+    step through the shown Review rows (from the first when nothing is
+    selected), x ticks the selected file, o opens its diff, f its file.
+    The Files footer lists them while in Overview mode.
+  - **Rename:** the tab strip's comments button becomes "Comments (N)" and
+    its dialog "Comments for Claude".
+
 - **F7. Map** (`static/overview-map.js`) replaces the Map section's body:
   layer rows of package boxes with function rows, `edgePath` curves, the
   four toggles (remembered like `allImports`), the legend, per-box fold,
@@ -636,4 +675,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F5 built 2026-10-05; next: F6.
+backend) F1–F6 built 2026-10-05; next: F7.

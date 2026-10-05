@@ -212,7 +212,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   let gen = 0; // bumped on window switch; stale responses are dropped
 
   const stripTabs = el("div", { class: "editor-tabs__list", role: "tablist" });
-  const reviewBtn = el("button", { class: "editor-tabs__review", type: "button", title: "Your comments for Claude", hidden: "" });
+  const reviewBtn = el("button", { class: "editor-tabs__review", type: "button", title: "Your line comments for Claude", hidden: "" });
   const openBtn = el("button", { class: "editor-tabs__open", type: "button", title: "Open a file (Ctrl+P)", text: "Open file…" });
   strip.replaceChildren(stripTabs, reviewBtn, openBtn);
 
@@ -227,7 +227,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   function renderReviewBtn() {
     const n = review.count();
     reviewBtn.hidden = !n;
-    reviewBtn.textContent = `Review (${n})`;
+    reviewBtn.textContent = `Comments (${n})`;
   }
 
   const fileURL = () => `${api}/file`;
@@ -877,8 +877,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview }) {
   const rvCopy = el("button", { class: "btn", type: "button", text: "Copy" });
   const rvDiscard = el("button", { class: "btn btn--danger", type: "button", text: "Discard all" });
   const rvClose = el("button", { class: "btn", type: "button", text: "Close" });
-  const rvDialog = el("dialog", { class: "dialog review-dialog", "aria-label": "Review" }, [
-    el("div", { class: "dialog__title", text: "Review for Claude" }),
+  const rvDialog = el("dialog", { class: "dialog review-dialog", "aria-label": "Comments" }, [
+    el("div", { class: "dialog__title", text: "Comments for Claude" }),
     el("div", { class: "dialog__text", text: "These comments are sent as one message. Claude sees each file and line, the line's text, and your comment." }),
     rvList, rvError,
     el("div", { class: "dialog__actions" }, [rvDiscard, el("span", { class: "review-dialog__spacer" }), rvClose, rvCopy, rvSend]),

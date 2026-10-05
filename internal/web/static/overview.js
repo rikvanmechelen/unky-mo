@@ -472,6 +472,35 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     return el("div", { class: "ov-caveats" }, [toggle, ...list]);
   }
 
+  // progressBar is "Reviewed X of Y" over the logic files, once there are any.
+  function progressBar() {
+    const M = getModel();
+    if (!M) return [];
+    const { done, total } = ovProgress(M);
+    if (!total) return [];
+    const fill = el("span", { class: "ov-progress__fill" });
+    fill.style.width = `${Math.round((done / total) * 100)}%`;
+    return [el("span", { class: "ov-progress", title: "Logic files ticked as reviewed (x in the Review list)" }, [
+      el("span", {}, [document.createTextNode("Reviewed "), el("b", { text: String(done) }), document.createTextNode(` of ${total}`)]),
+      el("span", { class: "ov-progress__bar" }, [fill]),
+    ])];
+  }
+
+  // toggleReviewed ticks a file as reviewed in its current version, or
+  // unticks it.
+  function toggleReviewed(path) {
+    const f = data?.files?.find((x) => x.path === path);
+    if (!f || !windowID) return;
+    const sig = reviewSig(f);
+    if (reviewed[path] === sig) delete reviewed[path];
+    else reviewed[path] = sig;
+    // Ticks for files no longer in the change are dropped as they go.
+    for (const p of Object.keys(reviewed)) if (!data.files.some((x) => x.path === p)) delete reviewed[p];
+    storageSet(REVIEWED_KEY + windowID, reviewed);
+    reviewedVersion++;
+    render();
+  }
+
   // headNotes are the yellow bars under the mode row: what makes this
   // comparison less than it looks.
   function headNotes() {
@@ -790,7 +819,7 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     return el("div", { class: "overview-head" }, [
       seg,
       el("span", { class: "overview-head__what" }, what),
-      el("span", { class: "ov-progress-slot" }),
+      ...progressBar(),
     ]);
   }
 
@@ -1318,6 +1347,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, describeUser
     mode: () => data?.mode || mode,
     toggleKind,
     hiddenKinds: () => hidden,
+    clearHidden() { hidden.clear(); storageSet(OVERVIEW_HIDDEN_KEY, []); render(); },
+    // area is the Footprint's area filter, which the Review list follows.
+    area: () => areaFilter,
+    setArea(a) { areaFilter = a || null; render(); },
+    toggleReviewed,
+    visible: () => visible,
     // available reports whether the tab has a change to show.
     hasData: () => !!data?.repo,
     setSelection,
