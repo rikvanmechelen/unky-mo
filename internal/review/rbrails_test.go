@@ -427,6 +427,7 @@ end
 <% if policy(@ticket).edit? %>edit<% end %>
 <%= render(BadgeComponent.new(t: 1)) %>
 <%= render "flash" %>
+<%= render BadgeComponent.with_collection(@tickets) %>
 `,
 		"app/views/tickets/form.html.erb":          "<p>form</p>\n",
 		"app/views/tickets/_ticket.html.erb":       "<p><%= ticket.summary %></p>\n",
@@ -599,6 +600,7 @@ func TestRbRailsResolution(t *testing.T) {
 		// A partial's own object; a partial found in app/views/application.
 		"view:app/views/tickets/_ticket.html.erb > Ticket#summary@1",
 		"view:app/views/tickets/show.html.erb > view:app/views/application/_flash.html.erb@7",
+		"view:app/views/tickets/show.html.erb > BadgeComponent#initialize@8", // with_collection
 		"main:test/factories/tickets.rb > Ticket@2",
 		"main:test/factories/tickets.rb > User@6",
 	} {

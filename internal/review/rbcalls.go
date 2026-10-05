@@ -15,9 +15,12 @@ import (
 // and constants (Zeitwerk's file first, then any class defined with that
 // exact path). Rails callbacks are refs from the class to the method, and
 // ERB/HAML views are pseudo-functions whose bare calls go to app/helpers
-// and their controller's helper_methods. A call on a receiver of unknown
-// class is never guessed: Ruby apps have too many methods called call,
-// perform or show.
+// and their controller's helper_methods. Receivers are typed through
+// ActiveRecord (finders, associations, columns, instance variables;
+// rbtypes.go), and Rails' implicit calls (templates, partials, Pundit,
+// jobs, mailers, components) are pseudo-calls the scanner emits
+// (rbrails.go). A call on a receiver of unknown class is never guessed:
+// Ruby apps have too many methods called call, perform or show.
 type rbCalls struct {
 	rl *rubyLang
 	// Per resolver: constant path → the files defining it, Zeitwerk's first.
@@ -909,9 +912,12 @@ func rbIsConst(s string) bool {
 }
 
 // rbLineCalls finds the calls in a line of scanned code: chains like
-// Const.m, Const::Path.m, self.m, x.m (x unknown unless a local assigned
-// Const.new), bare m and m(…) unless m is a local, super, and the method
-// symbols of send/public_send/method (a ref).
+// Const.m, Const::Path.m, self.m, @x.m, x.m, bare m and m(…) unless m is a
+// local, super, and the method symbols of send/public_send/method (a ref).
+// Each call's receiver is the chain before it as written (with arguments
+// and blocks dropped, locals replaced by what they were assigned, a bare
+// call as self.m: "@ticket.event", "Ticket.where.first"), for the resolver
+// to type (rbtypes.go); "?" when it's an expression nothing can type.
 func rbLineCalls(line string, lineNo int, locals map[string]string, superName string) []hCall {
 	var out []hCall
 	recvOf := func(w string) string {
