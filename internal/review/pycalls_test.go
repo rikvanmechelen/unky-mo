@@ -163,7 +163,7 @@ from app.models import format_name as fmt
 import app.util as util
 
 
-def register(name, email=None):
+def register(name, email):
     u = User(name)
     u.save()
     util.helper()

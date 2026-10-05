@@ -362,7 +362,7 @@ fun Artwork.label(): String = title.uppercase()
 import com.acme.app.legacy.Exporter
 
 class Repo {
-    fun load(title: String, fresh: Boolean = false): Artwork {
+    fun load(title: String, fresh: Boolean): Artwork {
         val a = Artwork.create(title)
         a.save()
         return a

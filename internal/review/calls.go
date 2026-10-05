@@ -149,7 +149,11 @@ type callerRef struct {
 // fn is one function of one version, with what it calls.
 type fn struct {
 	Func
-	body, sig  string // hashes; sig "" for languages without signatures
+	body, sig string // hashes; sig "" for languages without signatures
+	// req hashes only the required parameters (no default value): a new
+	// parameter with a default changes sig but breaks no caller. "" when
+	// the language doesn't tell them apart.
+	req        string
 	calls      []callSite
 	unresolved []unresolvedSite
 	// synthetic nodes (an interface method standing for its
@@ -522,7 +526,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			if c.from == id {
 				continue
 			}
-			if st == FuncSignature && !changedNew[c.path] {
+			if st == FuncSignature && !changedNew[c.path] && !onlyDefaultsAdded(before.funcs[id], after.funcs[id]) {
 				sigSites = appendSite(sigSites, EdgeFile{Path: c.path, Line: c.site.line})
 			}
 			if newEdges[edgeKey{c.from, id, c.site.kind}] != nil && changedNew[c.path] {
@@ -699,6 +703,12 @@ func shortName(id string) string {
 		id = id[i+1:]
 	}
 	return strings.NewReplacer("*", "", ")", "").Replace(id)
+}
+
+// onlyDefaultsAdded reports whether a signature change left the required
+// parameters as they were (it only added or changed defaulted ones).
+func onlyDefaultsAdded(old, cur *fn) bool {
+	return old != nil && cur != nil && old.req != "" && old.req == cur.req
 }
 
 // bareName is an ID's last name: "app/models.py:User.save" → "save".

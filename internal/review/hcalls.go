@@ -30,6 +30,7 @@ type hDef struct {
 	End     int     `json:"e"`
 	Body    string  `json:"b"`
 	Sig     string  `json:"g,omitempty"`
+	Req     string  `json:"q,omitempty"` // hash of the required parameters only (see requiredParams)
 	Calls   []hCall `json:"x,omitempty"`
 }
 
@@ -121,7 +122,7 @@ func (h *hCalls) funcs(idx *index, files []string, full bool) (*callSet, error) 
 		for i := range f.Defs {
 			d := &f.Defs[i]
 			fn := &fn{Func: Func{ID: h.l.id(p, d), Name: h.l.display(d), Path: p, Line: d.Line, End: d.End,
-				Unit: h.l.unit(p), Lang: h.l.name(), Test: test}, body: d.Body, sig: d.Sig}
+				Unit: h.l.unit(p), Lang: h.l.name(), Test: test}, body: d.Body, sig: d.Sig, req: d.Req}
 			for _, c := range d.Calls {
 				to, want := h.l.resolve(r, p, d, c)
 				switch {
@@ -341,6 +342,43 @@ func hBody(lines []string, from, to int, comment *regexp.Regexp) string {
 		b.WriteByte('\n')
 	}
 	return hashOf(b.String())
+}
+
+// requiredParams drops the parameters that have a default value (a "="
+// outside brackets) from a parameter list, and all whitespace: what callers
+// must pass.
+func requiredParams(params string) string {
+	var keep []string
+	depth, start := 0, 0
+	flush := func(part string) {
+		d := 0
+		for i, c := range part {
+			switch {
+			case strings.ContainsRune("([{<", c):
+				d++
+			case strings.ContainsRune(")]}", c), c == '>' && (i == 0 || (part[i-1] != '-' && part[i-1] != '=')):
+				d--
+			case c == '=' && d == 0 && (i+1 >= len(part) || part[i+1] != '>'):
+				return
+			}
+		}
+		if t := strings.Join(strings.Fields(part), ""); t != "" {
+			keep = append(keep, t)
+		}
+	}
+	for i, c := range params {
+		switch {
+		case strings.ContainsRune("([{<", c):
+			depth++
+		case strings.ContainsRune(")]}", c), c == '>' && (i == 0 || (params[i-1] != '-' && params[i-1] != '=')):
+			depth-- // "->" and "=>" are arrows, not closing brackets
+		case c == ',' && depth == 0:
+			flush(params[start:i])
+			start = i + 1
+		}
+	}
+	flush(params[start:])
+	return strings.Join(keep, ",")
 }
 
 // hLinesBody is hBody over a definition's own lines (0-based indexes).

@@ -556,7 +556,8 @@ func (s *swiftScanner) decls() {
 			params := code[k+1 : cl]
 			rest := code[cl+1 : max(cl+1, end)]
 			sig := strings.Join(strings.Fields(params), "") + "->" + strings.Join(strings.Fields(rest), "")
-			d := s.addDef(hDef{Name: name, Owner: fr.path, Class: fr.class, Static: static(), Line: s.lineOf(i), Sig: hashOf(sig)},
+			d := s.addDef(hDef{Name: name, Owner: fr.path, Class: fr.class, Static: static(), Line: s.lineOf(i), Sig: hashOf(sig),
+				Req: hashOf(requiredParams(params) + "->" + strings.Join(strings.Fields(rest), ""))},
 				swiftSpan{start: i, body: brace, end: end, params: params})
 			if brace < 0 {
 				s.f.Defs[d].End = s.lineOf(end)

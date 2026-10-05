@@ -298,7 +298,7 @@ final class TicketTests: XCTestCase {
 
 extension TicketStore: Loading {}
 `)
-	write(t, dir, "Features/Tickets/Data/Format.swift", `func format(_ s: String, upper: Bool = true) -> String {
+	write(t, dir, "Features/Tickets/Data/Format.swift", `func format(_ s: String, upper: Bool) -> String {
     s.uppercased() // fake() in a comment
 }
 `)

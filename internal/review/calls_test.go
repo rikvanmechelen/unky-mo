@@ -307,3 +307,36 @@ func TestCallDeltaUntestedThroughInterface(t *testing.T) {
 		t.Errorf("findings = %v, want none", got)
 	}
 }
+
+func TestRequiredParams(t *testing.T) {
+	for in, want := range map[string]string{
+		"a, b=1":                                "a",
+		"self, name: str, tags: list[str] = []": "self,name:str",
+		"title: String, fresh: Boolean = false": "title:String",
+		"_ s: String, f: (Int, Int) -> Int":     "_s:String,f:(Int,Int)->Int",
+		"m: Map<String, Int> = mapOf()":         "",
+		"f: (Int) -> Int, g: Int = 1, h: Int":   "f:(Int)->Int,h:Int",
+		"cb: (x) => x, n = 2":                   "cb:(x)=>x",
+	} {
+		if got := requiredParams(in); got != want {
+			t.Errorf("requiredParams(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A signature change that only adds a defaulted parameter breaks no caller.
+func TestCallDeltaDefaultedParamNoFinding(t *testing.T) {
+	old := tf("a.F", "a/a.go", 1, "b", "s1")
+	old.req = "r"
+	cur := tf("a.F", "a/a.go", 1, "b", "s2")
+	cur.req = "r"
+	cg := delta(set(old), set(cur, tf("c.C", "c/c.go", 1, "c", "s", "a.F")), []string{"a/a.go"}, []string{"a/a.go"}, nil)
+	if got := statuses(cg); got["a.F"] != FuncSignature {
+		t.Errorf("statuses = %v", got)
+	}
+	for _, f := range cg.Findings {
+		if f.Kind == FindingSignatureCallers {
+			t.Errorf("unexpected %+v", f)
+		}
+	}
+}

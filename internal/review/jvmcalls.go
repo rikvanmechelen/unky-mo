@@ -911,19 +911,21 @@ func (s *jvmScanner) finish(lines []string) {
 	// signature.
 	first := map[string]int{}
 	var defs []hDef
-	var bodies, sigs [][]string
+	var bodies, sigs, reqs [][]string
 	for _, d := range f.Defs {
 		key := qualify(d.Owner, d.Name)
 		if k, ok := first[key]; ok && defs[k].IsClass == d.IsClass {
 			defs[k].Calls = append(defs[k].Calls, d.Calls...)
 			bodies[k] = append(bodies[k], d.Body)
 			sigs[k] = append(sigs[k], d.Sig)
+			reqs[k] = append(reqs[k], requiredParams(d.Sig))
 			continue
 		}
 		first[key] = len(defs)
 		defs = append(defs, d)
 		bodies = append(bodies, []string{d.Body})
 		sigs = append(sigs, []string{d.Sig})
+		reqs = append(reqs, []string{requiredParams(d.Sig)})
 	}
 	for k := range defs {
 		if len(bodies[k]) > 1 {
@@ -931,6 +933,7 @@ func (s *jvmScanner) finish(lines []string) {
 		}
 		if !defs[k].IsClass || defs[k].Sig != "" {
 			defs[k].Sig = hashOf(strings.Join(sigs[k], "|"))
+			defs[k].Req = hashOf(strings.Join(reqs[k], "|"))
 		}
 	}
 	f.Defs = defs

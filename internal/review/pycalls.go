@@ -160,6 +160,9 @@ func (l *pyCalls) scanFile(_, src string) hFile {
 				}
 			}
 			d := hDef{Name: name, Owner: o, Class: c, Line: start + 1, Sig: hashOf(sig), Calls: decos}
+			if cl > open {
+				d.Req = hashOf(requiredParams(line[open+1 : cl]))
+			}
 			for _, dc := range decos {
 				if dc.Recv == "" && (dc.Name == "staticmethod" || dc.Name == "classmethod") {
 					d.Static = true
