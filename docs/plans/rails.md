@@ -329,14 +329,21 @@ Every item is checked on the last 20 commits of all three apps (read-only, as fo
 - Findings' sites are sorted, which fixes the flaky `TestJSRemovedImported`.
 - `viewCall` helper lookups are memoized: 4 s → 0.6 s on moma-apps-rails.
 - The Ruby scan's regexps are guarded by cheap substring checks: moma-apps-rails cold 7.3 s → 3.9 s, with identical output.
+- A second pass on the cold scan (moma-apps-rails 3.75 s → 1.1 s cold, 0.80 s → 0.54 s warm, identical output on all three apps):
+  - The per-line patterns are hand-written scanners: call chains (`rbChains`/`rbChainSegs`), block keywords (`rbKeywordSpans`) and `rbAddLocals`' assignments (`rbAssigns`). Each keeps its regexp as the spec in `rbchains_test.go`, a seed test plus a fuzz target (`FuzzRbChains`, `FuzzRbAssigns`). They were also checked against every line of the three apps.
+  - Stimulus data hashes are matched with an anchored regexp, tried only where `data` occurs (`stimDataHashes`, `FuzzStimDataHashes`). Functional-test and factory lines check their first word before their regexp runs.
+  - Files are scanned in parallel (`index.symbolsMany`, from `newHResolver`). Reads stay sequential; scans aren't cached yet.
+  - `rbCalls.chain` is memoized per resolver.
+  - `mo calls` sorts functions with the same name by ID. Reopened classes (two `ApplicationController`s) used to swap places between runs.
+- What's left is mostly resolution (`rbCalls.resolve`: lookups up the class chain, typing), which runs warm too.
 
 ### Timings and findings (last 20 commits, read-only)
 
-| App | Cold | Real findings |
-|---|---|---|
-| moma-apps-rails | 3.9 s (warm ~0.6 s) | |
-| moma-org-rails | 0.2 s | `jobs/show.html.erb` still renders the deleted `_department` and `_opportunity_card` partials; `_mobile_menu.html.erb` binds an undeclared `closeButton` target |
-| moma-chatbot | 0.26 s | |
+| App | Cold | Warm | Real findings |
+|---|---|---|---|
+| moma-apps-rails | 1.1 s | 0.54 s | |
+| moma-org-rails | 0.11 s | 0.06 s | `jobs/show.html.erb` still renders the deleted `_department` and `_opportunity_card` partials; `_mobile_menu.html.erb` binds an undeclared `closeButton` target |
+| moma-chatbot | 0.11 s | 0.07 s | |
 
 ### Known limitations
 - **Graph size:** a new table adds a node per column, and test files a node per test block. Units collapse past 60 functions, but a "hide columns/tests" switch may be wanted.
