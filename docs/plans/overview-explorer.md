@@ -323,6 +323,35 @@ it over. A step gets its detailed plan in this doc before coding
   back/forward, `hover(id)`, Focus. Listeners re-render the inspector, map,
   Review list and sections. Selection and history are kept per target in
   sessionStorage.
+
+  **F2 detail.**
+  - **History in the model file:** a pure value `{stack, at}` with
+    `selPush` (no-op for the current id; drops the forward part; at most 30
+    entries; `null` is "nothing selected", a real step so Back can return
+    to it), `selBack`, `selForward`, `selCurrent` and `selCrumbs` (the last
+    4 selections up to the current one, oldest first, without nulls).
+    Unit-tested in Node.
+  - **`overview.js` holds the store:** `history`, `hover`, `focus` (a
+    function id for the map's Focus mode, cleared by any selection that
+    isn't a function, call or finding, as in the design), and subscribers
+    called on every change. History is per target in sessionStorage
+    (`mo.overview.sel.<key>`), restored by `setTarget`.
+  - **The model is rebuilt lazily:** `model()` rebuilds when an input
+    changed (a new overview / architecture / calls body, the trace's
+    version, a new scope result, reviewed ticks), tracked by a version
+    counter, not on every read.
+  - **API returned by `createOverview`:** `model()`, and `selection =
+    {select, back, forward, hover, setFocus, current, hovered, focus,
+    crumbs, canBack, canForward, subscribe}`. F3–F7 render from it.
+  - **Keys** while the Overview is visible and focus isn't in a text
+    field or dialog: Alt+← / Alt+→ go back / forward (preventDefault, so
+    the browser doesn't navigate: Alt+← isn't one of Chrome's reserved
+    shortcuts. DevTools' synthetic keys showed the handler cancelling it,
+    but they never reach the browser's own shortcuts, so a real keypress
+    still needs a manual check). Esc exits Focus, then clears the
+    selection. `[` / `]` stay with the rails.
+  - Nothing new is drawn yet: F3 adds the first consumers.
+
 - **F3. Page shell + header.** Every section keeps a skeleton while its
   data loads (decided): today's `overviewSkeleton` / `archSkeleton` /
   `surfaceSkeleton` / `callsSkeleton` move into their sections, the
@@ -467,4 +496,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) and F1 built 2026-10-05; next: F2.
+backend) F1 and F2 built 2026-10-05; next: F3.

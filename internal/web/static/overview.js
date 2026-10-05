@@ -28,6 +28,8 @@ const AGENT_REFRESH_MS = 15000; // a running subagent's transcript is re-read th
 const STRIP_AREAS = 4; // a change this spread out shows in the strip
 const SCOPE_KEY = "mo.overview.scope."; // + windowID: the last scope check
 const TICKET_RE = /[A-Z][A-Z0-9]+-\d+/;
+const SEL_KEY = "mo.overview.sel."; // + target key: the selection history (sessionStorage)
+const REVIEWED_KEY = "mo.overview.reviewed."; // + target key: {path: reviewSig}
 
 // Skeletons stand in for the parts of the tab still loading: shimmering
 // boxes laid out with the real sections' classes, so the page doesn't jump
@@ -165,6 +167,116 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   const selWorktree = () => commitSel.some((c) => c.hash === WORKTREE);
   const selKey = () => selIDs() + (selWorktree() ? "+wt" : "");
   const hidden = new Set(Array.isArray(storageGet(OVERVIEW_HIDDEN_KEY)) ? storageGet(OVERVIEW_HIDDEN_KEY) : []);
+
+  // --- The explorer's model and selection ---
+  // The model is rebuilt only when one of its inputs changed.
+  let reviewed = {}; // path → reviewSig, for the target
+  let reviewedVersion = 0;
+  let model = null;
+  let modelKey = "";
+  function getModel() {
+    if (!data?.repo) return null;
+    const traced = withTranscript && mode !== "commits";
+    const key = [gen, etag, archEtag, callsEtag, traced ? trace.version : -1, scope?.at || 0, reviewedVersion].join("|");
+    if (key !== modelKey) {
+      modelKey = key;
+      model = buildModel({ overview: data, arch: arch?.repo ? arch : null, calls: calls?.repo ? calls : null, trace: traced ? trace : null, scope, reviewed });
+    }
+    return model;
+  }
+
+  // The selection: a history (Back/Forward), what the pointer is over, and
+  // the function the map is focused on. Subscribers hear every change.
+  let hist = selInitial();
+  let hovered = null;
+  let focusFn = null;
+  const selSubs = new Set();
+  function selChanged(what) {
+    if (what !== "hover" && windowID) {
+      try { sessionStorage.setItem(SEL_KEY + windowID, JSON.stringify(hist)); } catch (_) { /* not remembered */ }
+    }
+    for (const f of selSubs) f(what);
+  }
+  function loadSelection() {
+    let h = null;
+    try { h = JSON.parse(sessionStorage.getItem(SEL_KEY + windowID) || "null"); } catch (_) { h = null; }
+    hist = selValid(h) ? h : selInitial();
+    hovered = null;
+    focusFn = null;
+  }
+  // Selecting something else than a function, a call or a finding leaves
+  // Focus; another function moves it.
+  function followFocus(id) {
+    if (!focusFn) return;
+    if (id?.startsWith("fn:")) focusFn = id;
+    else if (!id || !(id.startsWith("call:") || id.startsWith("find:"))) focusFn = null;
+  }
+  const selection = {
+    select(id) {
+      const next = selPush(hist, id || null);
+      if (next === hist) return;
+      hist = next;
+      followFocus(id);
+      selChanged("select");
+    },
+    back() {
+      const next = selBack(hist);
+      if (next === hist) return;
+      hist = next;
+      followFocus(selCurrent(hist));
+      selChanged("select");
+    },
+    forward() {
+      const next = selForward(hist);
+      if (next === hist) return;
+      hist = next;
+      followFocus(selCurrent(hist));
+      selChanged("select");
+    },
+    // go jumps to a breadcrumb's place in the history.
+    go(at) {
+      if (at === hist.at || at < 0 || at >= hist.stack.length) return;
+      hist = { stack: hist.stack, at };
+      followFocus(selCurrent(hist));
+      selChanged("select");
+    },
+    hover(id) {
+      if ((id || null) === hovered) return;
+      hovered = id || null;
+      selChanged("hover");
+    },
+    setFocus(id) {
+      if ((id || null) === focusFn) return;
+      focusFn = id || null;
+      if (id) { hist = selPush(hist, id); }
+      selChanged("focus");
+    },
+    current: () => selCurrent(hist),
+    hovered: () => hovered,
+    focus: () => focusFn,
+    crumbs: () => selCrumbs(hist),
+    canBack: () => hist.at > 0,
+    canForward: () => hist.at < hist.stack.length - 1,
+    subscribe(f) { selSubs.add(f); return () => selSubs.delete(f); },
+  };
+
+  // Alt+←/→ go back and forward, Esc leaves Focus and then clears the
+  // selection, while the tab is showing and the keyboard isn't in a field.
+  document.addEventListener("keydown", (e) => {
+    if (!visible || e.defaultPrevented || e.metaKey || e.ctrlKey) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+    if (document.querySelector("dialog[open]")) return;
+    if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      if (e.key === "ArrowLeft") selection.back(); else selection.forward();
+    } else if (e.key === "Escape" && !e.altKey && !e.shiftKey) {
+      if (focusFn) selection.setFocus(null);
+      else if (selCurrent(hist)) selection.select(null);
+      else return;
+      e.preventDefault();
+    }
+  });
 
   // The tab strip shows the number of rule violations next to "Overview".
   const badge = el("span", { class: "overview-badge", hidden: "" });
@@ -1036,6 +1148,10 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
 
   return {
     badge,
+    // model is the explorer's entity model of what's shown (null before
+    // the first overview), and selection its selection store.
+    model: getModel,
+    selection,
     setSelection,
     // showSelection switches to the commits selected in the Git log.
     showSelection(sel) {
@@ -1058,6 +1174,11 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
       resetCalls();
       scope = id ? storageGet(SCOPE_KEY + id) : null;
       scopeBusy = false; scopeError = "";
+      const r = id ? storageGet(REVIEWED_KEY + id) : null;
+      reviewed = r && typeof r === "object" && !Array.isArray(r) ? r : {};
+      reviewedVersion++;
+      if (id) loadSelection(); else { hist = selInitial(); hovered = null; focusFn = null; }
+      selChanged("target");
       if (strip) { strip.hidden = true; delete strip.dataset.sig; }
       render();
       load();

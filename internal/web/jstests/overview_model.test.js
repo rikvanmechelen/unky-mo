@@ -217,3 +217,32 @@ test("moved helpers", () => {
   const { groups } = m.buildTraceRows([{ path: "x.go" }, { path: "y.go" }], trace.edits, "/r");
   assert.deepEqual(groups.map((g) => g.turn), [1, null]);
 });
+
+test("selection history", () => {
+  let h = m.selInitial();
+  assert.equal(m.selCurrent(h), null);
+  h = m.selPush(h, "fn:a");
+  h = m.selPush(h, "fn:b");
+  assert.equal(m.selPush(h, "fn:b"), h, "selecting the current one is a no-op");
+  h = m.selPush(h, null);
+  assert.equal(m.selCurrent(h), null);
+  h = m.selBack(h);
+  assert.equal(m.selCurrent(h), "fn:b");
+  h = m.selBack(h);
+  assert.equal(m.selCurrent(h), "fn:a");
+  assert.equal(m.selForward(h).at, 2);
+  h = m.selPush(h, "file:x");
+  assert.deepEqual(h.stack, [null, "fn:a", "file:x"], "a new selection drops the forward part");
+  assert.equal(m.selForward(h), h);
+  assert.equal(m.selBack(m.selBack(m.selBack(h))).at, 0);
+  for (let i = 0; i < 40; i++) h = m.selPush(h, "fn:" + i);
+  assert.equal(h.stack.length, 30);
+  assert.equal(h.at, 29);
+  assert.deepEqual(m.selCrumbs(h).map((c) => c.id), ["fn:36", "fn:37", "fn:38", "fn:39"]);
+  let r = m.selPush(m.selPush(m.selPush(m.selInitial(), "a"), "b"), "a");
+  assert.deepEqual(m.selCrumbs(r).map((c) => c.id), ["b", "a"], "a repeat shows once, at its latest");
+  assert.ok(m.selValid(h));
+  assert.ok(!m.selValid({ stack: [1], at: 0 }));
+  assert.ok(!m.selValid({ stack: [null], at: 1 }));
+  assert.ok(!m.selValid(null));
+});

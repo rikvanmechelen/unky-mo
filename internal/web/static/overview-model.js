@@ -873,11 +873,60 @@ function ovProgress(M) {
   return { done: logic.filter((f) => f.reviewed).length, total: logic.length };
 }
 
+// ── Selection history ──────────────────────────────────────────
+// {stack, at}: the selections made, and where Back/Forward stand. null is
+// "nothing selected", a step of its own so Back can return to it.
+
+const SEL_HISTORY_MAX = 30;
+
+function selInitial() {
+  return { stack: [null], at: 0 };
+}
+
+// selPush selects id: the forward part of the history is dropped, and
+// selecting what's already selected changes nothing (the same object).
+function selPush(h, id) {
+  const cur = h.stack[h.at] ?? null;
+  if (cur === (id ?? null)) return h;
+  const stack = h.stack.slice(0, h.at + 1).concat([id ?? null]).slice(-SEL_HISTORY_MAX);
+  return { stack, at: stack.length - 1 };
+}
+
+function selBack(h) {
+  return h.at > 0 ? { stack: h.stack, at: h.at - 1 } : h;
+}
+
+function selForward(h) {
+  return h.at < h.stack.length - 1 ? { stack: h.stack, at: h.at + 1 } : h;
+}
+
+function selCurrent(h) {
+  return h.stack[h.at] ?? null;
+}
+
+// selCrumbs are the last 4 selections up to the current one, oldest
+// first, each with its index in the stack.
+function selCrumbs(h) {
+  const out = [];
+  for (let i = h.at; i >= 0 && out.length < 4; i--) {
+    const id = h.stack[i];
+    if (id && !out.some((c) => c.id === id)) out.unshift({ id, at: i });
+  }
+  return out;
+}
+
+// selValid checks a stored history (sessionStorage) before it's used.
+function selValid(h) {
+  return !!h && Array.isArray(h.stack) && h.stack.length > 0 && h.stack.length <= SEL_HISTORY_MAX
+    && h.stack.every((x) => x === null || typeof x === "string") && Number.isInteger(h.at) && h.at >= 0 && h.at < h.stack.length;
+}
+
 if (typeof module === "object" && module.exports) {
   module.exports = {
     OVERVIEW_KINDS, OVERVIEW_NOISE, SURFACE_KINDS, CALL_MARK, FINDING_SEVERITY,
     createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, archGraph, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
+    selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }
