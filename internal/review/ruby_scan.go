@@ -113,6 +113,22 @@ func rubyCode(src string) string {
 			}
 			blank(b, i, j)
 			i = j
+		case c == '/' && regexpStart(b, i):
+			// A /regexp/ literal, closed on its line: its text could hold a
+			// quote or a # that would otherwise open a string or a comment.
+			j := i + 1
+			for j < n && b[j] != '/' && b[j] != '\n' {
+				if b[j] == '\\' && j+1 < n && b[j+1] != '\n' {
+					j++
+				}
+				j++
+			}
+			if j >= n || b[j] != '/' {
+				i++
+				continue
+			}
+			blank(b, i, j+1)
+			i = j + 1
 		case c == '<' && i+1 < n && b[i+1] == '<':
 			if m := heredocRe.FindSubmatch(b[i:]); m != nil {
 				pending = append(pending, heredoc{id: string(m[3]), indent: len(m[1]) > 0})
@@ -126,6 +142,28 @@ func rubyCode(src string) string {
 		}
 	}
 	return string(b)
+}
+
+// regexpStart reports whether the "/" at b[i] opens a regexp rather than
+// dividing: it follows an operator or "(", ",", … , a keyword like when
+// or if, or starts the line. A division follows an operand.
+func regexpStart(b []byte, i int) bool {
+	j := i - 1
+	for j >= 0 && (b[j] == ' ' || b[j] == '\t') {
+		j--
+	}
+	if j < 0 || b[j] == '\n' || strings.IndexByte("(,=~!|&[{;?:", b[j]) >= 0 {
+		return true
+	}
+	k := j
+	for k >= 0 && isWordByte(b[k]) {
+		k--
+	}
+	switch string(b[k+1 : j+1]) {
+	case "when", "if", "unless", "and", "or", "not", "return", "elsif", "while", "until":
+		return true
+	}
+	return false
 }
 
 func closingDelim(open byte) byte {

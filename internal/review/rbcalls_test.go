@@ -166,6 +166,31 @@ end
 			t.Errorf("unbalanced file OK:\n%s", bad)
 		}
 	}
+	// Valid files that once read as unbalanced.
+	for name, c := range map[string]struct{ src, want string }{
+		// A line starting with a string: its end lines up with the key,
+		// not with the blanked code after it.
+		"string key": {"class A\n  M = {\n    \"k\" => lambda do |r|\n      next [] if r.nil?\n      r\n    end,\n  }.freeze\n\n  def a = { k:, v: }\nend\n", "A.a [9-9]"},
+		// A modifier after a string: x += "s" if y.
+		"modifier after a string": {"class A\n  def a(y)\n    x = \"a\"\n    x += \", b\" if y\n    x += \")\" unless y\n    y.any? ? x : \"none\"\n  end\nend\n", "A.a [2-7]"},
+		// A quote inside a regexp: /it's/ isn't a string.
+		"regexp with a quote": {"class A\n  def a\n    match(text: /it's here\\?/)\n    b\n  end\n\n  def b; end\nend\n", "A.b [7-7]"},
+	} {
+		f := l.scanFile("a.rb", c.src)
+		if !f.OK {
+			t.Errorf("%s: not OK", name)
+			continue
+		}
+		found := false
+		for k, v := range rbDefsOf(f) {
+			if strings.HasSuffix(c.want, v[strings.LastIndex(v, " ["):]) && strings.HasPrefix(c.want, k+" ") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: defs %v, want %s", name, rbDefsOf(f), c.want)
+		}
+	}
 	// Strings, comments, heredocs and =begin blocks hold no code.
 	quiet := "x = \"#{fake(1)}\" # nope(2)\ny = <<~EOS\n  hidden(3)\nEOS\n=begin\nburied(4)\n=end\n"
 	for _, d := range l.scanFile("a.rb", quiet).Defs {
