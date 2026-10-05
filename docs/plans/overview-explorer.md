@@ -207,6 +207,26 @@ in the map, the Review list and the inspector.
   `Rules.Order` (layer names top to bottom), so the map can lay rows out by
   the repo's layers. Packages with no layer fall back to import depth
   (`layoutArchGraph`).
+
+  **B3 detail.** A rules file's order isn't a row order (unky-mo's own
+  lists its layers bottom-up, and presets have none), so the server names
+  layers and the browser orders rows:
+  - `Analysis.UnitLayers map[unit]layer name`, for every unit the analysis
+    mentions: its packages and both ends of its edges and existing edges,
+    each judged with its own language (`layerOf(unit, lang)`, so a preset's
+    layer only names its language's units). Units in no layer are left out.
+    This replaces the planned `Package.Layer`: context units at the end of
+    an edge need a layer too.
+  - `Rules.Order`: every layer's name in the rule set's order (the repo's
+    own, then the presets', as `"rails: models"`), without duplicates.
+  - The map (F7) groups units by layer, orders the rows by import depth
+    (a layer whose units import another's sits above it), breaks ties by
+    `Rules.Order`, and puts unlayered units, and units only `/calls`
+    names, in rows by their own depth.
+  - Tests: `review_test.go` checks `UnitLayers` (a changed package, a
+    context unit at the end of an existing edge, an unlayered one left out,
+    a preset layer only for its language) and `Rules.Order` (file order,
+    then presets).
 - **B4. Unit names.** Check that `/calls` `Func.Unit` equals
   `/architecture` `Package.Path` for every language (Go's `pkgDir` vs
   `goarch` paths especially), and fix it at the source if not: the map nests
@@ -375,5 +395,5 @@ in the reviewer view, phone bottom-sheet inspector.
 
 ## Status
 
-Revised for v3 on 2026-10-05 (the v2 version was never built). B1 and B2
-built 2026-10-05; next: B3.
+Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B3
+built 2026-10-05; next: B4.

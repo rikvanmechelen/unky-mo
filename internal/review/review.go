@@ -103,6 +103,11 @@ type Rules struct {
 	// presets = [...], or (AutoPresets) by detecting the stack.
 	Presets     []string `json:"presets"`
 	AutoPresets bool     `json:"autoPresets,omitempty"`
+	// Order is every layer's name in the rule set's order: the file's own
+	// layers, then the presets' ("rails: models"). It isn't top to bottom
+	// (a file may list its layers either way); the Overview's map orders
+	// its rows by import depth and uses this only to break ties.
+	Order []string `json:"order"`
 }
 
 // Analysis is the architecture delta and contract surface of a change.
@@ -110,7 +115,11 @@ type Analysis struct {
 	Module   string    `json:"module,omitempty"`
 	Packages []Package `json:"packages"`
 	// Labels are short display names for units with long paths.
-	Labels     map[string]string `json:"labels,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+	// UnitLayers names the layer of every unit the analysis mentions (its
+	// packages and both ends of its edges) that's in one, judged with the
+	// unit's own language.
+	UnitLayers map[string]string `json:"unitLayers"`
 	Languages  []LangInfo        `json:"languages"`
 	Edges      []Edge            `json:"edges"`
 	Existing   []Edge            `json:"existing"`
@@ -299,12 +308,37 @@ func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*
 			a.Violations++
 		}
 	}
+	a.UnitLayers = unitLayers(a, rules)
 	// Reads that ran out of time failed quietly along the way: a partial
 	// analysis would look complete, so say it isn't.
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("analysis didn't finish in time: %w", err)
 	}
 	return a, nil
+}
+
+// unitLayers maps each unit a mentions to its layer's name, leaving out
+// units in no layer. A unit two languages share takes its first one's.
+func unitLayers(a *Analysis, rules *ruleSet) map[string]string {
+	m := map[string]string{}
+	seen := map[string]bool{}
+	add := func(unit, lang string) {
+		if seen[unit] {
+			return
+		}
+		seen[unit] = true
+		if l := rules.layerOf(unit, lang); l != nil {
+			m[unit] = l.Name
+		}
+	}
+	for _, p := range a.Packages {
+		add(p.Path, p.Lang)
+	}
+	for _, e := range append(append([]Edge{}, a.Edges...), a.Existing...) {
+		add(e.From, e.Lang)
+		add(e.To, e.Lang)
+	}
+	return m
 }
 
 // modulePath is the module named by the root go.mod, or "".

@@ -3,6 +3,7 @@ package review
 import (
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -96,6 +97,12 @@ func loadRules(r *repo, idx *index) *ruleSet {
 		}
 	}
 	sort.Strings(rs.info.Presets)
+	rs.info.Order = []string{}
+	for _, l := range rs.layers {
+		if !slices.Contains(rs.info.Order, l.Name) {
+			rs.info.Order = append(rs.info.Order, l.Name)
+		}
+	}
 	return rs
 }
 

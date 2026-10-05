@@ -606,3 +606,56 @@ func TestIndexDropsModifiedBlobs(t *testing.T) {
 		t.Error("a modified file left the index")
 	}
 }
+
+// Every unit the analysis mentions gets its layer, judged with its own
+// language; Rules.Order lists the file's layers, then the presets' in
+// the order the file names them.
+func TestUnitLayers(t *testing.T) {
+	presets["test-stack"] = preset{
+		detect: func(idx *index) bool { return idx.has("go.mod") },
+		layers: []layer{{Name: "core", Paths: []string{"d"}}},
+	}
+	presets["test-ruby"] = preset{
+		lang:   "ruby",
+		detect: func(idx *index) bool { return idx.has("go.mod") },
+		layers: []layer{{Name: "models", Paths: []string{"c"}}},
+	}
+	defer delete(presets, "test-stack")
+	defer delete(presets, "test-ruby")
+	dir := moduleRepo(t)
+	write(t, dir, ".unky-mo/architecture.toml", `presets = ["test-stack", "test-ruby"]
+
+[[layer]]
+name = "leaf"
+paths = ["f"]
+
+[[layer]]
+name = "base"
+paths = ["b"]
+
+[[layer]]
+name = "front"
+paths = ["a", "e"]
+`)
+	a := analyze(t, dir)
+	want := map[string]string{
+		"a": "front", "e": "front", // changed and added packages
+		"f": "leaf",             // a removed package
+		"b": "base",             // only at the end of an existing edge
+		"d": "test-stack: core", // a preset's layer
+		// c is only in the ruby preset's layer: not for a Go unit.
+		// cmd/mo is in no layer.
+	}
+	if !reflect.DeepEqual(a.UnitLayers, want) {
+		t.Errorf("unit layers %v\nwant %v", a.UnitLayers, want)
+	}
+	if got, want := a.Rules.Order, []string{"leaf", "base", "front", "test-stack: core", "test-ruby: models"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order %v, want %v", got, want)
+	}
+
+	// No rules at all: no layers, an empty order.
+	write(t, dir, ".unky-mo/architecture.toml", "presets = []\n")
+	if a := analyze(t, dir); len(a.UnitLayers) != 0 || a.UnitLayers == nil || a.Rules.Order == nil || len(a.Rules.Order) != 0 {
+		t.Errorf("no rules: %v %v", a.UnitLayers, a.Rules.Order)
+	}
+}
