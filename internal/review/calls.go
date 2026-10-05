@@ -39,7 +39,7 @@ const (
 
 const (
 	maxCallFuncs   = 1000 // functions in one answer; context goes first
-	maxCallers     = 50  // context callers per function
+	maxCallers     = 50   // context callers per function
 	untestedHops   = 2
 	maxCallSites   = 20 // sites kept per edge or finding
 	callHashLength = 16
@@ -116,6 +116,20 @@ type callSite struct {
 type unresolvedSite struct {
 	line int
 	want []string
+	// quiet sites are kept for matching want, not counted as unresolved
+	// (a method call on an unknown receiver that may well be external).
+	quiet bool
+}
+
+// countUnresolved counts the sites that aren't quiet.
+func countUnresolved(sites []unresolvedSite) int {
+	n := 0
+	for _, u := range sites {
+		if !u.quiet {
+			n++
+		}
+	}
+	return n
 }
 
 // edgeKey identifies a call edge in callDelta.
@@ -183,6 +197,8 @@ func callLangOf(l language) callLang {
 	switch l := l.(type) {
 	case *goLang:
 		return &goCalls{module: l.module}
+	case *pyLang:
+		return &hCalls{l: &pyCalls{}}
 	}
 	return nil
 }
@@ -408,7 +424,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	addFn := func(f *fn, st string, before bool) {
 		out := f.Func
 		out.Status, out.Before = st, before
-		out.Unresolved = len(f.unresolved)
+		out.Unresolved = countUnresolved(f.unresolved)
 		if st == FuncRenamed {
 			out.From = renamedFrom[f.ID]
 		}
@@ -527,7 +543,14 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			}
 		}
 		for _, id := range gone {
-			if sites := want[id]; len(sites) > 0 {
+			sites := want[id]
+			// Heuristic languages can only name a method whose receiver
+			// they don't know: "~name" stands for any removed method
+			// called that (and is only emitted when none is left).
+			for _, s := range want["~"+bareName(id)] {
+				sites = appendSite(sites, s)
+			}
+			if len(sites) > 0 {
 				cg.Findings = append(cg.Findings, CallFinding{Kind: FindingRemovedCalled, Func: id, Sites: sites})
 			}
 		}
@@ -618,7 +641,7 @@ func (g *graphBuilder) ensure(after, before *callSet, id string) {
 	}
 	if f := after.funcs[id]; f != nil {
 		out := f.Func
-		out.Unresolved = len(f.unresolved)
+		out.Unresolved = countUnresolved(f.unresolved)
 		g.addFunc(out)
 		return
 	}
@@ -664,6 +687,14 @@ func shortName(id string) string {
 		id = id[i+1:]
 	}
 	return strings.NewReplacer("*", "", ")", "").Replace(id)
+}
+
+// bareName is an ID's last name: "app/models.py:User.save" → "save".
+func bareName(id string) string {
+	if i := strings.LastIndexAny(id, ".:#/"); i >= 0 {
+		return strings.TrimSuffix(id[i+1:], ")")
+	}
+	return id
 }
 
 func appendSite(sites []EdgeFile, s EdgeFile) []EdgeFile {

@@ -86,6 +86,13 @@ func newIndex(r *repo) *index {
 			}
 		}
 	}
+	// A file modified since it was staged has another blob id than the one
+	// listed: it has no cache key, and is read every time.
+	if out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-m", "-z"); err == nil {
+		for _, p := range strings.Split(string(out), "\x00") {
+			delete(x.blobs, p)
+		}
+	}
 	if out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-z", "--others", "--exclude-standard"); err == nil {
 		for _, p := range strings.Split(string(out), "\x00") {
 			if p != "" {

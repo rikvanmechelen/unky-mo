@@ -584,3 +584,21 @@ func TestIndexAtPrefetch(t *testing.T) {
 		t.Errorf("unprefetched base read = %v", got)
 	}
 }
+
+// A file modified since it was staged isn't cached under its staged blob
+// id: that would serve the old content's scan.
+func TestIndexDropsModifiedBlobs(t *testing.T) {
+	dir := moduleRepo(t)
+	idx := newIndex(&repo{ctx: context.Background(), cmd: moexec.DefaultCommander, root: dir})
+	if idx.blobs["a/a.go"] == "" || idx.blobs["d/d2.go"] == "" {
+		t.Fatalf("committed files lack blob ids: %v", idx.blobs)
+	}
+	write(t, dir, "d/d2.go", "package d\n\nvar Y = 2\n")
+	idx = newIndex(&repo{ctx: context.Background(), cmd: moexec.DefaultCommander, root: dir})
+	if idx.blobs["d/d2.go"] != "" {
+		t.Error("a modified file kept its staged blob id")
+	}
+	if !idx.has("d/d2.go") {
+		t.Error("a modified file left the index")
+	}
+}
