@@ -116,3 +116,72 @@ This applies to any commit in the repository, not just the branch's: Overview da
 - The "Uncommitted changes" row as part of a selection (the newest selected commit up to the working tree).
 - `base=commits` on the reviewer view once it has a Git log tab.
 - `mo calls --commits a..b` for the terminal.
+
+## Step 1 in detail: `gitfiles`
+
+New file `internal/gitfiles/selection.go`, tests in `selection_test.go`.
+
+### API
+
+```go
+const ModeCommits = "commits" // next to ModeBranch/ModeHead in overview.go
+const MaxSelection = 200
+
+type Selection struct{ Root, Base, Head string }
+
+var ErrBadSelection = errors.New(…)   // empty, over MaxSelection, or not full hex ids
+type SelectionError struct {          // a valid set of commits that isn't consecutive
+	Reason string // "gap", "merge", "root", "heads"
+	Commit string // the commit the message is about (full id)
+	Other  string // merge: the parent that isn't selected; heads: the other tip
+}
+func (e *SelectionError) Error() string // "abc1234 isn't selected", …
+
+func ResolveSelection(ctx, cmd, dir string, hashes []string) (*Selection, error)
+func GetOverviewRange(ctx, cmd, root, base, head string) (*Overview, error)
+```
+
+`ResolveSelection` takes the checkout dir (like `GetOverview`) and returns its root, so the handler doesn't need a separate `Root` call. Duplicate hashes are dropped before counting.
+
+### ResolveSelection, step by step
+
+1. **Validate** with no git calls: at least one id, at most `MaxSelection` after dedup, each matching `hashRe` (40 or 64 hex). Otherwise `ErrBadSelection`.
+2. **Types:** one `git cat-file --batch-check='%(objectname) %(objecttype)'` with the ids on stdin (`OutputStdin`). Anything that isn't `commit` (missing, tree, blob, an annotated tag's own id) gives `ErrUnknownCommit`. A tag id would otherwise be peeled into a commit by `rev-list`.
+3. **Parents:** `git rev-list --no-walk=unsorted --parents <ids…> --`. A commit without parents gives `SelectionError{root}`.
+4. **Head:** tips = selected commits that aren't a parent of another selected commit. With more than one tip, `git merge-base --independent <tips…>`: two or more independent tips gives `SelectionError{heads}` (two branches). Otherwise the one left is `head`; the other tips are older commits cut off by a gap, which step 6 reports.
+5. **Boundary:** B = parents of selected commits that aren't selected.
+6. **Reachable set:** R = `git rev-list head --not <B…> --`. R is always a subset of the selection (a commit in R that isn't selected would have to be a parent of a selected one, so in B). A selected commit missing from R is cut off by a boundary commit that is its descendant, which means there's a gap: the missing commits are `git rev-list --topo-order --ancestry-path <cut>..head` minus the selection. Report the oldest of them (the last in topological order) as `SelectionError{gap, Commit: missing}`. This also covers a side branch that forks off a selected commit and is merged back by a selected merge: its commits sit between the two, so leaving them out is a gap (found while testing; the first draft of this plan called it a merge error).
+7. **One base:** with R equal to the selection, a linear run has exactly one boundary. More than one can only come from a merge whose other side forked off before the selection and isn't selected: report the selected merge and its unselected parent as `SelectionError{merge}`. (If the merge's first parent is the unselected one, report that.)
+8. Return `{Root, Base: B[0], Head: head}`.
+
+On success that's 4 or 5 git processes, regardless of how many commits are selected.
+
+### GetOverviewRange
+
+- Both ids must match `hashRe` and be commits (`cat-file -t`), else `ErrUnknownCommit`; the handler always passes ids from `ResolveSelection`, but the function doesn't trust that.
+- Refactor: move `GetOverviewAt`'s diff + blob-header + `finish` part into `overviewBetween(ctx, cmd, o, root, base, head)`. `GetOverviewAt` calls it after its merge-base lookup; `GetOverviewRange` calls it directly.
+- Fields: `Mode: ModeCommits`, `Rev = MergeBase = base`, `Head = head`, `Branch` = the checkout's current branch (header text only), `Base` empty (so there's no base-fetch offer), `Fallback` false.
+
+### Tests (real git)
+
+A fixture history on `main` (`newRepo` plus):
+
+```
+r ─ c1 ─ c2 ─ c3 ─────── m ─ c5      (main)
+          └─ s1 ─ s2 ───┘            (side, merged by m)
+```
+
+- Accepted, checking `Base`/`Head`:
+  - {c2} → c1..c2; {c2,c3} → c1..c3;
+  - {c1,c2,c3} given in shuffled order with a duplicate → r..c3;
+  - {c3,s1,s2,m}: a merge with both its sides selected; c3 and s1 share the parent c2 → c2..m.
+- Refused:
+  - {c1,c3} and {c1,c3,c5} → gap naming c2;
+  - {c1,c2,c3,m} → gap naming s1 (s1 and s2 fork off c2 and come back in m);
+  - {c3,m} → merge naming m and s2; {m,c5} → merge naming m and its first parent c3;
+  - {c3,s2} → heads;
+  - {r,c1} → root;
+  - {}, 201 ids, a short id, `HEAD` → `ErrBadSelection`;
+  - a tree id, a blob id → `ErrUnknownCommit`.
+- `GetOverviewRange(c1, c3)`: files and line counts match `git diff --numstat c1 c3`, a rename in the range shows `OldPath`, a generated header is read from `head`, and a dirty working tree doesn't leak in (edit a file after the commits). Bad ids → `ErrUnknownCommit`.
+- `TestGetOverviewAt` keeps passing unchanged (guards the refactor).

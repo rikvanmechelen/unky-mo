@@ -22,10 +22,12 @@ import (
 
 // Overview modes: ModeBranch compares the merge base with the default
 // branch to the working tree; ModeHead compares HEAD to the working tree
-// (the Files panel's Changed list).
+// (the Files panel's Changed list); ModeCommits compares two commits.
 const (
 	ModeBranch = "branch"
 	ModeHead   = "head"
+	// ModeCommits is a selection of consecutive commits (GetOverviewRange).
+	ModeCommits = "commits"
 )
 
 // Kind is what a changed file is, for review purposes.
@@ -232,8 +234,14 @@ func GetOverviewAt(ctx context.Context, cmd moexec.Commander, root, branch, head
 		return o, nil
 	}
 	o.Base, o.MergeBase, o.Rev = base, mb, mb
+	return overviewBetween(ctx, cmd, o, root, mb, head)
+}
+
+// overviewBetween fills o with the files changed from commit base to commit
+// head, reading generated-file headers from head.
+func overviewBetween(ctx context.Context, cmd moexec.Commander, o *Overview, root, base, head string) (*Overview, error) {
 	read := 0
-	files, err := diffFiles(ctx, cmd, root, []string{mb, head}, func(p, status string) []byte {
+	files, err := diffFiles(ctx, cmd, root, []string{base, head}, func(p, status string) []byte {
 		if status == "D" || read == maxBlobHeaders {
 			return nil
 		}
