@@ -880,5 +880,7 @@ in the reviewer view, phone bottom-sheet inspector.
 
 ## Status
 
-Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) F1–F13 built 2026-10-05; next: F14.
+Revised for v3 on 2026-10-05 (the v2 version was never built). All steps
+(B1–B4, F1–F14) built 2026-10-05, on main, not pushed. Follow-ups: verify Alt+← against a real
+keypress (synthetic keys can't reach the browser's own shortcuts), and try
+the phone sheet on a real device.
