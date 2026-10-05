@@ -57,6 +57,11 @@ func TestParseSpinner(t *testing.T) {
 			want:   &spinnerView{Verb: "Reticulating splines…", Parts: []string{"12s", "↓ 20 tokens"}, ElapsedSeconds: 12, Tokens: "↓ 20 tokens"},
 		},
 		{
+			name:   "side panel to the right of the transcript",
+			screen: screen("✻ Effecting… (5m 4s · ↓ 31.3k tokens · thought for 3s)          │       No changes this session"),
+			want:   &spinnerView{Verb: "Effecting…", Parts: []string{"5m 4s", "↓ 31.3k tokens", "thought for 3s"}, ElapsedSeconds: 304, Tokens: "↓ 31.3k tokens"},
+		},
+		{
 			name:   "finished turn has no ellipsis",
 			screen: screen("✻ Worked for 3m 2s"),
 			want:   nil,
