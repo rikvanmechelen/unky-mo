@@ -103,6 +103,11 @@ type hLang interface {
 	resolve(r *hResolver, p string, d *hDef, c hCall) (to string, want []string)
 }
 
+// hExternal is what resolve returns for a call it knows isn't to the repo's
+// code (a framework method on a receiver of known type), as opposed to "",
+// a call it couldn't pin down.
+const hExternal = "-"
+
 // hCalls adapts an hLang to callLang.
 type hCalls struct{ l hLang }
 
@@ -137,6 +142,9 @@ func (h *hCalls) funcs(idx *index, files []string, full bool) (*callSet, error) 
 			for _, c := range d.Calls {
 				to, want := h.l.resolve(r, p, d, c)
 				switch {
+				case to == hExternal:
+					// A framework method on a receiver of known type: not
+					// this repo's, so neither drawn nor counted.
 				case to != "" && to != fn.ID:
 					kind := CallStatic
 					if c.Ref {

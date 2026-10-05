@@ -23,6 +23,22 @@ type rbCalls struct {
 	// Per resolver: constant path → the files defining it, Zeitwerk's first.
 	r       *hResolver
 	classes map[string][]string
+	// tables maps a table to its model where self.table_name says so
+	// (setup); others go by convention.
+	tables map[string]string
+	// Per resolver (prepareTypes, rbtypes.go): synthetic members by owner
+	// and name, the names they answer, instance variable assignments by
+	// class, templates by path without extensions, and memos.
+	syn       map[string]map[string]rbSyn
+	synNames  map[string]bool
+	ivars     map[string][]rbIvar
+	views     map[string][]string
+	memo      map[string]rbType
+	inh       map[string]bool
+	factories map[string]string // factory name → class
+	// helpers memoizes viewCall's app/helpers lookups by name.
+	helpers       map[string][]string
+	helperClasses []hClassRef
 }
 
 const (
@@ -54,7 +70,11 @@ func (l *rbCalls) owns(p string) bool {
 
 func (l *rbCalls) setup(idx *index) bool {
 	l.rl, l.r, l.classes = &rubyLang{}, nil, nil
-	return l.rl.detect(idx)
+	if !l.rl.detect(idx) {
+		return false
+	}
+	l.tables = rbTableNames(idx)
+	return true
 }
 
 // fileOf: Ruby has no imports.
@@ -66,6 +86,20 @@ func (l *rbCalls) id(p string, d *hDef) string {
 		return "view:" + p
 	case rbMainName:
 		return "main:" + p
+	}
+	if kind, _, m, ok := rbSynName(d.Name); ok {
+		// A generated method: the ID a real method of that name would have.
+		owner := d.Owner
+		if kind == "column" {
+			owner = l.tableModel(strings.TrimPrefix(owner, "<table>"))
+		}
+		if strings.HasSuffix(owner, rbSelf) {
+			return strings.TrimSuffix(owner, rbSelf) + "." + m
+		}
+		return owner + "#" + m
+	}
+	if d.Owner == "" && rbIsTestBlockName(d.Name) {
+		return "test:" + p + "#" + d.Name // a spec's it "…" blocks have no class
 	}
 	if d.IsClass {
 		// A class reopened outside its autoloaded file (a monkey patch in an
@@ -95,7 +129,18 @@ func (l *rbCalls) display(p string, d *hDef) string {
 		}
 		return c
 	}
+	if kind, _, m, ok := rbSynName(d.Name); ok {
+		switch {
+		case kind == "column":
+			return last(l.tableModel(strings.TrimPrefix(d.Owner, "<table>"))) + "." + m + " (column)"
+		case strings.HasSuffix(d.Owner, rbSelf):
+			return last(strings.TrimSuffix(d.Owner, rbSelf)) + "." + m + " (" + kind + ")"
+		}
+		return last(d.Owner) + "#" + m + " (" + kind + ")"
+	}
 	switch {
+	case d.Owner == "" && rbIsTestBlockName(d.Name):
+		return path.Base(p) + " " + d.Name
 	case d.Name == rbViewName:
 		if i := strings.Index("/"+p, "/app/views/"); i >= 0 {
 			return p[i+len("app/views/"):]
@@ -134,7 +179,6 @@ var (
 
 	rbAssignRe  = regexp.MustCompile(`(?:^|[^\w.@$:])([a-z_]\w*)\s*(?:\|\||&&|[-+*/%])?=(?:[^=~>]|$)`)
 	rbMultiRe   = regexp.MustCompile(`^\s*\(?([a-z_]\w*(?:\s*,\s*\*?[a-z_]\w*)+)\)?\s*=[^=]`)
-	rbTypedRe   = regexp.MustCompile(`(?:^|[^\w.@$:])([a-z_]\w*)\s*(?:\|\|)?=\s*(` + rbConstPat + `)\.new\b`)
 	rbBlockPRe  = regexp.MustCompile(`(?:\bdo|\{)\s*\|([^|]*)\|`)
 	rbRescueRe  = regexp.MustCompile(`\brescue\b.*=>\s*([a-z_]\w*)`)
 	rbForRe     = regexp.MustCompile(`^\s*for\s+([a-z_]\w*(?:\s*,\s*[a-z_]\w*)*)\s+in\b`)
@@ -198,6 +242,8 @@ type rbFrame struct {
 	inst   string // the owner of a def inside ("Admin::User", or "Admin::User.self")
 	inDef  bool
 	mfunc  bool // module_function seen in this module
+	priv   bool // private/protected seen in this class: its defs aren't actions
+	aasm   bool // an aasm do / state_machine do block
 }
 
 // rbBases collects a class's bases as hClass entries: "i:" for the
@@ -223,6 +269,9 @@ func (l *rbCalls) scanFile(p, src string) hFile {
 	case ".jbuilder":
 		code, view = rubyCode(src), true
 	default:
+		if rbIsSchema(src) {
+			return rbSchemaScan(strings.Split(src, "\n"))
+		}
 		code = rubyCode(src)
 	}
 	lines := strings.Split(code, "\n")
@@ -260,6 +309,7 @@ func rbScanView(raw, code []string) hFile {
 		}
 		rbAddLocals(line, locals)
 		d.Calls = append(d.Calls, rbLineCalls(line, i+1, locals, "")...)
+		d.Calls = append(d.Calls, rbRailsCalls(raw[i], line, i+1, locals, "")...)
 	}
 	d.Body = hLinesBody(raw, all, nil)
 	return hFile{Defs: []hDef{d}, OK: true}
@@ -298,6 +348,12 @@ func rbScan(raw, code []string) hFile {
 	main := -1
 	stmt, cont := 0, false // the current statement's indentation; whether the next line continues it
 	pending := 0           // open brackets of the statement
+	// Rails: private methods (not actions), methods that render or redirect
+	// themselves (no implicit template), callback lambdas and blocks (their
+	// calls run on the instance) and AASM event blocks (their callbacks).
+	priv, renders, responds := map[int]bool{}, map[int]bool{}, map[int]bool{}
+	instLine, instCol, instUntil, instDepth := -1, 0, -1, 0
+	evDef, evDepth := -1, 0
 
 	for i := 0; i < len(code); i++ {
 		if strings.TrimSpace(raw[i]) == "__END__" {
@@ -379,7 +435,20 @@ func rbScan(raw, code []string) hFile {
 					push('b', m[0], p.def, p.scope, p.scope+rbSelf, false)
 					continue
 				}
+				if name := rbTestBlockName(strings.TrimSpace(raw[i])); name != "" && !p.inDef {
+					// test "…" do / it "…" do / setup do: a test definition.
+					defs = append(defs, hDef{Name: name, Owner: p.inst, Class: p.inst, Line: i + 1, Sig: hashOf("")})
+					idx := len(defs) - 1
+					if !opened {
+						owner, opened = idx, true
+					}
+					push('d', m[0], idx, p.scope, p.inst, true)
+					continue
+				}
 				pushBlock(m[0])
+				if strings.HasPrefix(trim, "aasm") || strings.HasPrefix(trim, "state_machine") {
+					stack[len(stack)-1].aasm = true
+				}
 			case "class", "module":
 				rest := line[m[0]:]
 				p := cur()
@@ -482,6 +551,9 @@ func rbScan(raw, code []string) hFile {
 					Sig: hashOf(strings.Join(strings.Fields(params), ""))}
 				defs = append(defs, d)
 				idx := len(defs) - 1
+				if (p.kind == 'c' && p.priv) || strings.HasPrefix(trim, "private ") || strings.HasPrefix(trim, "protected ") {
+					priv[idx] = true
+				}
 				ls := localsOf(idx)
 				for _, pm := range rbParamRe.FindAllStringSubmatch(params, -1) {
 					ls[pm[1]] = ""
@@ -526,13 +598,46 @@ func rbScan(raw, code []string) hFile {
 				name := rbScopeRe.FindStringSubmatch(trim)[1]
 				end := rbStatementEnd(code, i)
 				defs = append(defs, hDef{Name: name, Owner: fr.scope + rbSelf, Class: fr.scope + rbSelf, Static: true,
-					Line: i + 1, End: end + 1, Sig: hashOf("")})
+					Line: i + 1, End: end + 1, Sig: rbScopeSig})
 				owner = len(defs) - 1
 				for k := i + 1; k <= end; k++ {
 					override[k] = owner
 				}
+			case (trim == "private" || trim == "protected" || trim == "public") && fr.kind == 'c' && len(stack) > 0:
+				stack[len(stack)-1].priv = trim != "public"
+			case rbMacroRe.MatchString(trim):
+				defs = append(defs, rbMacroDefs(code, raw, i, fr.scope)...)
+			case fr.kind == 'b' && rbInAASM(stack) && (rbEventRe.MatchString(trim) || rbStateRe.MatchString(trim)):
+				ds := rbAASMDefs(code, raw, i, fr.scope, trim)
+				defs = append(defs, ds...)
+				if top := len(stack) - 1; len(ds) == 1 && strings.HasPrefix(ds[0].Name, "<aasm_event>") && top >= 0 && stack[top].line == i && stack[top].kind == 'b' {
+					evDef, evDepth = len(defs)-1, len(stack)
+				}
 			case rbCbRe.MatchString(trim):
-				refs = rbCallbackRefs(code, i, rbCbRe.FindString(trim))
+				macro := rbCbRe.FindString(trim)
+				refs = rbCallbackRefs(code, i, macro)
+				if macro != "helper_method" {
+					// A lambda's or block's calls run on the record; the
+					// macro's other arguments are read in the class.
+					end := rbStatementEnd(code, i)
+					for k := i; k <= end && k < len(code); k++ {
+						if loc := rbLambdaRe.FindStringIndex(code[k]); loc != nil {
+							instLine, instCol, instUntil = k, loc[0], end
+							break
+						}
+					}
+					if top := len(stack) - 1; top >= 0 && stack[top].line == i && stack[top].kind == 'b' {
+						instDepth = len(stack)
+					}
+				}
+			}
+		}
+		if evDef >= 0 {
+			switch {
+			case len(stack) < evDepth:
+				evDef = -1
+			case i > defs[evDef].Line-1:
+				defs[evDef].Calls = append(defs[evDef].Calls, rbLabelSymRefs(trim, i+1, rbAASMLabels)...)
 			}
 		}
 
@@ -543,7 +648,37 @@ func rbScan(raw, code []string) hFile {
 		if owner >= 0 && !defs[owner].IsClass {
 			superName = defs[owner].Name
 		}
-		calls := append(rbLineCalls(text, i+1, ls, superName), refs...)
+		var lineCalls []hCall
+		switch {
+		case i == instLine:
+			// The lambda starts mid-line: what's before it is the class's.
+			b := []byte(text)
+			blank(b, instCol, len(b))
+			lineCalls = rbLineCalls(string(b), i+1, ls, superName)
+			b = []byte(text)
+			blank(b, 0, instCol)
+			lineCalls = append(lineCalls, rbInstCalls(rbLineCalls(string(b), i+1, ls, superName))...)
+		case (i > instLine && i <= instUntil) || (instDepth > 0 && len(stack) >= instDepth):
+			lineCalls = rbInstCalls(rbLineCalls(text, i+1, ls, superName))
+		default:
+			lineCalls = rbLineCalls(text, i+1, ls, superName)
+		}
+		if instDepth > 0 && len(stack) < instDepth {
+			instDepth = 0
+		}
+		calls := append(lineCalls, refs...)
+		action := ""
+		if owner >= 0 && !defs[owner].IsClass {
+			calls = append(calls, rbIvarCalls(text, i+1, ls)...)
+			if !defs[owner].Static && !priv[owner] {
+				action = defs[owner].Name
+			}
+		}
+		calls = append(calls, rbRailsCalls(raw[i], text, i+1, ls, action)...)
+		if owner >= 0 {
+			renders[owner] = renders[owner] || rbRenders(text)
+			responds[owner] = responds[owner] || len(rbFind(rbRespondRe, text, "respond_to")) > 0
+		}
 		if owner < 0 {
 			if len(calls) == 0 {
 				continue
@@ -566,7 +701,11 @@ func rbScan(raw, code []string) hFile {
 			}
 		}
 	}
+	rbAddTemplateCalls(defs, priv, renders, responds)
 	for i := range defs {
+		if _, _, _, syn := rbSynName(defs[i].Name); syn && defs[i].Body != "" {
+			continue // its macro's lines, hashed when it was read
+		}
 		defs[i].Body = hLinesBody(raw, own[i], rbCommentRe)
 	}
 	// A class or module whose body is only other definitions (a namespace,
@@ -721,11 +860,25 @@ func rbCallbackRefs(code []string, i int, macro string) []hCall {
 }
 
 // rbAddLocals records the locals a line assigns (x = …, a, b = …, block
-// parameters, rescue => e, for x in), with the class of those assigned
-// Const.new.
+// parameters, rescue => e, for x in), with the expression (rbParseChain)
+// of those assigned a receiver chain, and of iterators' block parameters.
 func rbAddLocals(line string, locals map[string]string) {
+	typed := map[string]string{}
+	for _, m := range rbAssignRe.FindAllStringSubmatchIndex(line, -1) {
+		name := line[m[2]:m[3]]
+		if rbKeywords[name] {
+			continue
+		}
+		eq := strings.IndexByte(line[m[3]:], '=') + m[3]
+		if op := strings.TrimSpace(line[m[3]:eq]); op == "" || op == "||" {
+			typed[name] = rbExprAt(line, eq+1, locals) // x = …, x ||= …
+		}
+	}
+	for name, t := range typed {
+		locals[name] = t
+	}
 	for _, m := range rbAssignRe.FindAllStringSubmatch(line, -1) {
-		if !rbKeywords[m[1]] {
+		if _, ok := typed[m[1]]; !ok && !rbKeywords[m[1]] {
 			locals[m[1]] = ""
 		}
 	}
@@ -747,9 +900,7 @@ func rbAddLocals(line string, locals map[string]string) {
 			locals[strings.TrimSpace(n)] = ""
 		}
 	}
-	for _, m := range rbTypedRe.FindAllStringSubmatch(line, -1) {
-		locals[m[1]] = m[2] + ".new"
-	}
+	rbBindBlocks(line, locals)
 }
 
 func rbIsConst(s string) bool {
@@ -778,7 +929,34 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 	for _, m := range rbSendRe.FindAllStringSubmatch(line, -1) {
 		out = append(out, hCall{Recv: recvOf(m[1]), Name: m[3], Line: lineNo, Ref: m[2] == "method"})
 	}
-	newAt := map[int]string{} // ")" closing Const.new( → the instance's receiver
+	// recvAt maps the ")", "]" or "}" closing a call's arguments, an index
+	// or a block to the chain it ends: the receiver of what hangs off it.
+	recvAt := map[int]string{}
+	// after records what follows a chain ending at e: arguments, an index
+	// or a brace block, each ending the chain's value at its close.
+	after := func(e int, recv string) {
+		if recv == "?" || recv == "" {
+			return
+		}
+		for e < len(line) {
+			o := e
+			if line[o] == ' ' && o+1 < len(line) && line[o+1] == '{' {
+				o++ // a block: x.each { … }
+			}
+			if line[o] != '(' && line[o] != '[' && line[o] != '{' {
+				return
+			}
+			cl := matchingParen(line, o)
+			if cl < 0 {
+				return
+			}
+			if line[o] == '[' {
+				recv += ".[]"
+			}
+			recvAt[cl] = recv
+			e = cl + 1
+		}
+	}
 	for _, m := range rbChainRe.FindAllStringIndex(line, -1) {
 		s, e := m[0], m[1]
 		if s > 0 {
@@ -793,18 +971,20 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 		segs := rbSegRe.Split(line[s:e], -1)
 		recv, k := "", 0
 		if j := lastNonSpace(line[:s]); j >= 0 && line[j] == '.' {
-			// Hangs off an expression: x(…).m, or Const.new(…).m.
+			// Hangs off an expression: x(…).m, Const.new(…).m, xs[0].m.
 			recv = "?"
-			if q := lastNonSpace(strings.TrimSuffix(line[:j], "&")); q >= 0 && line[q] == ')' && newAt[q] != "" {
-				recv = newAt[q]
+			if q := lastNonSpace(strings.TrimSuffix(line[:j], "&")); q >= 0 && recvAt[q] != "" {
+				recv = recvAt[q]
 			}
 		} else {
 			head := segs[0]
 			k = 1
 			paren := len(segs) == 1 && e < len(line) && line[e] == '('
 			switch {
+			case s > 0 && line[s-1] == '@' && (s < 2 || line[s-2] != '@'):
+				recv = "@" + head // an instance variable
 			case s > 0 && (line[s-1] == '@' || line[s-1] == '$'):
-				recv = "?" // an instance or global variable
+				recv = "?" // a class or global variable
 			case rbIsConst(head):
 				recv = head
 			case head == "self":
@@ -828,16 +1008,28 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 					// new(…) in a class method: an instance of self's class.
 					out = append(out, hCall{Name: head, Line: lineNo})
 					recv = rbSelfNew
-					if paren {
-						if cl := matchingParen(line, e); cl > e {
-							newAt[cl] = rbSelfNew
+				case (head == "policy" || head == "policy_scope") && paren:
+					// Pundit: policy(@x).show? is XPolicy#show?, and
+					// policy_scope(X) a relation of X.
+					out = append(out, hCall{Name: head, Line: lineNo})
+					recv = "?"
+					if cl := matchingParen(line, e); cl > e {
+						if inner, _ := rbParseChain(line[:cl], e+1, locals, nil); inner != "" {
+							if head == "policy" {
+								recvAt[cl] = rbPolicyRecv + inner
+							} else {
+								recvAt[cl] = inner + ".all"
+							}
 						}
 					}
+					continue
 				default:
 					if !rbSkip[head] && !rbSendNames[head] {
 						out = append(out, hCall{Name: head, Line: lineNo})
+						recv = "self." + head
+					} else {
+						recv = "?"
 					}
-					recv = "?"
 				}
 			}
 		}
@@ -854,20 +1046,21 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 					name += "="
 				}
 			}
-			out = append(out, hCall{Recv: recv, Name: name, Line: lineNo})
-			if name == "new" && rbIsConst(recv) && !strings.Contains(recv, ".") {
-				recv += ".new"
-				if k == len(segs)-1 {
-					if o := e + len(line[e:]) - len(strings.TrimLeft(line[e:], " ")); o < len(line) && line[o] == '(' {
-						if cl := matchingParen(line, o); cl > o {
-							newAt[cl] = recv
-						}
-					}
-				}
+			if strings.HasPrefix(recv, rbPolicyRecv) {
+				out = append(out, hCall{Recv: recv, Name: "<" + name, Line: lineNo}) // see resolveRails
 			} else {
+				out = append(out, hCall{Recv: recv, Name: name, Line: lineNo})
+			}
+			switch {
+			case recv == "?" || strings.HasPrefix(recv, rbPolicyRecv) || strings.HasSuffix(name, "="):
 				recv = "?"
+			case strings.Count(recv, ".") >= rbMaxSteps:
+				recv = "?"
+			default:
+				recv += "." + name
 			}
 		}
+		after(e, recv)
 	}
 	return out
 }
@@ -892,6 +1085,7 @@ func (l *rbCalls) prepare(r *hResolver) {
 		home := l.rl.constFile(c)
 		sort.SliceStable(fs, func(i, j int) bool { return fs[i] == home && fs[j] != home })
 	}
+	l.prepareTypes(r)
 }
 
 // constant resolves a constant as written in scope (the class nesting it
@@ -975,12 +1169,11 @@ func (l *rbCalls) chain(r *hResolver, files []string, owner string) []hClassRef 
 }
 
 // find looks name up in class owner (its files in order) and up its
-// chain. On a miss it returns the IDs the call would have had.
+// chain, generated members (associations, columns, …) included. On a miss
+// it returns the IDs the call would have had.
 func (l *rbCalls) find(r *hResolver, files []string, owner, name string) (string, []string) {
-	for _, f := range files {
-		if def, dp := r.method(hClassRef{f, owner}, name, l.base); def != nil {
-			return l.id(dp, def), nil
-		}
+	if id, _, _ := l.lookup(r, files, owner, name); id != "" {
+		return id, nil
 	}
 	return "", l.miss(r, l.chain(r, files, owner), name)
 }
@@ -990,7 +1183,7 @@ func (l *rbCalls) find(r *hResolver, files []string, owner, name string) (string
 // name the IDs along its chain; otherwise it's any removed method of that
 // name, kept quiet (it's most likely a framework method).
 func (l *rbCalls) miss(r *hResolver, chain []hClassRef, name string) []string {
-	if len(r.byName[name]) == 0 {
+	if len(r.byName[name]) == 0 && !l.synNames[name] {
 		return r.anyMethodWant(name)
 	}
 	var out []string
@@ -1022,6 +1215,9 @@ func (l *rbCalls) filesOf(r *hResolver, p, owner string) []string {
 
 func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []string) {
 	l.prepare(r)
+	if strings.HasPrefix(c.Recv, "<") {
+		return l.resolveRails(r, p, d, c)
+	}
 	recv := c.Recv
 	if recv == rbHelperRecv {
 		recv = rbSelfNew
@@ -1036,17 +1232,28 @@ func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []s
 			if t := r.def(p, "", c.Name); t != nil && !t.IsClass {
 				return l.id(p, t), nil
 			}
+			if rbTestFramework(c.Name) {
+				return hExternal, nil
+			}
 			return "", l.miss(r, nil, c.Name)
 		}
 		if c.Name == "new" && strings.HasSuffix(ctx, rbSelf) {
 			return l.construct(r, l.filesOf(r, p, scope), scope)
 		}
-		return l.find(r, l.filesOf(r, p, ctx), ctx, c.Name)
+		id, want := l.find(r, l.filesOf(r, p, ctx), ctx, c.Name)
+		if id == "" && l.framework(r, ctx, c.Name) {
+			return hExternal, nil
+		}
+		return id, want
 	case recv == rbSelfNew:
 		if scope == "" {
 			return "", nil
 		}
-		return l.find(r, l.filesOf(r, p, scope), scope, c.Name)
+		id, want := l.find(r, l.filesOf(r, p, scope), scope, c.Name)
+		if id == "" && l.framework(r, scope, c.Name) {
+			return hExternal, nil
+		}
+		return id, want
 	case recv == "super":
 		for _, b := range r.classes[p][ctx] {
 			if bc, ok := l.base(p, b); ok {
@@ -1056,6 +1263,8 @@ func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []s
 			}
 		}
 		return "", nil
+	case rbChainRecv(recv):
+		return l.resolveTyped(r, p, d, c)
 	case rbIsConst(recv):
 		inst := strings.HasSuffix(recv, ".new")
 		cp, files := l.constant(scope, strings.TrimSuffix(recv, ".new"))
@@ -1067,26 +1276,57 @@ func (l *rbCalls) resolve(r *hResolver, p string, d *hDef, c hCall) (string, []s
 			}
 			return "", l.miss(r, []hClassRef{{"", w}}, c.Name)
 		}
-		switch {
-		case inst:
-			return l.find(r, files, cp, c.Name)
-		case c.Name == "new":
-			return l.construct(r, files, cp)
+		t := rbType{cls: cp, kind: 's'}
+		if inst {
+			t.kind = 'i'
 		}
-		return l.find(r, files, cp+rbSelf, c.Name)
+		id, want, _, _ := l.callOn(r, t, c.Name)
+		return id, want
 	}
 	// An unknown receiver: never guessed, but a removed method nothing else
 	// is named like is still caught.
 	return "", r.anyMethodWant(c.Name)
 }
 
+// framework reports whether a self call in owner (a class or its
+// singleton) that the repo doesn't define is the framework's: a model's
+// ActiveRecord methods, a controller's or mailer's, a test's assertions.
+func (l *rbCalls) framework(r *hResolver, owner, name string) bool {
+	cls := strings.TrimSuffix(owner, rbSelf)
+	inst := owner == cls
+	switch {
+	case l.isModel(r, cls):
+		if inst {
+			return rbRecordFw[name]
+		}
+		return rbFinders[name] || rbRelations[name] || rbModelFw[name]
+	case inst && l.inherits(r, cls, "ActionController::Base", "ActionController::API", "ApplicationController"):
+		return rbControllerFw[name]
+	case inst && l.isMailer(r, cls):
+		return rbMailerFw[name]
+	case inst && l.isJob(r, cls):
+		return name == "perform_later" || name == "retry_job" || name == "arguments" || name == "job_id"
+	case strings.HasSuffix(cls, "Test") || strings.HasSuffix(cls, "Spec") || l.inherits(r, cls, "ActiveSupport::TestCase", "Minitest::Test"):
+		return rbTestFramework(name)
+	}
+	return false
+}
+
 // construct maps Const.new to what runs: initialize, if the class or an
-// ancestor in the repo defines it.
+// ancestor in the repo defines it. A ViewComponent without one runs its
+// class (where its template call is).
 func (l *rbCalls) construct(r *hResolver, files []string, c string) (string, []string) {
 	if id, _ := l.find(r, files, c, "initialize"); id != "" {
 		return id, nil
 	}
-	return "", nil
+	if strings.HasSuffix(c, "Component") {
+		for _, f := range files {
+			if d := r.def(f, "", c); d != nil && d.IsClass {
+				return l.id(f, d), nil
+			}
+		}
+	}
+	return hExternal, nil // Class#new
 }
 
 // viewCall resolves a bare call in a template: a ViewComponent template's
@@ -1111,18 +1351,8 @@ func (l *rbCalls) viewCall(r *hResolver, p, name string) (string, []string) {
 		}
 	}
 	found := map[string]bool{}
-	for _, hp := range r.paths {
-		if !strings.Contains("/"+hp, "/app/helpers/") {
-			continue
-		}
-		for _, cls := range r.files[hp].Classes {
-			if strings.HasSuffix(cls.Name, rbSelf) {
-				continue
-			}
-			if def, dp := r.method(hClassRef{hp, cls.Name}, name, l.base); def != nil {
-				found[l.id(dp, def)] = true
-			}
-		}
+	for _, id := range l.helperIDs(r, name) {
+		found[id] = true
 	}
 	if c, fs := l.viewController(rel); len(fs) > 0 {
 		for _, cr := range l.chain(r, fs, c) {
