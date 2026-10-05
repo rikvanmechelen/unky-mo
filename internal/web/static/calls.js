@@ -4,20 +4,6 @@
 // call on the right. Clicking a function shows its detail; "Focus" redraws
 // the graph around it. Needs common.js (el) and graph.js (svgEl).
 
-const CALL_MARK = { added: "+", removed: "−", renamed: "↦", signature: "sig", changed: "~" };
-const CALL_STATUS_TEXT = {
-  added: "added", removed: "removed", renamed: "renamed", signature: "signature changed", changed: "body changed",
-};
-const CALLS_COLLAPSE_AT = 60; // more changed functions than this start grouped by unit
-const CALL_FINDING_TEXT = {
-  "removed-called": "removed but still called",
-  "stimulus-unbound": "binds a Stimulus method or target that doesn't exist",
-  "route-without-action": "routes to an action its controller doesn't define",
-  "signature-callers": "signature changed; callers not updated",
-  untested: "no test reaches it",
-  "test-not-updated": "its test file wasn't updated",
-};
-
 // callIndex maps the graph by function: funcs, and calls in and out.
 function callIndex(cg) {
   const funcs = new Map((cg.funcs || []).map((f) => [f.id, f]));

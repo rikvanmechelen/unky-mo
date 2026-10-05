@@ -186,6 +186,18 @@ func TestAnalyzeArchitecture(t *testing.T) {
 	if !a.Rules.Found || a.Rules.Layers != 2 || a.Rules.Error != "" {
 		t.Errorf("rules %+v", a.Rules)
 	}
+	// Every changed Go file, tests and the deleted f/f.go too; not go.mod
+	// or the migration.
+	for p, u := range map[string]string{"a/a.go": "a", "a/a_test.go": "a", "e/e.go": "e", "f/f.go": "f", "cmd/mo/main.go": "cmd/mo"} {
+		if a.FileUnits[p] != u {
+			t.Errorf("file unit of %s = %q, want %q", p, a.FileUnits[p], u)
+		}
+	}
+	for _, p := range []string{"go.mod", "db/migrate/001_init.sql"} {
+		if u, ok := a.FileUnits[p]; ok {
+			t.Errorf("%s has unit %q", p, u)
+		}
+	}
 }
 
 func TestAnalyzeSurface(t *testing.T) {

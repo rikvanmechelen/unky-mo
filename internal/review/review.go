@@ -120,6 +120,11 @@ type Analysis struct {
 	// packages and both ends of its edges) that's in one, judged with the
 	// unit's own language.
 	UnitLayers map[string]string `json:"unitLayers"`
+	// FileUnits names the unit of every changed file a language reads, test
+	// files included (a deleted file by its old path's unit): what the
+	// browser can't tell from a path (a Kotlin file's unit is its module and
+	// package, not its folder).
+	FileUnits map[string]string `json:"fileUnits"`
 	Languages  []LangInfo        `json:"languages"`
 	Edges      []Edge            `json:"edges"`
 	Existing   []Edge            `json:"existing"`
@@ -232,7 +237,7 @@ func (r *repo) inWorktree(literal string) bool {
 // contract surface.
 func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Analysis, error) {
 	r := &repo{ctx: ctx, cmd: cmd, root: o.Root, rev: o.Rev, head: o.Head}
-	a := &Analysis{Packages: []Package{}, Languages: []LangInfo{}, Edges: []Edge{}, Existing: []Edge{}}
+	a := &Analysis{Packages: []Package{}, Languages: []LangInfo{}, Edges: []Edge{}, Existing: []Edge{}, FileUnits: map[string]string{}}
 
 	var files []*file
 	for _, of := range o.Files {
@@ -275,6 +280,17 @@ func Analyze(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*
 			swift = true
 		}
 		n, ne := len(a.Packages), len(a.Edges)+len(a.Existing)
+		for _, f := range files {
+			p := f.Path
+			if f.after == nil && f.before != nil {
+				p = f.oldPath()
+			}
+			if _, done := a.FileUnits[f.Path]; !done && l.owns(p) {
+				if u := l.unit(p); u != "" {
+					a.FileUnits[f.Path] = u
+				}
+			}
+		}
 		edgeDelta(idx, l, a, files, rules)
 		if lb, ok := l.(labeler); ok && len(a.Packages)+len(a.Edges)+len(a.Existing) > n+ne {
 			if a.Labels == nil {

@@ -48,6 +48,10 @@ func TestKotlinArchitecture(t *testing.T) {
 	if got := edgeKeys(a.Edges); !reflect.DeepEqual(got, []string{"+core/data>core/model", "+core/model>app/ui"}) {
 		t.Errorf("edges %v", got)
 	}
+	// A file's unit is its module and package, not its folder.
+	if u := a.FileUnits["core/data/src/main/kotlin/com/acme/core/data/Repo.kt"]; u != "core/data" {
+		t.Errorf("Repo.kt's unit %q", u)
+	}
 	for _, e := range a.Edges {
 		if e.Lang != "kotlin" || e.Approx {
 			t.Errorf("edge %+v", e)

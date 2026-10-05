@@ -12,330 +12,22 @@
 // from the ticket and the prompts. Data comes from /api/sessions/{windowID}/overview and
 // /architecture, polled with If-None-Match: every 3 s while the tab is
 // visible, every 15 s otherwise (for the strip). Loaded after editor.js
-// (storageGet/storageSet), files.js (file-row helpers) and graph.js
-// (svgEl).
+// (storageGet/storageSet), files.js (file-row helpers), graph.js (svgEl)
+// and overview-model.js (the pure helpers and the entity model).
 
 const OVERVIEW_POLL_MS = 3000;
 const OVERVIEW_HIDDEN_KEY = "mo.overview.hidden";
 const OVERVIEW_MODE_KEY = "mo.overview.mode";
 
-// Kinds in bar order: what needs reading first, then the noise.
-const OVERVIEW_KINDS = [
-  { kind: "logic", label: "Logic" },
-  { kind: "test", label: "Tests" },
-  { kind: "generated", label: "Generated" },
-  { kind: "docs", label: "Docs" },
-  { kind: "format", label: "Whitespace only" },
-  { kind: "renamed", label: "Renamed" },
-];
-const OVERVIEW_KIND_LABEL = Object.fromEntries(OVERVIEW_KINDS.map((k) => [k.kind, k.label]));
-const OVERVIEW_NOISE = new Set(["generated", "format", "renamed"]);
 const OVERVIEW_ALL_IMPORTS_KEY = "mo.overview.allImports";
 // Whether the architecture section shows packages or functions (calls.js).
 const OVERVIEW_ARCH_VIEW_KEY = "mo.overview.archView";
-
-// Contract surface categories, in display order.
-const SURFACE_KINDS = [
-  { key: "exports", label: "Exported Go API" },
-  { key: "routes", label: "HTTP routes" },
-  { key: "flags", label: "CLI flags" },
-  { key: "config", label: "Config keys" },
-  { key: "env", label: "Env vars" },
-  { key: "deps", label: "Dependencies" },
-  { key: "migrations", label: "Migrations" },
-  { key: "permissions", label: "Permissions" },
-];
 const SURFACE_SHOWN = 40; // entries shown per category before "N more"
-const LANG_LABEL = { go: "Go", ruby: "Ruby", node: "JavaScript/TypeScript", python: "Python", kotlin: "Kotlin/Java", swift: "Swift" };
 const OVERVIEW_BG_POLL_MS = 15000; // while the tab is hidden, for the strip
-const TRACE_COLUMNS = 20; // turns shown as columns; older ones scroll
 const AGENT_REFRESH_MS = 15000; // a running subagent's transcript is re-read this often
-const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 const STRIP_AREAS = 4; // a change this spread out shows in the strip
 const SCOPE_KEY = "mo.overview.scope."; // + windowID: the last scope check
 const TICKET_RE = /[A-Z][A-Z0-9]+-\d+/;
-
-// scopeRequestFrom builds a scope check's turns from the trace: every
-// prompt (those without edits too: they say what the task is) with the
-// listed files its edits touched, then (turn 0) the files changed outside
-// the conversation or before its first prompt.
-function scopeRequestFrom(files, trace, root) {
-  const { groups } = buildTraceRows(files, trace.edits, root);
-  const byTurn = new Map();
-  for (const g of groups) {
-    for (const r of g.rows) {
-      const turns = r.turns.size ? [...r.turns] : [0];
-      for (const n of turns) {
-        if (!byTurn.has(n)) byTurn.set(n, []);
-        byTurn.get(n).push(r.f.path);
-      }
-    }
-  }
-  const out = trace.turns.map((t) => ({ n: t.n, prompt: t.text, files: byTurn.get(t.n) || [] }));
-  if (byTurn.has(0)) out.push({ n: 0, prompt: "", files: byTurn.get(0) });
-  return out;
-}
-
-// createIntentTrace folds transcript lines into prompts ("turns") and the
-// file edits made in each. describeUser is chat.js's describeUserString, so
-// a prompt here is exactly what the transcript shows as one. Lines are
-// folded in file order whatever branch they're on: an edit made on an
-// abandoned branch still changed the file. Subagent lines are added with
-// addAgent and land on the turn whose Agent call spawned them.
-function createIntentTrace(describeUser) {
-  let turns, edits, agentTurns, seen, lastNote, version;
-  function reset() {
-    turns = []; // [{n, uuid, text}]
-    edits = []; // [{turn, path (absolute), tool, id, note, agent, hunks}]
-    agentTurns = new Map(); // Agent tool_use id → turn
-    seen = new Set(); // line uuids already folded (a reconnect replays them)
-    lastNote = new Map(); // "" (main) or agent id → the last assistant text
-    version = 0;
-  }
-  reset();
-  const turnNow = () => turns.length; // 0 before the first prompt
-
-  function fold(msg, agent, agentTurn) {
-    const key = (agent || "") + ":" + (msg.uuid || "");
-    if (msg.uuid) {
-      if (seen.has(key)) return;
-      seen.add(key);
-    }
-    const content = msg.message?.content;
-    if (msg.type === "user") {
-      if (Array.isArray(content)) {
-        for (const b of content) {
-          if (b.type === "tool_result" && b.is_error) {
-            const n = edits.length;
-            edits = edits.filter((e) => e.id !== b.tool_use_id);
-            if (edits.length !== n) version++;
-          } else if (b.type === "tool_result" && msg.toolUseResult && typeof msg.toolUseResult === "object") {
-            // Which lines the edit wrote: [newStart, newLines, oldStart,
-            // oldLines] per hunk; a created file is all of it.
-            const e = edits.find((x) => x.id === b.tool_use_id);
-            const r = msg.toolUseResult;
-            if (e && Array.isArray(r.structuredPatch)) {
-              e.hunks = r.type === "create" ? [[1, Infinity, 1, 0]]
-                : r.structuredPatch.map((h) => [h.newStart, h.newLines, h.oldStart, h.oldLines]);
-              version++;
-            }
-          }
-        }
-      }
-      if (agent) return;
-      if (Array.isArray(content) && content.length && content.every((b) => b.type === "tool_result")) return;
-      const text = typeof content === "string" ? content
-        : Array.isArray(content) ? content.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "";
-      const hasImage = Array.isArray(content) && content.some((b) => b.type === "image");
-      if (!text && !hasImage) return;
-      if (describeUser(msg, text).kind !== "user") return;
-      turns.push({ n: turns.length + 1, uuid: msg.uuid, text });
-      lastNote.set("", "");
-      version++;
-      return;
-    }
-    if (msg.type !== "assistant" || !Array.isArray(content)) return;
-    const noteKey = agent || "";
-    for (const b of content) {
-      if (b.type === "text" && b.text.trim()) lastNote.set(noteKey, b.text.trim());
-      if (b.type !== "tool_use") continue;
-      if (!agent && (b.name === "Agent" || b.name === "Task")) agentTurns.set(b.id, turnNow());
-      const p = EDIT_TOOLS.has(b.name) ? (b.input?.file_path ?? b.input?.notebook_path) : null;
-      if (typeof p !== "string") continue;
-      edits.push({ turn: agent ? agentTurn : turnNow(), path: p, tool: b.name, id: b.id, note: lastNote.get(noteKey) || "", agent: agent || null });
-      version++;
-    }
-  }
-
-  return {
-    reset,
-    add: (msg) => fold(msg, null, 0),
-    // addAgent folds a subagent's lines; turn is that of its Agent call.
-    addAgent: (agentID, turn, lines) => { for (const m of lines) fold(m, agentID, turn); },
-    agentTurn: (toolUseID) => agentTurns.get(toolUseID),
-    hasAgents: () => agentTurns.size > 0,
-    get turns() { return turns; },
-    get edits() { return edits; },
-    get version() { return version; },
-  };
-}
-
-// turnForRange is the turn whose edit last wrote any of lines from..to of
-// file rel (repo-relative) as it is now, from the edits' hunks. A hunk's
-// lines move with every later edit to the same file above it, so each is
-// shifted by those edits' line deltas first: approximate, but right for the
-// usual run of edits. Null when no edit with hunks touched those lines.
-function turnForRange(trace, root, rel, from, to) {
-  const abs = root.replace(/\/$/, "") + "/" + rel;
-  const edits = trace.edits.filter((e) => e.path === abs && e.hunks);
-  let best = null;
-  edits.forEach((e, i) => {
-    for (const [start, count] of e.hunks) {
-      let a = start, b = count === Infinity ? Infinity : start + Math.max(count, 1) - 1;
-      for (const later of edits.slice(i + 1)) {
-        for (const [ns, nl, os, ol] of later.hunks) {
-          if (nl === Infinity) { a = -1; break; } // rewritten whole: these lines are gone
-          if (os + ol <= a) { const d = nl - ol; a += d; if (b !== Infinity) b += d; }
-        }
-      }
-      if (a > 0 && a <= to && b >= from) best = e;
-    }
-  });
-  return best ? trace.turns[best.turn - 1] || null : null;
-}
-
-// buildTraceRows lays an overview's files against the turns that edited
-// them: columns are the turns with an edit to a listed file (the last
-// TRACE_COLUMNS), groups are files by the turn that first edited them, with
-// the files no edit in this conversation touched last (turn null).
-function buildTraceRows(files, edits, root) {
-  const listed = new Map(files.map((f) => [f.path, f]));
-  const byPath = new Map();
-  const prefix = root.replace(/\/$/, "") + "/";
-  for (const e of edits) {
-    if (!e.path.startsWith(prefix)) continue;
-    const rel = e.path.slice(prefix.length);
-    if (!listed.has(rel)) continue;
-    if (!byPath.has(rel)) byPath.set(rel, []);
-    byPath.get(rel).push(e);
-  }
-  const turnSet = new Set();
-  for (const es of byPath.values()) for (const e of es) turnSet.add(e.turn);
-  const columns = [...turnSet].sort((a, b) => a - b).slice(-TRACE_COLUMNS);
-  const groups = new Map();
-  for (const f of files) {
-    const es = byPath.get(f.path) || [];
-    const first = es.length ? Math.min(...es.map((e) => e.turn)) : null;
-    if (!groups.has(first)) groups.set(first, []);
-    groups.get(first).push({ f, edits: es, turns: new Set(es.map((e) => e.turn)) });
-  }
-  const order = [...groups.keys()].sort((a, b) => (a === null) - (b === null) || a - b);
-  return { columns, groups: order.map((turn) => ({ turn, rows: groups.get(turn) })), traced: byPath.size };
-}
-
-// oneLine collapses whitespace and cuts text to max characters.
-function oneLine(text, max) {
-  const t = String(text).replace(/\s+/g, " ").trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
-
-// summarizeOverview groups an overview's files by area, biggest first. An
-// area's lines count every file at least once, so a rename or a binary file
-// still gets a tile.
-function summarizeOverview(o) {
-  const byArea = new Map();
-  for (const f of o.files || []) {
-    let a = byArea.get(f.area);
-    if (!a) byArea.set(f.area, (a = { area: f.area, added: 0, removed: 0, weight: 0, files: [], noise: true }));
-    a.added += f.added;
-    a.removed += f.removed;
-    a.weight += Math.max(1, f.added + f.removed);
-    a.files.push(f);
-    if (!OVERVIEW_NOISE.has(f.kind)) a.noise = false;
-  }
-  const areas = [...byArea.values()].sort((x, y) => y.weight - x.weight || (x.area < y.area ? -1 : 1));
-  return { areas, logicLines: o.kinds?.logic?.lines || 0 };
-}
-
-// layoutTreemap places items ({weight}) in the w×h box as a squarified
-// treemap (Bruls et al.): rows of tiles along the shorter side, each row
-// kept as square as it can be. Items must be sorted by weight, largest
-// first. Returns [{item, x, y, w, h}].
-function layoutTreemap(items, w, h) {
-  const out = [];
-  let x = 0, y = 0;
-  let rest = items.filter((it) => it.weight > 0);
-  let total = rest.reduce((s, it) => s + it.weight, 0);
-  while (rest.length && w > 0 && h > 0) {
-    const scale = (w * h) / total; // area per unit of weight
-    const side = Math.min(w, h);
-    const worst = (row, sum) => {
-      const rowArea = sum * scale;
-      let m = 0;
-      for (const it of row) {
-        const a = it.weight * scale;
-        m = Math.max(m, (side * side * a) / (rowArea * rowArea), (rowArea * rowArea) / (side * side * a));
-      }
-      return m;
-    };
-    let row = [rest[0]], sum = rest[0].weight;
-    while (row.length < rest.length) {
-      const next = rest[row.length];
-      if (worst([...row, next], sum + next.weight) > worst(row, sum)) break;
-      row.push(next);
-      sum += next.weight;
-    }
-    const thick = (sum * scale) / side; // the row's depth across the short side
-    let off = 0;
-    for (const it of row) {
-      const len = (it.weight * scale) / thick;
-      out.push(w >= h ? { item: it, x, y: y + off, w: thick, h: len } : { item: it, x: x + off, y, w: len, h: thick });
-      off += len;
-    }
-    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
-    rest = rest.slice(row.length);
-    total -= sum;
-  }
-  return out;
-}
-
-// archGraph picks what the architecture graph shows. By default that's the
-// change itself: the ends of the dependencies it adds or removes, and the
-// existing dependencies between them for context. With allImports, every
-// touched unit and everything it depends on (dense for Rails, whose layers
-// reference each other in cycles).
-function archGraph(arch, allImports) {
-  const status = new Map((arch.packages || []).map((p) => [p.path, p.status]));
-  const nodes = new Map(); // path → {path, status}
-  const add = (p) => { if (!nodes.has(p)) nodes.set(p, { path: p, status: status.get(p) || "" }); };
-  if (allImports) for (const p of arch.packages || []) add(p.path);
-  const edges = [];
-  for (const e of arch.edges || []) { add(e.from); add(e.to); edges.push(e); }
-  for (const e of arch.existing || []) {
-    if (!allImports && !(nodes.has(e.from) && nodes.has(e.to))) continue;
-    add(e.from); add(e.to);
-    edges.push(e);
-  }
-  return { nodes: [...nodes.values()], edges };
-}
-
-// layoutArchGraph places packages in rows by import depth (a package sits
-// below everything that imports it) and orders each row by the average x of
-// its importers, so edges mostly run straight down. Cycles (an edge removed
-// one way and added the other) are cut where they're found. Returns
-// {rows: [[node]], depth: Map path → row}.
-function layoutArchGraph(nodes, edges) {
-  const parents = new Map(nodes.map((n) => [n.path, []]));
-  for (const e of edges) if (parents.has(e.to) && parents.has(e.from) && e.from !== e.to) parents.get(e.to).push(e.from);
-  const depth = new Map();
-  const visiting = new Set();
-  const depthOf = (p) => {
-    if (depth.has(p)) return depth.get(p);
-    if (visiting.has(p)) return 0;
-    visiting.add(p);
-    let d = 0;
-    for (const q of parents.get(p)) d = Math.max(d, depthOf(q) + 1);
-    visiting.delete(p);
-    depth.set(p, d);
-    return d;
-  };
-  const sorted = [...nodes].sort((a, b) => (a.path < b.path ? -1 : 1));
-  for (const n of sorted) depthOf(n.path);
-  const rows = [];
-  for (const n of sorted) (rows[depth.get(n.path)] ||= []).push(n);
-  const pos = new Map();
-  rows.forEach((row, r) => {
-    if (r > 0) {
-      const bary = (n) => {
-        const xs = parents.get(n.path).filter((q) => pos.has(q)).map((q) => pos.get(q));
-        return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Infinity;
-      };
-      row.sort((a, b) => bary(a) - bary(b) || (a.path < b.path ? -1 : 1));
-    }
-    row.forEach((n, i) => pos.set(n.path, (i + 0.5) / row.length));
-  });
-  return { rows: rows.filter(Boolean), depth };
-}
 
 // Skeletons stand in for the parts of the tab still loading: shimmering
 // boxes laid out with the real sections' classes, so the page doesn't jump
@@ -432,7 +124,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   let archEtag = null;
   let allImports = storageGet(OVERVIEW_ALL_IMPORTS_KEY) === true;
   let archView = storageGet(OVERVIEW_ARCH_VIEW_KEY) === "functions" ? "functions" : "packages";
-  let calls = null; // the last /calls response (fetched only for the Functions view)
+  let calls = null; // the last /calls response (fetched while the tab is visible)
   let callsEtag = null;
   let callsError = "";
   let callsInflight = -1;
@@ -535,7 +227,7 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
   // redFindings counts the call findings that are bugs waiting to happen
   // (a removed function still called, a view binding a Stimulus method that
   // doesn't exist, a route to a missing action), from the last /calls
-  // answer (only known once the Functions view was opened).
+  // answer (read while the tab is visible).
   const RED_FINDINGS = ["removed-called", "stimulus-unbound", "route-without-action"];
   function redFindings() {
     return calls?.repo ? (calls.findings || []).filter((f) => RED_FINDINGS.includes(f.kind)).length : 0;
@@ -1309,10 +1001,10 @@ function createOverview(panel, { onOpenDiff, describeUser = () => ({ kind: "user
     }
   }
 
-  // loadCalls polls /calls on its own, only while the Functions view is
-  // shown: it can take seconds, and the rest of the tab shouldn't wait.
+  // loadCalls polls /calls on its own while the tab is visible: it can
+  // take seconds, and the rest of the tab shouldn't wait.
   async function loadCalls() {
-    if (archView !== "functions" || !visible || !windowID || !available || callsInflight === gen) return;
+    if (!visible || !windowID || !available || callsInflight === gen) return;
     if (mode === "commits" && !selWorktree() && calls) return; // commits never change
     const g = gen;
     callsInflight = g;

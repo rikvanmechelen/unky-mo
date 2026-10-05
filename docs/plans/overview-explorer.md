@@ -266,6 +266,59 @@ it over. A step gets its detailed plan in this doc before coding
   and badge all need it. Until it lands, the map shows packages from
   `/architecture` with function-row skeletons. Unit-tested the way the
   graph layout is.
+
+  **F1 detail.**
+  - **Backend addition:** `Analysis.FileUnits` (`path → unit`) for every
+    changed file a language owns, test files included (a deleted file by
+    its old path's unit). The browser can't guess it from paths: a Kotlin
+    file in `app/src/main/kotlin/…` is in unit `app/data`. The first
+    language wins. Tested in `review_test.go`.
+  - **`static/overview-model.js`** (no DOM; loaded before `calls.js` and
+    `overview.js` on both pages). The pure helpers move into it unchanged:
+    `createIntentTrace`, `turnForRange`, `buildTraceRows`,
+    `scopeRequestFrom`, `oneLine`, `summarizeOverview`, `layoutTreemap`,
+    `archGraph`, `layoutArchGraph`, and the constants `OVERVIEW_KINDS`,
+    `OVERVIEW_KIND_LABEL`, `OVERVIEW_NOISE`, `SURFACE_KINDS`,
+    `LANG_LABEL`. A `module.exports` at the end exports them for Node.
+  - **`buildModel({overview, arch, calls, trace, scope, reviewed})`**
+    returns `M = {E: Map(id → entity), order, units, orphans, …}`. Any
+    input but `overview` may be null (still loading). Entities:
+    - `pkg:<unit>`: status (added/changed/removed/context), lang, layer
+      (`unitLayers` from either answer), label (`arch.labels`), fns, files.
+    - `file:<path>`: the overview file plus unit, fns, prompts (`{n,
+      edits, agent, notes}` from the trace), drift (`{verdict, reason}`),
+      `outside` (no edit in this conversation), reviewed.
+    - `fn:<id>`: the `/calls` func plus a mark, callers/callees (call ids),
+      impls/implOf (fn ids, from `impl` edges), findings, contracts, and
+      `turn` (`turnForRange`).
+    - `call:<from>><to>|<kind>|<op>`: every non-`impl` call, with findings
+      whose sites are its sites.
+    - `imp:<from>><to>|<op>`: changed edges as new / removed / broken /
+      fixed, existing ones as `ctx`, with `approx`.
+    - `con:<category>:<i>`: surface items, matched to the function whose
+      `path` + `line..end` contains them.
+    - `find:<i>`: call findings with a severity. Red is `removed-called`,
+      `stimulus-unbound` and `route-without-action`; warn is
+      `signature-callers` and `test-not-updated`; fold is `untested`.
+    - `prompt:<n>`: turns with their files.
+
+    Cells (`cell:<path>|<n>`) aren't stored; `related`/`where` read them.
+  - **Queries:** `related(M, id)` (the design's sets), `where(M, id)` →
+    `{path, line, side}`, `label(M, id)`, `sectionOf(id)` (map / foot /
+    trace / scope), `verdict(M, ctx)` → `[{t, tone, target}]`, `checks(M)`,
+    `caveats(M)`, `chips(M)`, `reviewQueue(M, {area, hidden})` → groups,
+    and `reviewSig(file)`.
+  - **`overview.js`:** loads `/calls` whenever the tab is visible, not only
+    for the Functions view, so the badge and strip count red findings
+    sooner. Nothing else visible changes.
+  - **Tests:** `internal/web/jstests/overview_model.test.js` (`node
+    --test`, outside the embedded `static/`) builds models from small JSON
+    fixtures: ids, kinds, `related` for each type, `where`, `verdict` and
+    `checks` on an alarm and a healthy change, the review queue's groups
+    and filters, and the moved helpers (`layoutArchGraph`, `turnForRange`,
+    `buildTraceRows`). `jstest_test.go` runs it from `go test` and skips
+    when `node` isn't on PATH.
+
 - **F2. Selection store** in `overview.js`: `select(id)`, history (30),
   back/forward, `hover(id)`, Focus. Listeners re-render the inspector, map,
   Review list and sections. Selection and history are kept per target in
@@ -414,4 +467,4 @@ in the reviewer view, phone bottom-sheet inspector.
 ## Status
 
 Revised for v3 on 2026-10-05 (the v2 version was never built). B1–B4 (the
-backend) built 2026-10-05; next: F1.
+backend) and F1 built 2026-10-05; next: F2.
