@@ -176,6 +176,7 @@ func TestGoCalls(t *testing.T) {
 			t.Errorf("missing call %s", w)
 		}
 	}
+
 	for _, c := range calls {
 		if strings.Contains(c, "strings.") || strings.Contains(c, "http.") {
 			t.Errorf("call outside the module: %s", c)
@@ -214,6 +215,27 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// A handler passed next to a route is a reference labelled with it.
+func TestGoCallsRefLabel(t *testing.T) {
+	dir := callRepo(t)
+	idx := newIndex(&repo{ctx: context.Background(), cmd: moexec.DefaultCommander, root: dir})
+	set, err := (&goCalls{module: "example.com/m"}).funcs(idx, []string{"web/web.go"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := set.funcs["web.Routes"]
+	if routes == nil {
+		t.Fatal("web.Routes not found")
+	}
+	var got []string
+	for _, c := range routes.calls {
+		got = append(got, c.to+"@"+c.kind+":"+c.label)
+	}
+	if !contains(got, "(*web.S).handle@ref:/") {
+		t.Errorf("Routes' calls = %v", got)
+	}
 }
 
 // A head commit's call graph comes from git, never the working tree.

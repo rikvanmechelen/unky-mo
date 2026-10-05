@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -672,6 +673,32 @@ func (l *goLoader) calls(pkg *goPkg, n ast.Node, f *fn) {
 		}
 		return true
 	})
+	// A function passed next to a string literal is usually registered
+	// for it: a route, a command, an event name.
+	labels := map[*ast.Ident]string{}
+	ast.Inspect(n, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok || len(c.Args) < 2 {
+			return true
+		}
+		lit, ok := ast.Unparen(c.Args[0]).(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		label, err := strconv.Unquote(lit.Value)
+		if err != nil || label == "" || len(label) > 120 {
+			return true
+		}
+		for _, a := range c.Args[1:] {
+			switch a := ast.Unparen(a).(type) {
+			case *ast.Ident:
+				labels[a] = label
+			case *ast.SelectorExpr:
+				labels[a.Sel] = label
+			}
+		}
+		return true
+	})
 	ast.Inspect(n, func(n ast.Node) bool {
 		var id *ast.Ident
 		var sel *ast.SelectorExpr
@@ -701,14 +728,23 @@ func (l *goLoader) calls(pkg *goPkg, n ast.Node, f *fn) {
 				}
 			}
 			// The selector's Sel is visited again as an Ident: skip it then.
-			f.calls = append(f.calls, callSite{to: l.id(obj), kind: kind, line: l.line(id)})
+			f.calls = append(f.calls, callSite{to: l.id(obj), kind: kind, line: l.line(id), label: refLabel(kind, labels[id])})
 			l.callees[l.id(obj)] = obj
 			return false
 		}
-		f.calls = append(f.calls, callSite{to: l.id(obj), kind: kind, line: l.line(id)})
+		f.calls = append(f.calls, callSite{to: l.id(obj), kind: kind, line: l.line(id), label: refLabel(kind, labels[id])})
 		l.callees[l.id(obj)] = obj
 		return true
 	})
+}
+
+// refLabel keeps a label only for references: a call's string argument is
+// just an argument.
+func refLabel(kind, label string) string {
+	if kind != CallRef {
+		return ""
+	}
+	return label
 }
 
 // wantSelector is what an unresolved x.Sel call would point at if the

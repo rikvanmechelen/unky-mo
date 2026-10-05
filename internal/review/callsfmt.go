@@ -76,6 +76,9 @@ func WriteCallsText(w io.Writer, cg *CallGraph) {
 				case CallApprox:
 					kind = " (inferred)"
 				}
+				if c.Label != "" {
+					kind += " for " + c.Label
+				}
 				fmt.Fprintf(w, "      %s calls %s%s\n", c.Op, name(c.To), kind)
 			}
 		}

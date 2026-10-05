@@ -79,6 +79,9 @@ type Call struct {
 	Kind  string     `json:"kind"`
 	Op    string     `json:"op,omitempty"`
 	Sites []EdgeFile `json:"sites,omitempty"`
+	// Label says what a reference is for, when the code says: the route a
+	// handler is registered for ("GET /api/state").
+	Label string `json:"label,omitempty"`
 }
 
 // CallFinding is something about the change's functions a reviewer should
@@ -108,6 +111,7 @@ type CallGraph struct {
 type callSite struct {
 	to, kind string
 	line     int
+	label    string // what wires it up, e.g. the route a handler serves
 }
 
 // unresolvedSite is a call that didn't resolve. want lists the IDs it would
@@ -395,6 +399,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	// Edges of the changed files' functions: before vs after, with a
 	// renamed function (as caller or callee) under its new ID on both sides.
 	oldEdges, newEdges := map[edgeKey][]EdgeFile{}, map[edgeKey][]EdgeFile{}
+	labels := map[edgeKey]string{}
 	rename := func(id string) string {
 		if n, ok := oldToNew[id]; ok {
 			return n
@@ -417,6 +422,9 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			}
 			k := edgeKey{f.ID, c.to, c.kind}
 			newEdges[k] = appendSite(newEdges[k], EdgeFile{Path: f.Path, Line: c.line})
+			if c.label != "" && labels[k] == "" {
+				labels[k] = c.label
+			}
 		}
 	}
 
@@ -457,7 +465,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 		}
 		g.ensure(after, before, ek.from)
 		g.ensure(after, before, ek.to)
-		g.addCall(Call{From: ek.from, To: ek.to, Kind: kindOf(ek.kind), Op: op, Sites: newEdges[ek]})
+		g.addCall(Call{From: ek.from, To: ek.to, Kind: kindOf(ek.kind), Op: op, Sites: newEdges[ek], Label: labels[ek]})
 	}
 	for _, ek := range sortedEdgeKeys(oldEdges) {
 		if _, has := newEdges[ek]; has {
@@ -524,7 +532,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 				seen[c.from] = true
 			}
 			g.ensure(after, before, c.from)
-			g.addCall(Call{From: c.from, To: id, Kind: kindOf(c.site.kind), Sites: []EdgeFile{{Path: c.path, Line: c.site.line}}})
+			g.addCall(Call{From: c.from, To: id, Kind: kindOf(c.site.kind), Sites: []EdgeFile{{Path: c.path, Line: c.site.line}}, Label: c.site.label})
 		}
 		if len(sigSites) > 0 {
 			cg.Findings = append(cg.Findings, CallFinding{Kind: FindingSignatureCallers, Func: id, Sites: sigSites})

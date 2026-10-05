@@ -262,6 +262,7 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
       const t = svgEl("title", {});
       t.textContent = `${a.f.name} → ${b.f.name}` + (c.op === "+" ? " (new)" : c.op === "-" ? " (removed)" : "")
         + (c.kind === "ref" ? " · used as a value" : c.kind === "dynamic" ? " · through an interface" : c.kind === "approx" ? " · inferred from names" : "")
+        + (c.label ? ` · ${c.label}` : "")
         + ((c.sites || []).length ? "\n" + c.sites.slice(0, 5).map((x) => `${x.path}:${x.line}`).join("\n") : "");
       p.appendChild(t);
       s.appendChild(p);
@@ -338,6 +339,7 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
       const g = ix.funcs.get(c[end]) || { id: c[end], name: c[end] };
       const row = fnRow(g, c.sites, c.op === "-");
       if (c.op || c.kind !== "static") row.appendChild(el("span", { class: "overview__muted", text: opMark(c) + (c.kind === "ref" ? " as a value" : c.kind === "dynamic" ? " via interface" : c.kind === "approx" ? " (inferred)" : "") }));
+      if (c.label) row.appendChild(el("code", { class: "calls__label", text: c.label }));
       return row;
     });
     const more = f.moreCallers ? [el("div", { class: "overview__muted", text: `and ${f.moreCallers} more callers` })] : [];
