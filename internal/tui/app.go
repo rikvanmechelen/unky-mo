@@ -2447,10 +2447,10 @@ type sessionView struct {
 	IsWorktree  bool
 	External    bool // PID not descendant of mo tmux panes (StatusExternal)
 
-	// Set iff Status == StatusQuestion — Claude is blocked on an interactive
-	// tool (e.g. AskUserQuestion) and needs a human answer to proceed.
-	PendingQuestionTool  string
-	PendingQuestionInput json.RawMessage
+	// Set only while Status is StatusQuestion or StatusPermission: the tool
+	// call Claude is blocked on (may be empty, see status.Manager.Pending).
+	PendingTool  string
+	PendingInput json.RawMessage
 
 	// Team fields — populated when session is part of a Claude Code agent team.
 	TeamName  string         // team name from ~/.claude/teams/{name}/config.json
@@ -2548,12 +2548,15 @@ func (m Model) refreshSessions() tea.Cmd {
 				Status:    st,
 				External:  isExternal,
 			}
-			if mgr != nil && st == StatusQuestion {
-				// A question the hooks didn't deliver (TUI restarted while
-				// it was open, hook dropped) is read back from the transcript.
+			if mgr != nil && (st == StatusQuestion || st == StatusPermission) {
+				// A question or permission prompt the hooks didn't deliver
+				// (TUI restarted while it was open, hook dropped) is read back
+				// from the transcript.
 				jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
-				v.PendingQuestionTool, v.PendingQuestionInput, _ = mgr.RecoverPendingQuestion(s.SessionID,
-					func() (string, json.RawMessage, bool) { return status.ReadPendingQuestion(jsonlPath) })
+				v.PendingTool, v.PendingInput, _ = mgr.RecoverPending(s.SessionID,
+					func(st status.SessionStatus) (string, json.RawMessage, bool) {
+						return status.ReadPendingTool(jsonlPath, st == status.StatusQuestion)
+					})
 			}
 
 			switch {
@@ -3163,19 +3166,19 @@ func viewToProjectState(v sessionView, parent, rowBaseName string) state.Project
 		name = rowBaseName + " [" + suffix + "]"
 	}
 	ps := state.ProjectState{
-		Name:                 name,
-		Path:                 v.CWD,
-		WindowName:           v.WindowName,
-		WindowID:             v.WindowID,
-		InstanceID:           v.InstanceID,
-		AgentKey:             v.AgentKey,
-		Status:               statusToString(v.Status),
-		Section:              v.Section,
-		SessionID:            v.SessionID,
-		Index:                v.Index,
-		Parent:               parent,
-		PendingQuestionTool:  v.PendingQuestionTool,
-		PendingQuestionInput: v.PendingQuestionInput,
+		Name:         name,
+		Path:         v.CWD,
+		WindowName:   v.WindowName,
+		WindowID:     v.WindowID,
+		InstanceID:   v.InstanceID,
+		AgentKey:     v.AgentKey,
+		Status:       statusToString(v.Status),
+		Section:      v.Section,
+		SessionID:    v.SessionID,
+		Index:        v.Index,
+		Parent:       parent,
+		PendingTool:  v.PendingTool,
+		PendingInput: v.PendingInput,
 	}
 	if v.IsStray {
 		ps.Branch = v.Branch

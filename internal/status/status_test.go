@@ -72,19 +72,19 @@ func TestHookEvent_PreToolUse_AskUserQuestion_SetsQuestion(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusQuestion {
 		t.Errorf("after PreToolUse(AskUserQuestion): got %v, want StatusQuestion", got)
 	}
-	tool, input, ok := mgr.PendingQuestion("s1")
+	tool, input, ok := mgr.Pending("s1")
 	if !ok || tool != "AskUserQuestion" || string(input) != `{"questions":[{"question":"Which?"}]}` {
-		t.Errorf("PendingQuestion: got tool=%q input=%s ok=%v", tool, input, ok)
+		t.Errorf("Pending: got tool=%q input=%s ok=%v", tool, input, ok)
 	}
 }
 
-func TestHookEvent_PreToolUse_OrdinaryTool_NoPendingQuestion(t *testing.T) {
+func TestHookEvent_PreToolUse_OrdinaryTool_NoPending(t *testing.T) {
 	mgr := NewManager()
 	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "Bash"})
 	if got := mgr.Status("s1"); got != StatusActive {
 		t.Errorf("after PreToolUse(Bash): got %v, want StatusActive", got)
 	}
-	if _, _, ok := mgr.PendingQuestion("s1"); ok {
+	if _, _, ok := mgr.Pending("s1"); ok {
 		t.Error("expected no pending question for an ordinary tool")
 	}
 }
@@ -101,13 +101,13 @@ func TestHookEvent_PreToolUse_ConsecutiveQuestions_RefreshesContent(t *testing.T
 		Type: EventPreToolUse, SessionID: "s1",
 		ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[{"question":"Second?"}]}`),
 	})
-	_, input, ok := mgr.PendingQuestion("s1")
+	_, input, ok := mgr.Pending("s1")
 	if !ok || string(input) != `{"questions":[{"question":"Second?"}]}` {
 		t.Errorf("expected refreshed pending question, got %s (ok=%v)", input, ok)
 	}
 }
 
-func TestHookEvent_Stop_ClearsPendingQuestion(t *testing.T) {
+func TestHookEvent_Stop_ClearsPending(t *testing.T) {
 	mgr := NewManager()
 	mgr.ProcessHookEvent(HookEvent{
 		Type: EventPreToolUse, SessionID: "s1",
@@ -117,7 +117,7 @@ func TestHookEvent_Stop_ClearsPendingQuestion(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusIdle {
 		t.Fatalf("after Stop: got %v, want StatusIdle", got)
 	}
-	if _, _, ok := mgr.PendingQuestion("s1"); ok {
+	if _, _, ok := mgr.Pending("s1"); ok {
 		t.Error("expected pending question cleared after Stop")
 	}
 }
@@ -369,7 +369,7 @@ func TestReconcile_DoesNotDowngradeQuestion(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusQuestion {
 		t.Errorf("after reconcile: got %v, want StatusQuestion", got)
 	}
-	if tool, _, ok := mgr.PendingQuestion("s1"); !ok || tool != "AskUserQuestion" {
+	if tool, _, ok := mgr.Pending("s1"); !ok || tool != "AskUserQuestion" {
 		t.Errorf("pending question lost: tool=%q ok=%v", tool, ok)
 	}
 }
@@ -382,8 +382,8 @@ func TestAgentStatus_WaitingInputNeeded_SetsQuestion(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusQuestion {
 		t.Fatalf("got %v, want StatusQuestion", got)
 	}
-	if tool, input, ok := mgr.PendingQuestion("s1"); !ok || tool != "" || input != nil {
-		t.Errorf("PendingQuestion = (%q, %s, %v), want empty content with ok", tool, input, ok)
+	if tool, input, ok := mgr.Pending("s1"); !ok || tool != "" || input != nil {
+		t.Errorf("Pending = (%q, %s, %v), want empty content with ok", tool, input, ok)
 	}
 }
 
@@ -456,7 +456,7 @@ func TestAgentStatus_KeepsHookQuestionContent(t *testing.T) {
 	mgr := NewManager()
 	mgr.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "s1", ToolName: "AskUserQuestion", ToolInput: []byte(`{"q":1}`)})
 	mgr.ProcessAgentStatus("s1", "waiting", "input needed", time.Now())
-	if tool, input, _ := mgr.PendingQuestion("s1"); tool != "AskUserQuestion" || string(input) != `{"q":1}` {
+	if tool, input, _ := mgr.Pending("s1"); tool != "AskUserQuestion" || string(input) != `{"q":1}` {
 		t.Errorf("content replaced: tool=%q input=%s", tool, input)
 	}
 }
@@ -493,7 +493,7 @@ func TestAgentStatus_Idle_ClearsAnyQuestion(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusIdle {
 		t.Errorf("got %v, want StatusIdle", got)
 	}
-	if _, _, ok := mgr.PendingQuestion("s1"); ok {
+	if _, _, ok := mgr.Pending("s1"); ok {
 		t.Error("pending question should be cleared")
 	}
 }

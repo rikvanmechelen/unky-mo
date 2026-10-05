@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 const (
@@ -10,7 +11,7 @@ const (
 	promptLine = `{"type":"user","message":{"role":"user","content":"go"}}`
 )
 
-func TestReadPendingQuestion(t *testing.T) {
+func TestReadPendingToolQuestion(t *testing.T) {
 	cases := []struct {
 		name  string
 		lines []string
@@ -35,7 +36,7 @@ func TestReadPendingQuestion(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tool, input, ok := ReadPendingQuestion(writeTestJSONL(t, t.TempDir(), c.lines))
+			tool, input, ok := ReadPendingTool(writeTestJSONL(t, t.TempDir(), c.lines), true)
 			if ok != c.want {
 				t.Fatalf("ok = %v, want %v", ok, c.want)
 			}
@@ -48,29 +49,79 @@ func TestReadPendingQuestion(t *testing.T) {
 			}
 		})
 	}
-	if _, _, ok := ReadPendingQuestion(t.TempDir() + "/missing.jsonl"); ok {
+	if _, _, ok := ReadPendingTool(t.TempDir()+"/missing.jsonl", false); ok {
 		t.Fatal("missing file read as a question")
 	}
 }
 
-func TestRecoverPendingQuestion(t *testing.T) {
+// A permission prompt's call is any tool's; ExitPlanMode's is only written
+// once answered (step 1 of docs/plans/permission-answers.md), so its
+// transcript has nothing open.
+func TestReadPendingToolPermission(t *testing.T) {
+	bash := func(id, cmd string) string {
+		return `{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"` + id + `","name":"Bash","input":{"command":"` + cmd + `"}}]}}`
+	}
+	result := func(id string) string {
+		return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"x"}]}}`
+	}
+	cases := []struct {
+		name     string
+		lines    []string
+		wantTool string
+		wantCmd  string
+	}{
+		{"open Bash call, metadata after", []string{promptLine, bash("b1", "echo probe"),
+			`{"type":"permission-mode","permissionMode":"default"}`, `{"type":"ai-title"}`}, "Bash", "echo probe"},
+		{"answered", []string{promptLine, bash("b1", "ls"), result("b1")}, "", ""},
+		{"two parallel calls: the newest", []string{promptLine, bash("b1", "first"), bash("b2", "second")}, "Bash", "second"},
+		{"parallel, the newer one answered", []string{promptLine, bash("b1", "first"), bash("b2", "second"), result("b2")}, "Bash", "first"},
+		{"ExitPlanMode open: only the answered ToolSearch is on disk", []string{promptLine,
+			`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"/p.md"}},{"type":"tool_use","id":"s1","name":"ToolSearch","input":{"query":"select:ExitPlanMode"}}]}}`,
+			result("w1"), result("s1"), `{"type":"attachment"}`}, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := writeTestJSONL(t, t.TempDir(), c.lines)
+			tool, input, ok := ReadPendingTool(path, false)
+			if ok != (c.wantTool != "") || tool != c.wantTool {
+				t.Fatalf("got %q %v, want %q", tool, ok, c.wantTool)
+			}
+			if !ok {
+				return
+			}
+			var in struct{ Command string }
+			if json.Unmarshal(input, &in) != nil || in.Command != c.wantCmd {
+				t.Fatalf("input %s, want command %q", input, c.wantCmd)
+			}
+			// A question only ever looks for interactive tools.
+			if _, _, ok := ReadPendingTool(path, true); ok {
+				t.Fatal("interactiveOnly found a Bash call")
+			}
+		})
+	}
+}
+
+func TestRecoverPending(t *testing.T) {
 	m := NewManager()
 	reads := 0
-	read := func() (string, json.RawMessage, bool) {
+	read := func(st SessionStatus) (string, json.RawMessage, bool) {
+		if st != StatusQuestion {
+			t.Fatalf("read for %v, want StatusQuestion", st)
+		}
 		reads++
 		return "AskUserQuestion", json.RawMessage(`{"questions":[]}`), true
 	}
 
 	// Not a question: nothing is read.
 	m.ProcessHookEvent(HookEvent{Type: EventStop, SessionID: "s"})
-	if _, _, ok := m.RecoverPendingQuestion("s", read); ok || reads != 0 {
+	if _, _, ok := m.RecoverPending("s", read); ok || reads != 0 {
 		t.Fatalf("ok %v reads %d", ok, reads)
 	}
 
 	// The agents signal's content-less question is filled in, once.
 	m.ProcessAgentStatus("s", "waiting", "input needed", m.sessions["s"].LastHookAt.Add(1))
 	for range 2 {
-		tool, input, ok := m.RecoverPendingQuestion("s", read)
+		tool, input, ok := m.RecoverPending("s", read)
 		if !ok || tool != "AskUserQuestion" || string(input) != `{"questions":[]}` {
 			t.Fatalf("got %q %s %v", tool, input, ok)
 		}
@@ -81,7 +132,21 @@ func TestRecoverPendingQuestion(t *testing.T) {
 
 	// A hook-captured question is never replaced.
 	m.ProcessHookEvent(HookEvent{Type: EventPreToolUse, SessionID: "h", ToolName: "AskUserQuestion", ToolInput: json.RawMessage(`{"hook":1}`)})
-	if _, input, _ := m.RecoverPendingQuestion("h", read); string(input) != `{"hook":1}` || reads != 1 {
+	if _, input, _ := m.RecoverPending("h", read); string(input) != `{"hook":1}` || reads != 1 {
 		t.Fatalf("input %s reads %d", input, reads)
+	}
+}
+
+func TestRecoverPendingPermission(t *testing.T) {
+	m := NewManager()
+	var got SessionStatus
+	read := func(st SessionStatus) (string, json.RawMessage, bool) {
+		got = st
+		return "Bash", json.RawMessage(`{"command":"ls"}`), true
+	}
+	m.ProcessAgentStatus("s", "waiting", "permission prompt", time.Now())
+	tool, input, ok := m.RecoverPending("s", read)
+	if !ok || got != StatusPermission || tool != "Bash" || string(input) != `{"command":"ls"}` {
+		t.Fatalf("got %q %s %v (read for %v)", tool, input, ok, got)
 	}
 }

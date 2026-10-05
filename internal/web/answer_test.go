@@ -202,7 +202,7 @@ func questionRow(t *testing.T, qs []questionSpec) state.ProjectState {
 		t.Fatal(err)
 	}
 	return state.ProjectState{WindowID: "@4", SessionID: "s1", Status: "question",
-		PendingQuestionTool: "AskUserQuestion", PendingQuestionInput: input}
+		PendingTool: "AskUserQuestion", PendingInput: input}
 }
 
 func spec(question string, multi bool, labels ...string) questionSpec {
@@ -314,7 +314,7 @@ func TestAnswerRefusals(t *testing.T) {
 		{"question changed", nil, []string{"Old?", "M?"}, []questionAnswer{{Options: []int{0}}, {Options: []int{0}}}, http.StatusConflict},
 		{"not waiting", func(r state.ProjectState) state.ProjectState { r.Status = "idle"; return r },
 			[]string{"Q?", "M?"}, []questionAnswer{{Options: []int{0}}, {Options: []int{0}}}, http.StatusConflict},
-		{"other tool", func(r state.ProjectState) state.ProjectState { r.PendingQuestionTool = "Other"; return r },
+		{"other tool", func(r state.ProjectState) state.ProjectState { r.PendingTool = "Other"; return r },
 			[]string{"Q?", "M?"}, []questionAnswer{{Options: []int{0}}, {Options: []int{0}}}, http.StatusConflict},
 		{"no session", func(r state.ProjectState) state.ProjectState { r.WindowID = "@9"; return r },
 			[]string{"Q?", "M?"}, []questionAnswer{{Options: []int{0}}, {Options: []int{0}}}, http.StatusNotFound},

@@ -162,7 +162,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		if p.WindowID == windowID && p.SessionID != "" {
 			found = true
 			if p.Status == "question" {
-				tool, input = p.PendingQuestionTool, p.PendingQuestionInput
+				tool, input = p.PendingTool, p.PendingInput
 			}
 			break
 		}

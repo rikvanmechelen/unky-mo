@@ -7,23 +7,26 @@ import (
 	"strings"
 )
 
-// pendingTailBytes bounds how much of a transcript ReadPendingQuestion
-// reads: the open question is the last assistant line, followed only by
-// the metadata Claude Code appends while it waits.
+// pendingTailBytes bounds how much of a transcript ReadPendingTool reads:
+// the open call is the last assistant line, followed only by the metadata
+// Claude Code appends while it waits.
 const pendingTailBytes = 1 << 20
 
-// ReadPendingQuestion recovers the interactive tool call a session is
-// blocked on from its JSONL transcript: the newest AskUserQuestion (see
-// isInteractiveTool) tool_use with no tool_result after it, in the current
-// turn. Claude Code (2.1.289) writes the assistant line carrying the
-// tool_use before it opens the dialog, so the question is on disk while
-// it waits — this is how a question survives a TUI restart, or a dropped
-// PreToolUse hook, which would otherwise leave only `claude agents`'
-// content-less "input needed". The input is the tool_use's own, the same
-// shape the hook forwards. ok is false when there's no such call (a
-// future Claude Code that stops writing it early just falls back to the
-// content-less question).
-func ReadPendingQuestion(path string) (tool string, input json.RawMessage, ok bool) {
+// ReadPendingTool recovers the tool call a session is blocked on from its
+// JSONL transcript: the newest tool_use with no tool_result after it, in
+// the current turn — of an interactive tool (see isInteractiveTool) for a
+// question, of any tool for a permission prompt. Claude Code (2.1.289)
+// writes the assistant line carrying the tool_use before it opens the
+// dialog, so the call is on disk while it waits — this is how a question
+// or permission prompt survives a TUI restart, or a dropped hook, which
+// would otherwise leave only `claude agents`' content-less status. The
+// input is the tool_use's own, the same shape the hook forwards. ok is
+// false when there's no such call: ExitPlanMode's call is only written once
+// it's answered, and a future Claude Code that stops writing calls early
+// just falls back to the content-less status. With parallel calls open,
+// the newest wins; it may not be the one the dialog asks about, which the
+// web checks against the screen.
+func ReadPendingTool(path string, interactiveOnly bool) (tool string, input json.RawMessage, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", nil, false
@@ -39,14 +42,14 @@ func ReadPendingQuestion(path string) (tool string, input json.RawMessage, ok bo
 	if _, err := f.ReadAt(buf, size-n); err != nil && err != io.EOF {
 		return "", nil, false
 	}
-	return scanPendingQuestion(buf)
+	return scanPendingTool(buf, interactiveOnly)
 }
 
-// scanPendingQuestion walks buf's lines backwards. tool_results seen on the
+// scanPendingTool walks buf's lines backwards. tool_results seen on the
 // way answer earlier tool_uses; a real prompt or an end_turn ends the
-// search, since a question from an earlier turn can't still be open. A
+// search, since a call from an earlier turn can't still be open. A
 // partial first line (the tail cut) fails to parse and is skipped.
-func scanPendingQuestion(buf []byte) (string, json.RawMessage, bool) {
+func scanPendingTool(buf []byte, interactiveOnly bool) (string, json.RawMessage, bool) {
 	answered := map[string]bool{}
 	lines := strings.Split(string(buf), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -91,10 +94,10 @@ func scanPendingQuestion(buf []byte) (string, json.RawMessage, bool) {
 				return "", nil, false
 			}
 			// One API message can be split over several lines, a block
-			// each; the newest open interactive call wins.
+			// each; the newest open call wins.
 			for j := len(blocks) - 1; j >= 0; j-- {
 				b := blocks[j]
-				if b.Type == "tool_use" && isInteractiveTool(b.Name) && !answered[b.ID] && len(b.Input) > 0 {
+				if b.Type == "tool_use" && (!interactiveOnly || isInteractiveTool(b.Name)) && !answered[b.ID] && len(b.Input) > 0 {
 					return b.Name, b.Input, true
 				}
 			}
@@ -103,25 +106,31 @@ func scanPendingQuestion(buf []byte) (string, json.RawMessage, bool) {
 	return "", nil, false
 }
 
-// RecoverPendingQuestion fills in a question's content when it has none —
-// one set by `claude agents --json` rather than a hook (see
-// ReadPendingQuestion). read is only called in that case, so a session
-// whose question is already known costs nothing. Returns the session's
-// pending question afterwards, like PendingQuestion.
-func (m *Manager) RecoverPendingQuestion(sessionID string, read func() (string, json.RawMessage, bool)) (string, json.RawMessage, bool) {
+// RecoverPending fills in a question's or permission prompt's content
+// when it has none — one set by `claude agents --json` rather than a hook
+// (see ReadPendingTool). read gets the status (so a question only looks
+// for interactive tools) and is only called in that case, so a session
+// whose content is already known costs nothing. Returns the session's
+// pending tool afterwards, like Pending.
+func (m *Manager) RecoverPending(sessionID string, read func(SessionStatus) (string, json.RawMessage, bool)) (string, json.RawMessage, bool) {
 	m.mu.RLock()
 	s, found := m.sessions[sessionID]
-	need := found && s.Status == StatusQuestion && s.PendingTool == ""
+	var st SessionStatus
+	need := false
+	if found {
+		st = s.Status
+		need = (st == StatusQuestion || st == StatusPermission) && s.PendingTool == ""
+	}
 	m.mu.RUnlock()
 	if need {
-		if tool, input, ok := read(); ok {
+		if tool, input, ok := read(st); ok {
 			m.mu.Lock()
 			// Re-checked: a hook may have landed while reading.
-			if s, found := m.sessions[sessionID]; found && s.Status == StatusQuestion && s.PendingTool == "" {
+			if s, found := m.sessions[sessionID]; found && s.Status == st && s.PendingTool == "" {
 				s.PendingTool, s.PendingInput = tool, input
 			}
 			m.mu.Unlock()
 		}
 	}
-	return m.PendingQuestion(sessionID)
+	return m.Pending(sessionID)
 }

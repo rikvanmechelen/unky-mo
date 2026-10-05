@@ -1135,10 +1135,10 @@ function main() {
       }
 
       permissionBanner.style.display = status === "permission" ? "block" : "none";
-      if (status === "question" && p.pending_question_tool) {
-        showQuestion(JSON.stringify([p.session_id, p.pending_question_tool, p.pending_question_input]),
-          () => [renderQuestionBanner(p.pending_question_tool, p.pending_question_input,
-            p.pending_question_tool === "AskUserQuestion" ? answerQuestion : null)]);
+      if (status === "question" && p.pending_tool) {
+        showQuestion(JSON.stringify([p.session_id, p.pending_tool, p.pending_input]),
+          () => [renderQuestionBanner(p.pending_tool, p.pending_input,
+            p.pending_tool === "AskUserQuestion" ? answerQuestion : null)]);
       } else if (status === "question") {
         // Detected via `claude agents --json` rather than the PreToolUse
         // hook, so the question's text/options were never captured.
@@ -1172,7 +1172,7 @@ function main() {
         : external ? "External session"
         : "Claude is working…";
       promptInput.placeholder = status === "question"
-        ? (p.pending_question_tool === "AskUserQuestion" ? "Answer in the form above…" : "Type a number or your answer…")
+        ? (p.pending_tool === "AskUserQuestion" ? "Answer in the form above…" : "Type a number or your answer…")
         : p ? `Message ${p.name}` : "Message this session";
     } catch (err) {
       // transient — leave the last known status showing

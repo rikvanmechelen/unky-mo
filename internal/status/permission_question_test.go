@@ -37,7 +37,7 @@ func TestAskUserQuestionStaysAQuestionThroughPermissionHooks(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusQuestion {
 		t.Fatalf("status: got %v, want StatusQuestion", got)
 	}
-	tool, input, ok := mgr.PendingQuestion("s1")
+	tool, input, ok := mgr.Pending("s1")
 	if !ok || tool != "AskUserQuestion" || len(input) == 0 {
 		t.Errorf("pending question lost: tool=%q ok=%v input=%s", tool, ok, input)
 	}
@@ -51,7 +51,7 @@ func TestPermissionRequestForAskUserQuestionIsAQuestion(t *testing.T) {
 	if got := mgr.Status("s1"); got != StatusQuestion {
 		t.Fatalf("status: got %v, want StatusQuestion", got)
 	}
-	if tool, _, ok := mgr.PendingQuestion("s1"); !ok || tool != "AskUserQuestion" {
+	if tool, _, ok := mgr.Pending("s1"); !ok || tool != "AskUserQuestion" {
 		t.Errorf("pending question: tool=%q ok=%v", tool, ok)
 	}
 }
@@ -63,6 +63,31 @@ func TestGenuinePermissionPromptIsPermission(t *testing.T) {
 	feed(t, mgr, capturedPreToolUseBash, capturedPermissionBash, capturedNotificationPerm)
 	if got := mgr.Status("s1"); got != StatusPermission {
 		t.Fatalf("status: got %v, want StatusPermission", got)
+	}
+}
+
+// A permission prompt keeps its tool call for mo web to show: through the
+// tool-less notification that follows it, until the session moves on.
+func TestPermissionPromptKeepsItsToolCall(t *testing.T) {
+	const wantInput = `{"command":"touch /tmp/probe","description":"Create probe file"}`
+	for _, next := range []string{capturedPreToolUseBash, `{"hook_event_name":"Stop","session_id":"s1"}`} {
+		mgr := NewManager()
+		feed(t, mgr, capturedPreToolUseBash, capturedPermissionBash, capturedNotificationPerm)
+		tool, input, ok := mgr.Pending("s1")
+		if !ok || tool != "Bash" || string(input) != wantInput {
+			t.Fatalf("pending: tool=%q input=%s ok=%v", tool, input, ok)
+		}
+		feed(t, mgr, next)
+		if tool, input, ok := mgr.Pending("s1"); ok || tool != "" || input != nil {
+			t.Errorf("after %s: pending %q %s %v, want cleared", next[:40], tool, input, ok)
+		}
+	}
+
+	// A notification alone (PermissionRequest missed) has no content.
+	mgr := NewManager()
+	feed(t, mgr, capturedPreToolUseBash, capturedNotificationPerm)
+	if tool, _, ok := mgr.Pending("s1"); !ok || tool != "" {
+		t.Errorf("notification only: tool=%q ok=%v", tool, ok)
 	}
 }
 

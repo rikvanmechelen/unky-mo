@@ -143,3 +143,31 @@ The plan dialog has a second full-width rule between the plan and the question; 
   - Text on the plan's text row: its digit (moves there), type, check, then Enter (feedback) or BTab (`approveWithText`, approve in auto mode).
   - A row's text is allowed only where the dialog offers it, which `rows[].text` tells the browser: the footer has "Tab to amend" (rows whose label starts with "Yes" or "No"), or the row has the shift+tab hint.
 - No separate Esc action: it does what the No row does.
+
+## Step 2 in detail: status and state file
+
+### `status.Manager` (`status.go`)
+
+- `sessionState.PendingTool`/`PendingInput`: set iff the status is Question **or Permission** (when known).
+- `EventPermissionRequest` for a non-interactive tool: `StatusPermission` with `evt.ToolName`/`evt.ToolInput` as the pending tool. For ExitPlanMode that's `{plan, planFilePath}`.
+- `EventNotificationPerm` (no tool name) while the session is already Question or Permission keeps the pending tool. Today the common tail clears it, since `pendingTool` is empty. The early return for a question stays. For a permission, the event carries the current content over, so `LastHookAt` still moves.
+- `PendingQuestion` → `Pending(sessionID) (tool, input, ok)`: ok for Question and Permission.
+- Clearing is unchanged: any status change away from those two empties the content (the common tail and `ProcessAgentStatus`). A permission ends with the next PreToolUse, UserPromptSubmit or Stop, as today. There's no PostToolUse hook.
+
+### Transcript recovery (`pending.go`)
+
+- `ReadPendingQuestion(path)` → `ReadPendingTool(path, interactiveOnly bool)`. The same backwards walk, returning the newest unanswered `tool_use` of the current turn, of an interactive tool or (for a permission) of any tool. For ExitPlanMode it finds nothing (not written yet, see step 1), which is right: step 3 reads the plan file from the screen.
+- Parallel calls: the newest unanswered call wins. Step 3 only shows the content when the dialog's preview agrees with it (the command or path appears on screen), so a wrong guess shows no content rather than the wrong content. That replaces "return all candidates" from the first draft. One candidate keeps the state file simple, and the screen check is needed anyway.
+- `RecoverPendingQuestion` → `RecoverPending(sessionID, read func(SessionStatus) (…))`: called for Question and Permission with no content. `read` gets the status so the caller passes `interactiveOnly` = (status == Question).
+
+### State file and its readers
+
+- `state.ProjectState`: `PendingQuestionTool`/`PendingQuestionInput` (`pending_question_tool`/`_input`) → `PendingTool`/`PendingInput` (`pending_tool`/`pending_input`), the same in `tui`'s `sessionView`. `app.go` fills them for both statuses.
+- `answer.go` reads the new fields (still only for `question`). `chat.js` reads `pending_tool`/`pending_input` for the question banner. The permission banner stays as it is until step 4.
+
+### Tests
+
+- `permission_question_test.go`: the captured Bash `PermissionRequest` keeps `{command, description}`, a following permission notification keeps it, and a PreToolUse or Stop clears it. AskUserQuestion is unchanged.
+- `status_test.go`: renamed calls. An agents-sourced permission has no content.
+- `pending_test.go`: `ReadPendingTool` with `interactiveOnly=false` finds an open Bash call, ignores answered ones, picks the newest of two parallel open calls, finds nothing for ExitPlanMode's transcript (only an answered ToolSearch), and `interactiveOnly=true` still skips Bash. `RecoverPending` reads for a permission too.
+- `answer_test.go`: fixture field names.

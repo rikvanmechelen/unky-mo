@@ -68,10 +68,13 @@ type StatusChange struct {
 
 // sessionState tracks the current status of a single session.
 type sessionState struct {
-	Status       SessionStatus
-	LastHookAt   time.Time
-	PendingTool  string          // tool name Claude is blocked on, set iff Status == StatusQuestion
-	PendingInput json.RawMessage // that tool's raw input, set iff Status == StatusQuestion
+	Status     SessionStatus
+	LastHookAt time.Time
+	// PendingTool/PendingInput are the tool call Claude is blocked on and
+	// its raw input, set only while Status is StatusQuestion or
+	// StatusPermission (and empty when that status came without content).
+	PendingTool  string
+	PendingInput json.RawMessage
 	// FromAgent marks a StatusQuestion or StatusPermission that came from
 	// the `claude agents --json` signal rather than a hook (so there's no
 	// PendingTool/PendingInput to show). Only that same signal may clear it
@@ -117,12 +120,14 @@ func (m *Manager) Status(sessionID string) SessionStatus {
 	return StatusNone
 }
 
-// PendingQuestion returns the tool name + raw tool input Claude is currently
-// blocked on for sessionID, if its status is StatusQuestion.
-func (m *Manager) PendingQuestion(sessionID string) (tool string, input json.RawMessage, ok bool) {
+// Pending returns the tool name + raw tool input Claude is currently
+// blocked on for sessionID, if its status is StatusQuestion or
+// StatusPermission. The content can be empty with ok true: a status set
+// by `claude agents --json`, or a hook that carried no tool.
+func (m *Manager) Pending(sessionID string) (tool string, input json.RawMessage, ok bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if s, found := m.sessions[sessionID]; found && s.Status == StatusQuestion {
+	if s, found := m.sessions[sessionID]; found && (s.Status == StatusQuestion || s.Status == StatusPermission) {
 		return s.PendingTool, s.PendingInput, true
 	}
 	return "", nil, false
@@ -195,22 +200,26 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 		// flow: PreToolUse(AskUserQuestion) → PermissionRequest naming the
 		// same tool → Notification(permission_prompt). That's a question,
 		// not a permission prompt (verified against captured payloads).
+		// Either way the tool and its input are what the web shows.
+		newStatus = StatusPermission
 		if isInteractiveTool(evt.ToolName) {
 			newStatus = StatusQuestion
-			pendingTool = evt.ToolName
-			pendingInput = evt.ToolInput
-		} else {
-			newStatus = StatusPermission
 		}
+		pendingTool = evt.ToolName
+		pendingInput = evt.ToolInput
 	case EventNotificationPerm:
 		// The notification names no tool. While a question is showing it's
 		// that question's own prompt notification (it follows the
 		// PermissionRequest above); a genuine permission prompt has already
-		// been set by its PermissionRequest.
-		if cur := m.sessions[evt.SessionID]; cur != nil && cur.Status == StatusQuestion {
+		// been set by its PermissionRequest, whose content it keeps.
+		cur := m.sessions[evt.SessionID]
+		if cur != nil && cur.Status == StatusQuestion {
 			return
 		}
 		newStatus = StatusPermission
+		if cur != nil && cur.Status == StatusPermission {
+			pendingTool, pendingInput = cur.PendingTool, cur.PendingInput
+		}
 	case EventSessionEnd:
 		remove = true
 	default:
@@ -232,7 +241,7 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 		m.sessions[evt.SessionID] = s
 	}
 	old := s.Status
-	// Always refresh the pending question, even when the status itself
+	// Always refresh the pending tool, even when the status itself
 	// isn't transitioning (e.g. two AskUserQuestion calls back-to-back both
 	// land on StatusQuestion — the second one's content must still replace
 	// the first's, even though there's no status change to emit for it).
@@ -240,7 +249,7 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 	s.PendingInput = pendingInput
 	s.FromAgent = false
 	if old == newStatus {
-		// No status transition — don't emit, but the pending-question
+		// No status transition — don't emit, but the pending-tool
 		// refresh above still applies.
 		s.LastHookAt = time.Now()
 		return

@@ -26,10 +26,12 @@ type ProjectState struct {
 	Index      int    `json:"index,omitempty"`       // 0 = primary, 2+ = sibling ordinal; for stable sort
 	Tokens     int    `json:"tokens,omitempty"`      // session context footprint; filled in by mo web's /api/state, never written by the TUI
 
-	// Set iff Status == "question" — Claude is blocked on an interactive
-	// tool (e.g. AskUserQuestion) and needs a human answer to proceed.
-	PendingQuestionTool  string          `json:"pending_question_tool,omitempty"`
-	PendingQuestionInput json.RawMessage `json:"pending_question_input,omitempty"`
+	// Set only while Status is "question" (Claude is blocked on an
+	// interactive tool, e.g. AskUserQuestion) or "permission" (a tool call
+	// waits for approval): the tool and its raw input. Can be empty then,
+	// when the TUI only knows the status (see status.Manager.Pending).
+	PendingTool  string          `json:"pending_tool,omitempty"`
+	PendingInput json.RawMessage `json:"pending_input,omitempty"`
 
 	// Team fields — populated when session is part of a Claude Code agent team.
 	TeamName  string          `json:"team_name,omitempty"` // team name from ~/.claude/teams/{name}/config.json
