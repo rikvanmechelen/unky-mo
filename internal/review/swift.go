@@ -74,6 +74,7 @@ func (l *swiftLang) detect(idx *index) bool {
 	sort.Slice(l.dirs, func(i, j int) bool { return len(l.dirs[i]) > len(l.dirs[j]) })
 
 	l.types = map[string]string{}
+	idx.prefetchFor("swiftdecl", func(p string) bool { return l.owns(p) && !isTest(p) && l.unit(p) != "" })
 	for _, p := range idx.paths {
 		if !l.owns(p) || isTest(p) {
 			continue

@@ -1,9 +1,12 @@
 package review
 
 import (
+	"bytes"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/rvanmech/unky-mo/internal/gitfiles"
 )
@@ -52,46 +55,64 @@ func isTest(p string) bool {
 	return gitfiles.Classify(p, "M", 1, false, nil) == gitfiles.KindTest
 }
 
-// index is the change's new version as a file list: the working tree's
-// tracked and untracked files, or the head commit's. Blob ids are known for
-// tracked files, and key the symbol cache.
+// index is one version of the tree as a file list: the change's new
+// version (the working tree's tracked and untracked files, or the head
+// commit's), or with rev set, that commit's (the base). Blob ids are known
+// for tracked files, and key the symbol cache.
 type index struct {
 	r     *repo
+	rev   string   // the commit this index lists, "" for the working tree
 	paths []string // sorted
 	blobs map[string]string
+	sizes map[string]int64
+	texts map[string]*string // prefetched contents (rev indexes only)
 }
 
+// newIndex lists the change's new version.
 func newIndex(r *repo) *index {
-	x := &index{r: r, blobs: map[string]string{}}
 	if r.head != "" {
-		// <mode> SP <type> SP <oid> TAB <path>
-		out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-tree", "-r", "-z", "--full-tree", r.head)
-		if err == nil {
-			for _, rec := range strings.Split(string(out), "\x00") {
-				meta, p, ok := strings.Cut(rec, "\t")
-				if f := strings.Fields(meta); ok && len(f) == 3 && f[1] == "blob" {
+		return newIndexAt(r, r.head)
+	}
+	x := &index{r: r, blobs: map[string]string{}}
+	// <mode> SP <oid> SP <stage> TAB <path>
+	if out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-s", "-z"); err == nil {
+		for _, rec := range strings.Split(string(out), "\x00") {
+			meta, p, ok := strings.Cut(rec, "\t")
+			if f := strings.Fields(meta); ok && len(f) == 3 {
+				if _, dup := x.blobs[p]; !dup {
 					x.paths = append(x.paths, p)
-					x.blobs[p] = f[2]
 				}
+				x.blobs[p] = f[1]
 			}
 		}
-	} else {
-		// <mode> SP <oid> SP <stage> TAB <path>
-		if out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-s", "-z"); err == nil {
-			for _, rec := range strings.Split(string(out), "\x00") {
-				meta, p, ok := strings.Cut(rec, "\t")
-				if f := strings.Fields(meta); ok && len(f) == 3 {
-					if _, dup := x.blobs[p]; !dup {
-						x.paths = append(x.paths, p)
-					}
-					x.blobs[p] = f[1]
-				}
+	}
+	if out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-z", "--others", "--exclude-standard"); err == nil {
+		for _, p := range strings.Split(string(out), "\x00") {
+			if p != "" {
+				x.paths = append(x.paths, p)
 			}
 		}
-		if out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-files", "-z", "--others", "--exclude-standard"); err == nil {
-			for _, p := range strings.Split(string(out), "\x00") {
-				if p != "" {
-					x.paths = append(x.paths, p)
+	}
+	sort.Strings(x.paths)
+	return x
+}
+
+// newIndexAt lists the files of commit rev.
+func newIndexAt(r *repo, rev string) *index {
+	x := &index{r: r, rev: rev, blobs: map[string]string{}, sizes: map[string]int64{}}
+	if rev == "" {
+		return x
+	}
+	// <mode> SP <type> SP <oid> SP+ <size> TAB <path>
+	out, _, err := r.cmd.Output(r.ctx, r.root, "git", "ls-tree", "-r", "-z", "-l", "--full-tree", rev)
+	if err == nil {
+		for _, rec := range strings.Split(string(out), "\x00") {
+			meta, p, ok := strings.Cut(rec, "\t")
+			if f := strings.Fields(meta); ok && len(f) == 4 && f[1] == "blob" {
+				x.paths = append(x.paths, p)
+				x.blobs[p] = f[2]
+				if n, err := strconv.ParseInt(f[3], 10, 64); err == nil {
+					x.sizes[p] = n
 				}
 			}
 		}
@@ -126,8 +147,60 @@ func (x *index) under(dir string) []string {
 	return x.paths[i:j]
 }
 
-// read returns a file's text in the change's new version.
-func (x *index) read(p string) *string { return x.r.readAfter(p) }
+// read returns a file's text in the index's version.
+func (x *index) read(p string) *string {
+	if t, ok := x.texts[p]; ok {
+		return t
+	}
+	switch {
+	case x.rev == "" || x.rev == x.r.head:
+		return x.r.readAfter(p)
+	case x.rev == x.r.rev:
+		return x.r.readBefore(p)
+	}
+	return nil
+}
+
+// prefetch reads the given files of a commit's index with a few batched
+// git processes, so later reads don't take three processes each. Files
+// over the size cap, and working tree indexes, are left alone.
+func (x *index) prefetch(paths []string) {
+	if x.rev == "" {
+		return
+	}
+	if x.texts == nil {
+		x.texts = map[string]*string{}
+	}
+	byOID := map[string][]string{}
+	var oids []string
+	for _, p := range paths {
+		oid := x.blobs[p]
+		if _, done := x.texts[p]; done || oid == "" || x.sizes[p] > gitfiles.MaxContentBytes {
+			continue
+		}
+		if byOID[oid] == nil {
+			oids = append(oids, oid)
+		}
+		byOID[oid] = append(byOID[oid], p)
+	}
+	if len(oids) == 0 {
+		return
+	}
+	blobs, err := gitfiles.ReadBlobs(x.r.ctx, x.r.cmd, x.r.root, oids)
+	if err != nil {
+		return // reads fall back to one file at a time
+	}
+	for _, oid := range oids {
+		var t *string
+		if b, ok := blobs[oid]; ok && bytes.IndexByte(b, 0) < 0 && utf8.Valid(b) {
+			s := string(b)
+			t = &s
+		}
+		for _, p := range byOID[oid] {
+			x.texts[p] = t
+		}
+	}
+}
 
 // symbols returns what extract finds in file p, cached by language and blob
 // id across analyses, so polling doesn't re-read unchanged files. A file
@@ -148,6 +221,32 @@ func (x *index) symbols(lang, p string, extract func(src string) any) any {
 		symCache.put(lang+"\x00"+oid, v)
 	}
 	return v
+}
+
+// cached reports whether symbols(lang, p, …) would be served from the
+// cache without reading the file.
+func (x *index) cached(lang, p string) bool {
+	oid := x.blobs[p]
+	if oid == "" {
+		return false
+	}
+	_, ok := symCache.get(lang + "\x00" + oid)
+	return ok
+}
+
+// prefetchFor prefetches the files keep selects whose lang symbols aren't
+// cached yet, ahead of a loop of symbols calls.
+func (x *index) prefetchFor(lang string, keep func(p string) bool) {
+	if x.rev == "" {
+		return
+	}
+	var reads []string
+	for _, p := range x.paths {
+		if keep(p) && !x.cached(lang, p) {
+			reads = append(reads, p)
+		}
+	}
+	x.prefetch(reads)
 }
 
 // symCache is a bounded process-wide cache: on overflow, the oldest

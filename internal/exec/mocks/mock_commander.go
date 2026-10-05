@@ -81,6 +81,27 @@ func (mr *MockCommanderMockRecorder) Output(ctx, dir, name any, args ...any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Output", reflect.TypeOf((*MockCommander)(nil).Output), varargs...)
 }
 
+// OutputStdin mocks base method.
+func (m *MockCommander) OutputStdin(ctx context.Context, dir string, in []byte, name string, args ...string) ([]byte, []byte, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, dir, in, name}
+	for _, a := range args {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "OutputStdin", varargs...)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].([]byte)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// OutputStdin indicates an expected call of OutputStdin.
+func (mr *MockCommanderMockRecorder) OutputStdin(ctx, dir, in, name any, args ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, dir, in, name}, args...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OutputStdin", reflect.TypeOf((*MockCommander)(nil).OutputStdin), varargs...)
+}
+
 // Run mocks base method.
 func (m *MockCommander) Run(ctx context.Context, dir, name string, args ...string) error {
 	m.ctrl.T.Helper()

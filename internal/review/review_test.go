@@ -541,3 +541,47 @@ func TestAnalyzeTimeout(t *testing.T) {
 		t.Errorf("got %+v, want a timeout error", a)
 	}
 }
+
+// countingCommander counts the git processes an index spawns.
+type countingCommander struct {
+	moexec.Commander
+	n int
+}
+
+func (c *countingCommander) Output(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, error) {
+	c.n++
+	return c.Commander.Output(ctx, dir, name, args...)
+}
+
+func (c *countingCommander) OutputStdin(ctx context.Context, dir string, in []byte, name string, args ...string) ([]byte, []byte, error) {
+	c.n++
+	return c.Commander.OutputStdin(ctx, dir, in, name, args...)
+}
+
+// A commit's index reads its files with one batched git process, and then
+// serves them without any more.
+func TestIndexAtPrefetch(t *testing.T) {
+	dir := moduleRepo(t)
+	base := gitOut(t, dir, "rev-parse", "main")
+	cmd := &countingCommander{Commander: moexec.DefaultCommander}
+	r := &repo{ctx: context.Background(), cmd: cmd, root: dir, rev: base}
+	idx := newIndexAt(r, base)
+	if !idx.has("f/f.go") || idx.has("e/e.go") {
+		t.Fatalf("base index paths = %v", idx.paths)
+	}
+	cmd.n = 0
+	idx.prefetch(idx.paths)
+	if cmd.n != 1 {
+		t.Errorf("prefetch ran %d git processes, want 1", cmd.n)
+	}
+	got := idx.read("a/a.go")
+	if got == nil || !strings.Contains(*got, "func Gone()") || cmd.n != 1 {
+		t.Errorf("read after prefetch: %v (%d processes)", got != nil, cmd.n)
+	}
+	// Without a prefetch, a base read still works, one file at a time.
+	idx2 := newIndexAt(r, base)
+	if got := idx2.read("b/b.go"); got == nil || !strings.Contains(*got, "const N = 1") {
+		t.Errorf("unprefetched base read = %v", got)
+	}
+}
+

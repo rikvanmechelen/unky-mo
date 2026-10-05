@@ -26,6 +26,9 @@ type Commander interface {
 
 	// Run runs name with args in dir and returns only the exit error.
 	Run(ctx context.Context, dir, name string, args ...string) error
+
+	// OutputStdin is Output with in fed to the process's stdin.
+	OutputStdin(ctx context.Context, dir string, in []byte, name string, args ...string) (stdout, stderr []byte, err error)
 }
 
 // DefaultCommander is the production implementation — a thin wrapper over
@@ -54,4 +57,14 @@ func (realCommander) Run(ctx context.Context, dir, name string, args ...string) 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.Run()
+}
+
+func (realCommander) OutputStdin(ctx context.Context, dir string, in []byte, name string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Stdin = bytes.NewReader(in)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	return stdout, stderr.Bytes(), err
 }

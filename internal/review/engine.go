@@ -87,23 +87,37 @@ func edgeDelta(idx *index, lang language, a *Analysis, files []*file, rules *rul
 	hasUnchanged := map[string]bool{}
 	cacher, _ := lang.(refCacher)
 	phased, _ := lang.(twoPhase)
+	cacheKey := func(p string) string {
+		if phased != nil {
+			return "scan:" + lang.name() + path.Ext(p)
+		}
+		if cacher != nil {
+			return "refs:" + lang.name() + "\x00" + cacher.refsKey()
+		}
+		return ""
+	}
+	var reads, unchangedPaths []string
 	for _, p := range idx.paths {
-		if changed[p] || !lang.owns(p) || isTest(p) {
+		if changed[p] || !lang.owns(p) || isTest(p) || !touched[lang.unit(p)] {
 			continue
 		}
+		unchangedPaths = append(unchangedPaths, p)
+		if k := cacheKey(p); k == "" || !idx.cached(k, p) {
+			reads = append(reads, p)
+		}
+	}
+	idx.prefetch(reads)
+	for _, p := range unchangedPaths {
 		u := lang.unit(p)
-		if !touched[u] {
-			continue
-		}
 		hasUnchanged[u] = true
 		var refs []ref
 		if phased != nil {
-			v := idx.symbols("scan:"+lang.name()+path.Ext(p), p, func(src string) any { return phased.scan(p, src) })
+			v := idx.symbols(cacheKey(p), p, func(src string) any { return phased.scan(p, src) })
 			if v != nil {
 				refs = phased.resolve(p, v)
 			}
 		} else if cacher != nil {
-			v := idx.symbols("refs:"+lang.name()+"\x00"+cacher.refsKey(), p, func(src string) any {
+			v := idx.symbols(cacheKey(p), p, func(src string) any {
 				rs, _ := lang.refs(p, src)
 				return rs
 			})

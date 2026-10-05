@@ -68,6 +68,7 @@ func (l *ktLang) detect(idx *index) bool {
 
 	// Package → unit, from every file's declared package.
 	l.pkgUnit = map[string]string{}
+	idx.prefetchFor("ktpkg", func(p string) bool { return l.owns(p) && !isTest(p) && l.unit(p) != "" })
 	for _, p := range idx.paths {
 		if !l.owns(p) || isTest(p) {
 			continue
