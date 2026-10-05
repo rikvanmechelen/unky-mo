@@ -205,6 +205,11 @@ func TestPyCalls(t *testing.T) {
 	if got := statuses(cg); !reflect.DeepEqual(got, want) {
 		t.Errorf("statuses = %v\nwant %v", got, want)
 	}
+	for _, f := range cg.Funcs {
+		if f.ID == "app/service.py:register" && (f.Sig != "def register(name, email)" || f.OldSig != "def register(name)" || f.TestedBy == nil || f.TestedBy.ID != "tests/test_service.py:test_register") {
+			t.Errorf("register: sig %q, was %q, tested by %+v", f.Sig, f.OldSig, f.TestedBy)
+		}
+	}
 	calls := callKeys(cg)
 	for _, w := range []string{
 		"+app/models.py:User.full_name>app/models.py:Base.save@approx", // self, through the base class

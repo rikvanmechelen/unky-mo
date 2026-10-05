@@ -174,6 +174,35 @@ in the map, the Review list and the inspector.
   TestHandleOverview". `Func.Sig` / `Func.OldSig` for `signature` (Go: the
   types-only signature the exported API diff already computes; heuristic
   languages: the definition's first line).
+
+  **B2 detail.**
+  - `Func.TestedBy *TestRef` (`{id, name, path, line}`): `reachedByTest`
+    returns the test it found instead of a bool. `callDelta` runs it for
+    the same changed functions as today (not removed, tests, generated,
+    entry points or `conventional` ones) whenever the language loaded
+    tests. Reached → `TestedBy` on the function's node; not reached → the
+    `untested` finding, as today. It's the first test the 0-1 BFS
+    discovers, so the nearest one, ties broken by caller ID (callers are
+    now sorted, so it's stable between polls). A function in a test file
+    counts as a test, helpers too, so `rootTest` walks up from a helper
+    through test-file callers to a test nothing calls, and keeps the
+    helper as `TestRef.Via` ("TestGoCalls via callGraphOf").
+  - `Func.Sig` / `Func.OldSig`, only for status `signature`: the
+    definition's header in each version, read as text the same way for
+    every language. A post-pass in `Calls` (it has both indexes, and the
+    old `fn` from `before` under the same ID) runs `defHeader(text, line)`.
+    That skips lines that are only an annotation (`@x`, `@x(…)`), joins
+    lines until `(`/`[` balance (at most 8 lines), collapses whitespace and
+    cuts at the body: the first `{` outside brackets (not `{}`), or for
+    Python the first `:`. Capped at 300 characters. No scanner or
+    symbol-cache change. Go's `Line` is the `func` keyword, the others'
+    their definition line.
+  - Tests: `calls_test.go` covers `defHeader` (multi-line params, an
+    annotation, a nested paren, the cap) and `TestedBy` on hand-built sets
+    (direct, two hops, through an interface, none → `untested` and no
+    `TestedBy`). `gocalls_test.go` checks a real signature change's
+    `Sig`/`OldSig` and a real `TestedBy`; `pycalls_test.go` checks one
+    heuristic `Sig`/`OldSig`.
 - **B3. Layers.** `Package.Layer` (from `ruleSet.layerOf`) and
   `Rules.Order` (layer names top to bottom), so the map can lay rows out by
   the repo's layers. Packages with no layer fall back to import depth
@@ -346,5 +375,5 @@ in the reviewer view, phone bottom-sheet inspector.
 
 ## Status
 
-Revised for v3 on 2026-10-05 (the v2 version was never built). B1 built
-2026-10-05; next: B2.
+Revised for v3 on 2026-10-05 (the v2 version was never built). B1 and B2
+built 2026-10-05; next: B3.

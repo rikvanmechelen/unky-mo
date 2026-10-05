@@ -159,6 +159,19 @@ func TestGoCalls(t *testing.T) {
 	if got := statuses(cg); !reflect.DeepEqual(got, want) {
 		t.Errorf("statuses = %v\nwant %v", got, want)
 	}
+	byID := map[string]Func{}
+	for _, f := range cg.Funcs {
+		byID[f.ID] = f
+	}
+	if h := byID["svc.Helper"]; h.Sig != "func Helper(n int) int" || h.OldSig != "func Helper() int" {
+		t.Errorf("Helper signature %q, was %q", h.Sig, h.OldSig)
+	}
+	if l := byID["(*svc.Service).Lookup"]; l.Sig != "" || l.TestedBy == nil || l.TestedBy.ID != "svc.TestLookup" || l.TestedBy.Path != "svc/svc_test.go" {
+		t.Errorf("Lookup: sig %q, tested by %+v", l.Sig, l.TestedBy)
+	}
+	if n := byID["svc.normalize"]; n.TestedBy == nil || n.TestedBy.Name != "TestLookup" {
+		t.Errorf("normalize tested by %+v", n.TestedBy)
+	}
 	calls := callKeys(cg)
 	for _, w := range []string{
 		"+(*svc.Service).Lookup>svc.normalize",

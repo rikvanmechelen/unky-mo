@@ -78,6 +78,24 @@ type Func struct {
 	Unresolved int `json:"unresolved,omitempty"`
 	// MoreCallers counts callers left out past maxCallers.
 	MoreCallers int `json:"moreCallers,omitempty"`
+	// TestedBy is the nearest test that reaches a changed function within
+	// untestedHops calls (nil when none does, or when it wasn't checked).
+	TestedBy *TestRef `json:"testedBy,omitempty"`
+	// Sig and OldSig are a signature change's definition header in the new
+	// and the old version, as written ("func NewServer(cfg Config) *Server").
+	Sig    string `json:"sig,omitempty"`
+	OldSig string `json:"oldSig,omitempty"`
+}
+
+// TestRef names a test function and where it is. Via is the test helper
+// the test reaches the function through, when that's how (a helper in a
+// test file counts as a test for reachedByTest, but isn't one to name).
+type TestRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Via  string `json:"via,omitempty"`
 }
 
 // Call is a call (or reference) from one function to another. Op is OpAdded
@@ -301,6 +319,7 @@ func Calls(ctx context.Context, cmd moexec.Commander, o *gitfiles.Overview) (*Ca
 		}
 		n := len(cg.Funcs)
 		callDelta(cg, cl, before, after, oldPaths, newPaths, renames)
+		addSignatures(cg.Funcs[n:], before, base, idx)
 		changed := 0
 		for _, f := range cg.Funcs[n:] {
 			if f.Status != "" {
@@ -542,6 +561,16 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			callers[c.to] = append(callers[c.to], callerRef{f.ID, c, f.Path})
 		}
 	}
+	// In a stable order, so the test reachedByTest names doesn't change
+	// between polls.
+	for _, cs := range callers {
+		sort.Slice(cs, func(i, j int) bool {
+			if cs[i].from != cs[j].from {
+				return cs[i].from < cs[j].from
+			}
+			return cs[i].site.line < cs[j].site.line
+		})
+	}
 	for _, id := range sortedKeys(status) {
 		st := status[id]
 		if st == FuncRemoved || st == FuncAdded {
@@ -629,7 +658,13 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated || newFns[id].entry || newFns[id].conventional {
 				continue
 			}
-			if !reachedByTest(id, after, callers, untestedHops) {
+			if t := reachedByTest(id, after, callers, untestedHops); t != nil {
+				ref := &TestRef{ID: t.ID, Name: t.Name, Path: t.Path, Line: t.Line}
+				if root := rootTest(t, after, callers); root != t {
+					ref = &TestRef{ID: root.ID, Name: root.Name, Path: root.Path, Line: root.Line, Via: t.Name}
+				}
+				g.funcs[id].TestedBy = ref
+			} else {
 				cg.Findings = append(cg.Findings, CallFinding{Kind: FindingUntested, Func: id})
 			}
 		}
@@ -661,10 +696,11 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	g.flush()
 }
 
-// reachedByTest reports whether a test function calls id within hops calls.
-// Going from an interface method to its implementation is free: a test
-// calling through an interface reaches every implementation.
-func reachedByTest(id string, s *callSet, callers map[string][]callerRef, hops int) bool {
+// reachedByTest returns the first test function found that calls id within
+// hops calls (the nearest, as the search goes outward), or nil. Going from
+// an interface method to its implementation is free: a test calling
+// through an interface reaches every implementation.
+func reachedByTest(id string, s *callSet, callers map[string][]callerRef, hops int) *fn {
 	dist := map[string]int{id: 0}
 	queue := []string{id} // a 0-1 BFS: free steps go to the front
 	for len(queue) > 0 {
@@ -688,7 +724,7 @@ func reachedByTest(id string, s *callSet, callers map[string][]callerRef, hops i
 			}
 			dist[c.from] = d
 			if f := s.funcs[c.from]; f != nil && f.Test {
-				return true
+				return f
 			}
 			if cost == 0 {
 				queue = append([]string{c.from}, queue...)
@@ -697,7 +733,42 @@ func reachedByTest(id string, s *callSet, callers map[string][]callerRef, hops i
 			}
 		}
 	}
-	return false
+	return nil
+}
+
+// maxRootTestSearch bounds rootTest's walk through test helpers.
+const maxRootTestSearch = 200
+
+// rootTest walks up from a function in a test file through its callers in
+// test files to one no test-file function calls: the test itself rather
+// than a helper (delta, callGraphOf). t itself when nothing calls it, or
+// when every path loops.
+func rootTest(t *fn, s *callSet, callers map[string][]callerRef) *fn {
+	seen := map[string]bool{t.ID: true}
+	queue := []*fn{t}
+	for len(queue) > 0 && len(seen) < maxRootTestSearch {
+		f := queue[0]
+		queue = queue[1:]
+		called := false
+		for _, c := range callers[f.ID] {
+			from := s.funcs[c.from]
+			if from == nil || !from.Test {
+				continue
+			}
+			called = true
+			if !seen[from.ID] {
+				seen[from.ID] = true
+				queue = append(queue, from)
+			}
+		}
+		if !called && f != t {
+			return f
+		}
+		if !called {
+			return t
+		}
+	}
+	return t
 }
 
 // graphBuilder collects one language's functions and calls, deduplicated.
@@ -893,4 +964,104 @@ func findingRank(kind string) int {
 		return 4
 	}
 	return 5
+}
+
+// addSignatures fills in a signature change's header text on both sides,
+// read from each version's file at the definition's line.
+func addSignatures(funcs []Func, before *callSet, base, idx *index) {
+	for i := range funcs {
+		f := &funcs[i]
+		if f.Status != FuncSignature {
+			continue
+		}
+		if t := idx.read(f.Path); t != nil {
+			f.Sig = defHeader(*t, f.Line)
+		}
+		if old := before.funcs[f.ID]; old != nil {
+			if t := base.read(old.Path); t != nil {
+				f.OldSig = defHeader(*t, old.Line)
+			}
+		}
+	}
+}
+
+// Bounds on a definition header.
+const (
+	maxHeaderLines = 8
+	maxHeaderRunes = 300
+)
+
+// defHeader is the definition starting at line (1-based) of text, as
+// written up to its body: annotation lines (@…) skipped, lines joined
+// until the parentheses and square brackets balance, whitespace collapsed,
+// and cut at the body: the first "{" outside brackets (not "{}", as in
+// interface{}), or for Python the first ":". It's text, not parsed, so it
+// works the same for every language.
+func defHeader(text string, line int) string {
+	lines := strings.Split(text, "\n")
+	i := line - 1
+	if i < 0 || i >= len(lines) {
+		return ""
+	}
+	for i < len(lines)-1 && annotationOnly(strings.TrimSpace(lines[i])) {
+		i++
+	}
+	var parts []string
+	depth := 0
+	for n := 0; n < maxHeaderLines && i+n < len(lines); n++ {
+		l := strings.TrimSpace(lines[i+n])
+		parts = append(parts, l)
+		depth += strings.Count(l, "(") + strings.Count(l, "[") - strings.Count(l, ")") - strings.Count(l, "]")
+		if depth <= 0 {
+			break
+		}
+	}
+	h := strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+	python := strings.HasPrefix(h, "def ") || strings.HasPrefix(h, "async def ")
+	depth = 0
+	for k := 0; k < len(h); k++ {
+		switch c := h[k]; {
+		case c == '(' || c == '[':
+			depth++
+		case c == ')' || c == ']':
+			depth--
+		case depth > 0:
+		case c == '{' && !strings.HasPrefix(h[k:], "{}"), python && c == ':':
+			h = h[:k]
+			k = len(h)
+		}
+	}
+	h = strings.TrimSpace(h)
+	if r := []rune(h); len(r) > maxHeaderRunes {
+		h = string(r[:maxHeaderRunes]) + "…"
+	}
+	return h
+}
+
+// annotationOnly reports whether l is nothing but an annotation or
+// decorator: "@name" with an optional argument list ("@app.route('/x')"),
+// not "@objc func x()".
+func annotationOnly(l string) bool {
+	if !strings.HasPrefix(l, "@") {
+		return false
+	}
+	i := 1
+	for i < len(l) && (l[i] == '_' || l[i] == '.' || l[i] == ':' || l[i] >= '0' && l[i] <= '9' || l[i] >= 'a' && l[i] <= 'z' || l[i] >= 'A' && l[i] <= 'Z') {
+		i++
+	}
+	if i < len(l) && l[i] == '(' {
+		depth := 0
+		for ; i < len(l); i++ {
+			if l[i] == '(' {
+				depth++
+			} else if l[i] == ')' {
+				depth--
+				if depth == 0 {
+					i++
+					break
+				}
+			}
+		}
+	}
+	return i > 1 && strings.TrimSpace(l[i:]) == ""
 }

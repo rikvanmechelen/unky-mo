@@ -367,3 +367,78 @@ func TestCallDeltaRenamedStillCalled(t *testing.T) {
 		t.Errorf("findings = %v", got)
 	}
 }
+
+func TestDefHeader(t *testing.T) {
+	cases := []struct {
+		text string
+		line int
+		want string
+	}{
+		{"package x\n\nfunc Helper(n int) int { return n }\n", 3, "func Helper(n int) int"},
+		{"func (s *Server) handle(w http.ResponseWriter,\n\tr *http.Request,\n) error {\n", 1, "func (s *Server) handle(w http.ResponseWriter, r *http.Request, ) error"},
+		{"func Map[T any](xs []T, f func(T) T) []T {\n", 1, "func Map[T any](xs []T, f func(T) T) []T"},
+		{"func F() map[string]interface{} {\n", 1, "func F() map[string]interface{}"},
+		{"@app.route('/x', methods=['GET'])\ndef view(req: Request) -> Dict[str, int]:\n    return {}\n", 1, "def view(req: Request) -> Dict[str, int]"},
+		{"    def save(self, *args,\n             force=False):\n", 1, "def save(self, *args, force=False)"},
+		{"@objc func tap(_ sender: Any) {\n", 1, "@objc func tap(_ sender: Any)"},
+		{"  @Override\n  fun load(id: String): User? {\n", 1, "fun load(id: String): User?"},
+		{"  def update(params, notify: true)\n", 1, "def update(params, notify: true)"},
+		{"export function f(a, { b }) { return a }\n", 1, "export function f(a, { b })"},
+		{"x\n", 5, ""},
+		{"func f(\n" + strings.Repeat("a int,\n", 20), 1, "func f( a int, a int, a int, a int, a int, a int, a int,"},
+	}
+	for _, c := range cases {
+		if got := defHeader(c.text, c.line); got != c.want {
+			t.Errorf("defHeader(%q, %d) = %q, want %q", c.text, c.line, got, c.want)
+		}
+	}
+	long := "func f(" + strings.Repeat("x", 400) + ") {"
+	if got := defHeader(long, 1); len([]rune(got)) != maxHeaderRunes+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("long header: %d runes", len([]rune(got)))
+	}
+}
+
+// A changed function a test reaches names the nearest test; one no test
+// reaches gets the untested finding and no TestedBy.
+func TestCallDeltaTestedBy(t *testing.T) {
+	impl := tf("a.Impl", "a/a.go", 1, "i2", "s")
+	after := set(
+		tf("a.Direct", "a/a.go", 10, "d2", "s"),
+		tf("a.Deep", "a/a.go", 20, "e2", "s"),
+		impl,
+		tf("a.Alone", "a/a.go", 30, "l2", "s"),
+		&fn{Func: Func{ID: "(a.I).M", Path: "a/i.go"}, synthetic: true, calls: []callSite{{to: "a.Impl", kind: CallImpl}}},
+		tf("a.Mid", "a/m.go", 1, "m", "s", "a.Deep", "(a.I).M@dynamic"),
+		tf("a.TestFar", "a/a_test.go", 1, "t", "s", "a.Mid"),
+		tf("a.TestNear", "a/a_test.go", 10, "t", "s", "a.Direct"),
+		tf("a.Helped", "a/a.go", 40, "h2", "s"),
+		tf("a.helper", "a/a_test.go", 20, "t", "s", "a.Helped"),
+		tf("a.TestWithHelper", "a/a_test.go", 30, "t", "s", "a.helper"),
+	)
+	before := set(
+		tf("a.Direct", "a/a.go", 10, "d1", "s"),
+		tf("a.Deep", "a/a.go", 20, "e1", "s"),
+		tf("a.Impl", "a/a.go", 1, "i1", "s"),
+		tf("a.Alone", "a/a.go", 30, "l1", "s"),
+		tf("a.Helped", "a/a.go", 40, "h1", "s"),
+	)
+	cg := delta(before, after, []string{"a/a.go"}, []string{"a/a.go"}, nil)
+	by := map[string]string{}
+	for _, f := range cg.Funcs {
+		if f.TestedBy != nil {
+			by[f.ID] = f.TestedBy.ID + "@" + f.TestedBy.Path + " via " + f.TestedBy.Via
+		}
+	}
+	want := map[string]string{
+		"a.Direct": "a.TestNear@a/a_test.go via ",
+		"a.Deep":   "a.TestFar@a/a_test.go via ",
+		"a.Impl":   "a.TestFar@a/a_test.go via ", // through the interface
+		"a.Helped": "a.TestWithHelper@a/a_test.go via a.helper",
+	}
+	if !reflect.DeepEqual(by, want) {
+		t.Errorf("testedBy = %v\nwant %v", by, want)
+	}
+	if got := findingKeys(cg); !reflect.DeepEqual(got, []string{"untested:a.Alone"}) {
+		t.Errorf("findings = %v", got)
+	}
+}
