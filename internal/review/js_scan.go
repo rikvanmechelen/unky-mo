@@ -17,6 +17,8 @@ import (
 type jsScanned struct {
 	code    string
 	strings [][2]int // [start, end) of each '…'/"…" literal, in order
+	// literals are the template and regex literals blanked, [start, end).
+	literals [][2]int
 }
 
 // inString reports whether offset i falls inside a string literal.
@@ -71,6 +73,7 @@ func jsCode(src string) *jsScanned {
 		case c == '`':
 			j := skipTemplate(b, i+1)
 			blank(b, i, j)
+			out.literals = append(out.literals, [2]int{i, j})
 			i = j
 			prev, word = 'a', ""
 		case c == '/' && startsRegex(prev, word):
@@ -95,6 +98,7 @@ func jsCode(src string) *jsScanned {
 				j++
 			}
 			blank(b, i, min(n, j))
+			out.literals = append(out.literals, [2]int{i, min(n, j)})
 			i = j
 			prev, word = 'a', ""
 		case isIdentByte(c):

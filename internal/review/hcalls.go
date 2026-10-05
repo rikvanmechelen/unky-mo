@@ -65,7 +65,16 @@ type hFile struct {
 	Defs    []hDef    `json:"d,omitempty"`
 	Imports []hImport `json:"i,omitempty"`
 	Classes []hClass  `json:"c,omitempty"`
-	OK      bool      `json:"ok"`
+	// Exports maps a name the file exports to the local name it stands
+	// for, where they differ: "default" → "Button" for export default
+	// Button (or module.exports = Button), "b" → "a" for export { a as b }.
+	// A name exported as itself isn't listed. JS/TS only so far.
+	Exports map[string]string `json:"x,omitempty"`
+	// Reexports are names the file exports straight from another module:
+	// Local is the exported name ("*" for export * from), Spec and Name
+	// as for an import ("" Name: the module itself).
+	Reexports []hImport `json:"r,omitempty"`
+	OK        bool      `json:"ok"`
 }
 
 // hLang is what a heuristic language provides.
