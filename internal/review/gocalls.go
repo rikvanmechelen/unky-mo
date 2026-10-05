@@ -568,6 +568,7 @@ func (l *goLoader) walk(pkg *goPkg, set *callSet) {
 				fn := &fn{Func: Func{ID: id, Name: name, Path: src, Line: l.fset.Position(d.Pos()).Line,
 					End: l.fset.Position(d.End()).Line, Unit: pkgDir(src), Lang: "go", Test: test}}
 				fn.generated = generated
+				fn.entry = id == initID
 				if d.Body != nil {
 					fn.body = hashOf(goTokens(l.fset, text, d.Body))
 					l.calls(pkg, d.Body, fn)

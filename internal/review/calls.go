@@ -159,8 +159,10 @@ type fn struct {
 	// synthetic nodes (an interface method standing for its
 	// implementations) are never changed themselves.
 	synthetic bool
-	// generated code isn't flagged as untested.
-	generated bool
+	// generated code isn't flagged as untested, nor are entry points
+	// nothing in the code calls (a package's init, a class body, a view,
+	// a file's top-level code).
+	generated, entry bool
 }
 
 // callSet is one version's functions for one language: the changed files'
@@ -589,7 +591,7 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 	if hasTests {
 		for _, id := range sortedKeys(status) {
 			st := status[id]
-			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated {
+			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated || newFns[id].entry {
 				continue
 			}
 			if !reachedByTest(id, after, callers, untestedHops) {

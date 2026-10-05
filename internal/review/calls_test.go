@@ -340,3 +340,15 @@ func TestCallDeltaDefaultedParamNoFinding(t *testing.T) {
 		}
 	}
 }
+
+// Entry points nothing calls (a view, a class body, an init) aren't
+// flagged untested.
+func TestCallDeltaEntryNotUntested(t *testing.T) {
+	view := tf("view:app/views/x.erb", "app/views/x.erb", 1, "v", "")
+	view.entry = true
+	plain := tf("a.F", "a/a.go", 1, "f", "s")
+	cg := delta(set(), set(view, plain, tf("a.TestX", "a/a_test.go", 1, "t", "s")), nil, []string{"app/views/x.erb", "a/a.go"}, nil)
+	if got := findingKeys(cg); !reflect.DeepEqual(got, []string{"untested:a.F"}) {
+		t.Errorf("findings = %v", got)
+	}
+}

@@ -131,7 +131,8 @@ func (h *hCalls) funcs(idx *index, files []string, full bool) (*callSet, error) 
 		for i := range f.Defs {
 			d := &f.Defs[i]
 			fn := &fn{Func: Func{ID: h.l.id(p, d), Name: h.l.display(d), Path: p, Line: d.Line, End: d.End,
-				Unit: h.l.unit(p), Lang: h.l.name(), Test: test}, body: d.Body, sig: d.Sig, req: d.Req}
+				Unit: h.l.unit(p), Lang: h.l.name(), Test: test}, body: d.Body, sig: d.Sig, req: d.Req,
+				entry: d.IsClass || strings.HasPrefix(d.Name, "<")} // pseudo-definitions are named "<…>"
 			for _, c := range d.Calls {
 				to, want := h.l.resolve(r, p, d, c)
 				switch {
