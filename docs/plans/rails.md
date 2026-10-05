@@ -290,6 +290,63 @@ Work is split so parallel changes touch different code:
 
 Every item is checked on the last 20 commits of all three apps (read-only, as for the call graph): parse rate, resolved share before and after, findings reviewed by hand.
 
-## Notes
+## Notes (2026-10-04: items 1, 2, 3, 5 and 6 built and merged into main)
 
-(filled in as items land)
+### Item 1 (routes)
+- The parser has its own small tokenizer, and follows ActionDispatch's naming:
+  - `name_for_action`, with taken and invalid names dropped;
+  - shallow paths and prefixes, nested params (`:cart_uuid`), `module:` on resources, `to: "/c#a"`;
+  - `%w[…].each` loops, unknown block methods, and `api_only` from `config/application.rb`.
+- **Real routes files:** moma-apps-rails 882 routes, 5 skipped (4 redirects, the Flipper mount); moma-org-rails 24; moma-chatbot 18. A dozen tricky names were checked by hand.
+- **`route-without-action`:** raised only when the route, its target or its controller changed. Otherwise every old `resources` line without `only:` would be flagged. Controllers inheriting from a gem (Devise) are skipped.
+
+### Item 2 (Stimulus)
+- A binding's controller is a call (not a ref), so it can carry a want. Actions are `action:<m>`, so they can't collide with Ruby names.
+- `stimulus-unbound` is raised when the view or the controller changed. It isn't deduplicated against `removed-called`.
+
+### Item 3 (ActiveRecord typing)
+- One synthetic node per column, association, enum value, delegated method and AASM event or state; every generated method resolves to it.
+- Columns live in `schema.rb`'s own scan, so a removed column is a removed function.
+- Additions beyond the plan: FactoryBot `create`/`build(:x)` typing, a partial's own object, and functional-test controller lookup by dropping class segments.
+- Resolved share of Ruby call sites in the new version (whole tree), over the last 20 commits:
+
+  | App | Before | After |
+  |---|---|---|
+  | moma-apps-rails | 13% | 47% |
+  | moma-org-rails | 33% | 67% |
+  | moma-chatbot | 36% | 71% |
+
+### Item 5 (tests)
+- Built in two parts: Minitest/spec blocks in the scanner, plus convention coverage and `test-not-updated` in the engine (`hTests`, `rbtests.go`).
+- Request tests reach actions through route helpers, because route hops are free.
+
+### Item 6 (implicit calls)
+- Implicit templates are tried in 4 formats and resolve to whatever exists.
+- They're skipped when the action renders, redirects or sends data itself, unless it uses `respond_to`.
+
+### Engine fixes found on the way
+- A pure rename's old name is matched for `removed-called`.
+- Findings' sites are sorted, which fixes the flaky `TestJSRemovedImported`.
+- `viewCall` helper lookups are memoized: 4 s → 0.6 s on moma-apps-rails.
+- The Ruby scan's regexps are guarded by cheap substring checks: moma-apps-rails cold 7.3 s → 3.9 s, with identical output.
+
+### Timings and findings (last 20 commits, read-only)
+
+| App | Cold | Real findings |
+|---|---|---|
+| moma-apps-rails | 3.9 s (warm ~0.6 s) | |
+| moma-org-rails | 0.2 s | `jobs/show.html.erb` still renders the deleted `_department` and `_opportunity_card` partials; `_mobile_menu.html.erb` binds an undeclared `closeButton` target |
+| moma-chatbot | 0.26 s | |
+
+### Known limitations
+- **Graph size:** a new table adds a node per column, and test files a node per test block. Units collapse past 60 functions, but a "hide columns/tests" switch may be wanted.
+- **Gem constants:** `Flipper.enabled?` and `Rails.configuration` are still counted as unresolved.
+- **Not read:**
+  - partial `locals:` other than the partial's object;
+  - chains split across lines;
+  - `included do`;
+  - Pundit `policy_class`;
+  - RSpec controller specs;
+  - routes' `path_names`, `direct`/`resolve`, `devise_for`, engines;
+  - Stimulus methods inherited from a base controller, and hand-registered identifiers.
+- **Output:** the `<main>` of `routes.rb` still shows as changed next to the route nodes.
