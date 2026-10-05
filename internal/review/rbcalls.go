@@ -231,9 +231,6 @@ func (l *rbCalls) scanFile(p, src string) hFile {
 		code = rubyCode(src)
 	}
 	lines := strings.Split(code, "\n")
-	for i := range lines {
-		lines[i] = rbBlankRegexps(lines[i])
-	}
 	raw := strings.Split(src, "\n")
 	if view {
 		return rbScanView(raw, lines)
@@ -325,7 +322,9 @@ func rbScan(raw, code []string) hFile {
 			}
 			continue
 		}
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		// From the source line: a line starting with a string ("k" => lambda do)
+		// is blanked in code.
+		indent := len(raw[i]) - len(strings.TrimLeft(raw[i], " \t"))
 		if !cont && !strings.HasPrefix(trim, ".") && !strings.HasPrefix(trim, "&.") {
 			stmt = indent
 		}
@@ -366,7 +365,9 @@ func rbScan(raw, code []string) hFile {
 					defs[t.def].End = i + 1
 				}
 			case "if", "unless", "while", "until", "case", "begin", "for":
-				if !rbStatementStart(line[:m[0]]) {
+				// The source line, not the code: in x += "s" if y the string is blanked,
+				// which would put the if right after the assignment.
+				if m[0] > len(raw[i]) || !rbStatementStart(raw[i][:m[0]]) {
 					continue // a modifier: x if y
 				}
 				loopDo = kw == "while" || kw == "until" || kw == "for"
@@ -722,47 +723,6 @@ func rbCallbackRefs(code []string, i int, macro string) []hCall {
 		}
 	}
 	return out
-}
-
-// rbBlankRegexps blanks /regexp/ literals in a line of scanned code: a "/"
-// where an operand starts (after "(", ",", "=", "=~", "when", …) up to the
-// next unescaped "/" on the line. A division follows an operand.
-func rbBlankRegexps(line string) string {
-	if !strings.Contains(line, "/") {
-		return line
-	}
-	b := []byte(line)
-	for i := 0; i < len(b); i++ {
-		if b[i] != '/' {
-			continue
-		}
-		j := lastNonSpace(string(b[:i]))
-		ok := j < 0 || strings.IndexByte("(,=~!|&[{;?:", b[j]) >= 0
-		if !ok {
-			w := strings.TrimRight(string(b[:j+1]), " ")
-			for _, kw := range []string{"when", "if", "unless", "and", "or", "not", "return", "elsif", "while", "until"} {
-				if strings.HasSuffix(w, kw) && (len(w) == len(kw) || !isWordByte(w[len(w)-len(kw)-1])) {
-					ok = true
-				}
-			}
-		}
-		if !ok {
-			continue
-		}
-		k := i + 1
-		for k < len(b) && b[k] != '/' {
-			if b[k] == '\\' {
-				k++
-			}
-			k++
-		}
-		if k >= len(b) {
-			continue
-		}
-		blank(b, i, k+1)
-		i = k
-	}
-	return string(b)
 }
 
 // rbAddLocals records the locals a line assigns (x = …, a, b = …, block
