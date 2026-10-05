@@ -432,6 +432,11 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			gone = append(gone, r)
 		}
 	}
+	// A renamed function's old name is gone too: code still calling it is
+	// broken just the same.
+	for _, old := range sortedKeys(oldToNew) {
+		gone = append(gone, old)
+	}
 
 	// Edges of the changed files' functions: before vs after, with a
 	// renamed function (as caller or callee) under its new ID on both sides.

@@ -352,3 +352,18 @@ func TestCallDeltaEntryNotUntested(t *testing.T) {
 		t.Errorf("findings = %v", got)
 	}
 }
+
+// A pure rename (same body, new name) leaves callers of the old name
+// broken: they're removed-called on the old ID.
+func TestCallDeltaRenamedStillCalled(t *testing.T) {
+	before := set(tf("a.Old", "a/a.go", 1, "same", "s"))
+	caller := tf("c.C", "c/c.go", 1, "c", "s")
+	caller.unresolved = []unresolvedSite{{line: 2, want: []string{"a.Old"}}}
+	cg := delta(before, set(tf("a.New", "a/a.go", 1, "same", "s"), caller), []string{"a/a.go"}, []string{"a/a.go"}, nil)
+	if got := statuses(cg); got["a.New"] != FuncRenamed {
+		t.Fatalf("statuses = %v", got)
+	}
+	if got := findingKeys(cg); !contains(got, "removed-called:a.Old c/c.go") {
+		t.Errorf("findings = %v", got)
+	}
+}

@@ -387,9 +387,16 @@ function createCallsView({ onOpen, onMention, changedIn, onRevealTurn } = {}) {
   }
 
   function findingRow(x) {
-    const f = ix.funcs.get(x.func) || { id: x.func, name: x.func };
+    let f = ix.funcs.get(x.func);
+    let text = CALL_FINDING_TEXT[x.kind] || x.kind;
+    if (!f) {
+      // A renamed function's old name, still called: point at the new one.
+      const renamed = [...ix.funcs.values()].find((g) => g.from === x.func);
+      f = renamed || { id: x.func, name: x.func };
+      if (renamed) text = `renamed from ${x.func}, but the old name is still called`;
+    }
     return el("div", { class: `calls__finding is-${x.kind}` }, [
-      el("span", {}, [link(f.name || f.id, () => select(f.id), f.id), document.createTextNode(` — ${CALL_FINDING_TEXT[x.kind] || x.kind}`)]),
+      el("span", {}, [link(f.name || f.id, () => select(f.id), f.id), document.createTextNode(` — ${text}`)]),
       ...((x.sites || []).length ? [el("span", { class: "calls__sites" }, siteButtons(x.sites, false))] : []),
     ]);
   }
