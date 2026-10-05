@@ -203,6 +203,8 @@ func callLangOf(l language) callLang {
 		return &goCalls{module: l.module}
 	case *pyLang:
 		return &hCalls{l: &pyCalls{}}
+	case *swiftLang:
+		return newSwiftCallLang()
 	}
 	return nil
 }
