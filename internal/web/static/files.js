@@ -55,7 +55,7 @@ function buildTree(paths) {
   return root;
 }
 
-function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention } = {}) {
+function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention, onCount } = {}) {
   const tabs = pane.querySelectorAll(".files-tab");
   const countEl = pane.querySelector("#files-count");
   const list = pane.querySelector("#files-list");
@@ -109,6 +109,7 @@ function createFilesPane(pane, { onOpen, onOpenDiff, onOpenCommitFile, onMention
     renderedKey = JSON.stringify([note, changes, treeVersion]);
     tabs.forEach((t) => t.classList.toggle("is-active", t.dataset.mode === mode));
     countEl.textContent = changes?.repo ? String(changes.files?.length || 0) : "";
+    if (onCount) onCount(changes?.repo ? changes.files?.length || 0 : null);
 
     if (note) {
       list.replaceChildren(el("div", { class: "files-pane__note", text: note }));

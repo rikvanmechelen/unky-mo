@@ -607,7 +607,9 @@ function main() {
     editorPanel: document.getElementById("editor-panel"),
     overview,
   });
+  const rails = createRails(shell);
   const filesPane = createFilesPane(filesEl, {
+    onCount: rails.setCount,
     onOpen: (path) => editor.open(path, "file"),
     onOpenDiff: (path) => editor.open(path, "diff"),
     onOpenCommitFile: (hash, path) => editor.open(path, "commit", hash),
@@ -903,6 +905,7 @@ function main() {
 
   function renderSessionNav(projects) {
     const groups = navGroups(projects);
+    rails.setSessions(groups, windowID);
     const shape = JSON.stringify(groups.map((g) => [g.project, g.items.map((p) => p.window_id)]));
     if (shape !== navShape) {
       navShape = shape;

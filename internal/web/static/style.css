@@ -394,13 +394,52 @@ h1, h2 {
  * Chat view — three columns: session nav | transcript | files
  * ============================================================ */
 .chat-shell {
+  --nav-w: 260px; --files-w: 0px;
   height: 100vh;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--files-w);
+  transition: grid-template-columns 200ms linear;
   overflow: hidden;
   background: var(--paper);
 }
-.chat-shell.has-files { grid-template-columns: 260px minmax(0, 1fr) 300px; }
+.chat-shell.has-files { --files-w: 300px; }
+/* Rails hidden with their tabs (rails.js) or [ and ]. */
+.chat-shell.hide-nav { --nav-w: 0px; }
+.chat-shell.hide-files { --files-w: 0px; }
+/* The rails keep their width while the column shrinks, so their contents
+   slide out of view instead of reflowing. */
+.chat-nav, .files-pane { min-width: 0; overflow: hidden; }
+.chat-nav > * { width: 260px; box-sizing: border-box; }
+.files-pane > * { width: 300px; box-sizing: border-box; }
+
+/* The rail tabs sit centred on the main column's edges. */
+.rail-tab {
+  all: unset; cursor: pointer; box-sizing: border-box;
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 28px; max-height: 80%; overflow: hidden; padding: 10px 0 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+}
+.rail-tab:hover { background: var(--line); }
+.rail-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.rail-tab--left { left: -1px; border-left: 0; }
+.rail-tab--right { right: -1px; border-right: 0; }
+.rail-tab__chev {
+  flex: none; width: 6px; height: 6px; margin: 2px 0 4px;
+  border-left: 2px solid var(--ink); border-bottom: 2px solid var(--ink);
+}
+/* The arrow points the way the rail will move. */
+.rail-tab--left .rail-tab__chev, .rail-tab--right.is-hidden .rail-tab__chev { transform: rotate(45deg); }
+.rail-tab--right .rail-tab__chev, .rail-tab--left.is-hidden .rail-tab__chev { transform: rotate(-135deg); }
+.rail-tab__marks { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.rail-tab__marks .status-sq { width: 10px; height: 10px; }
+.rail-tab__marks .status-sq.is-current { outline: 1px solid var(--ink); outline-offset: 2px; }
+.rail-tab__lines { display: flex; flex-direction: column; gap: 6px; }
+.rail-tab__lines span { width: 10px; height: 2px; background: currentColor; }
+.rail-tab__count { font-size: 12px; line-height: 1; font-weight: 700; padding-top: 2px; }
+.rail-tab__count:empty { display: none; }
+.chat-shell:not(.has-files) .rail-tab--right { display: none; }
+@media (prefers-reduced-motion: reduce) { .chat-shell { transition: none; } }
 
 /* ── Left nav: sessions + usage ─────────────────────────────── */
 .chat-nav { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
@@ -433,6 +472,7 @@ h1, h2 {
 
 /* ── Main column ────────────────────────────────────────────── */
 .chat-main {
+  position: relative;
   display: flex; flex-direction: column; min-height: 0;
   border-left: 1px solid var(--line);
 }
@@ -1042,12 +1082,12 @@ button.file-row.graph-file:hover { background: var(--surface-2); }
 
 /* ── Narrow widths: drop the files aside, then the nav ───────── */
 @media (max-width: 1100px) {
-  .chat-shell.has-files { grid-template-columns: 260px minmax(0, 1fr); }
-  .files-pane { display: none; }
+  .chat-shell.has-files { --files-w: 0px; }
+  .files-pane, .rail-tab--right { display: none; }
 }
 @media (max-width: 760px) {
-  .chat-shell, .chat-shell.has-files { grid-template-columns: minmax(0, 1fr); }
-  .chat-nav { display: none; }
+  .chat-shell, .chat-shell.has-files { --nav-w: 0px; }
+  .chat-nav, .rail-tab--left { display: none; }
   .chat-bar__back { display: inline; }
   .chat-main { border-left: 0; }
   .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar, .editor-pane__banner, .editor-pane__info { padding-left: 16px; padding-right: 16px; }
