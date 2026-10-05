@@ -299,7 +299,7 @@ func rbBindBlocks(line string, locals map[string]string) {
 	if !strings.Contains(line, "|") {
 		return
 	}
-	for _, m := range rbChainRe.FindAllStringIndex(line, -1) {
+	for _, m := range rbChains(line) {
 		s := m[0]
 		if s > 0 && line[s-1] == '@' {
 			s--
@@ -468,11 +468,19 @@ func rbRailsCalls(raw, code string, lineNo int, locals map[string]string, action
 			call(rbScopeRecv+e, "<resolve")
 		}
 	}
-	if sm := rbFuncTestRe.FindStringSubmatch(code); sm != nil {
-		call(rbActionRecv, "<"+sm[1])
+	// Both patterns start the line: check its first word before running them.
+	lead := strings.TrimLeft(code, " \t\n\f\r")
+	if lead != "" && strings.IndexByte("gpdh", lead[0]) >= 0 {
+		if sm := rbFuncTestRe.FindStringSubmatch(code); sm != nil {
+			call(rbActionRecv, "<"+sm[1])
+		}
 	}
-	if sm := rbFactoryRe.FindStringSubmatch(code); sm != nil {
-		cls := rbCamelize(sm[1])
+	var fm []string
+	if strings.HasPrefix(lead, "factory") {
+		fm = rbFactoryRe.FindStringSubmatch(code)
+	}
+	if fm != nil {
+		cls := rbCamelize(fm[1])
 		if i := strings.Index(code, "class:"); i >= 0 {
 			v := rbSkipSpaces(code, i+len("class:"))
 			if s, ok := rbStringAt(raw, rbSkipSpaces(raw, i+len("class:"))); ok {
@@ -483,7 +491,7 @@ func rbRailsCalls(raw, code string, lineNo int, locals map[string]string, action
 				cls = rbCamelize(sym[1])
 			}
 		}
-		out = append(out, hCall{Recv: rbFactoryRecv + sm[1], Name: strings.TrimPrefix(cls, "::"), Line: lineNo, Ref: true})
+		out = append(out, hCall{Recv: rbFactoryRecv + fm[1], Name: strings.TrimPrefix(cls, "::"), Line: lineNo, Ref: true})
 	}
 	for _, m := range rbFactoryUses(code) {
 		// create(:ticket): the factory's model.

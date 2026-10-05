@@ -175,8 +175,9 @@ var (
 	stimRocketRe = regexp.MustCompile(`["'](?:data-)(controller|action|[a-z0-9][a-z0-9-]*?-target)["']\s*=>\s*(?:"([^"]*)"|'([^']*)')`)
 	// data_controller: "x" (helpers that dasherize keyword keys).
 	stimDataKwRe = regexp.MustCompile(`\bdata_(controller|action|[a-z0-9_]+?_target)\s*:\s*(?:"([^"]*)"|'([^']*)')`)
-	// data: { … } / :data => { … } / "data" => { … }
-	stimDataHashRe = regexp.MustCompile(`(?:\bdata\s*:|:data\s*=>|["']data["']\s*=>)\s*\{`)
+	// data: { … } / :data => { … } / "data" => { … }, tried only where
+	// "data" occurs (stimDataHashes).
+	stimDataHashAtRe = regexp.MustCompile(`^(?:data\s*:|:data\s*=>|["']data["']\s*=>)\s*\{`)
 	// One entry of a data hash: controller: "x", "cart-target": "y",
 	// :action => "z".
 	stimHashKeyRe = regexp.MustCompile(`(?:["':]?)([a-z0-9][a-z0-9_-]*)["']?\s*(?::|=>)\s*(?:"([^"]*)"|'([^']*)')`)
@@ -192,6 +193,39 @@ type stimBinding struct {
 
 // stimulusBindings reads the Stimulus bindings in a template's or Ruby
 // file's original source (attributes and Ruby hash forms), in order.
+// stimDataHashes finds the data hashes' openings in src, as [start, end)
+// pairs ending after the "{": the matches of
+//
+//	(?:\bdata\s*:|:data\s*=>|["']data["']\s*=>)\s*\{
+//
+// Each has "data" at its start or one byte in, so the pattern is tried,
+// anchored, only there: unanchored over a whole view it was most of the
+// view scan (TestStimDataHashesMatchRegexp).
+func stimDataHashes(src string) [][2]int {
+	var out [][2]int
+	for off := 0; ; {
+		j := strings.Index(src[off:], "data")
+		if j < 0 {
+			return out
+		}
+		i := off + j
+		off = i + len("data")
+		for _, s := range []int{i - 1, i} {
+			if s < 0 || (s == i && i > 0 && isWordByte(src[i-1])) {
+				continue // \bdata
+			}
+			if len(out) > 0 && s < out[len(out)-1][1] {
+				continue // inside the previous match
+			}
+			if m := stimDataHashAtRe.FindStringIndex(src[s:]); m != nil {
+				out = append(out, [2]int{s, s + m[1]})
+				off = s + m[1]
+				break
+			}
+		}
+	}
+}
+
 func stimulusBindings(src string) []stimBinding {
 	// Every binding names a controller, an action or a target.
 	if !strings.Contains(src, "data") || !(strings.Contains(src, "controller") || strings.Contains(src, "action") || strings.Contains(src, "target")) {
@@ -218,7 +252,7 @@ func stimulusBindings(src string) []stimBinding {
 			hits = append(hits, hit{m[0], strings.ReplaceAll(src[m[2]:m[3]], "_", "-"), val})
 		}
 	}
-	for _, m := range stimDataHashRe.FindAllStringIndex(src, -1) {
+	for _, m := range stimDataHashes(src) {
 		open := m[1] - 1
 		closeAt := matchingBrace(src, open)
 		if closeAt < 0 {

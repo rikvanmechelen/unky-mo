@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // rbCalls is the Ruby/Rails call analyzer. Definitions come from keyword
@@ -43,6 +44,8 @@ type rbCalls struct {
 	// helpers memoizes viewCall's app/helpers lookups by name.
 	helpers       map[string][]string
 	helperClasses []hClassRef
+	// chains memoizes chain by files and owner.
+	chains map[string][]hClassRef
 }
 
 const (
@@ -169,7 +172,6 @@ func (l *rbCalls) display(p string, d *hDef) string {
 }
 
 var (
-	rbKwRe     = regexp.MustCompile(`\b(class|module|def|if|unless|while|until|case|begin|for|do|end)\b`)
 	rbConstPat = `(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*`
 	rbClassRe  = regexp.MustCompile(`^class\s+(` + rbConstPat + `)\s*(?:<\s*(` + rbConstPat + `))?`)
 	rbSclassRe = regexp.MustCompile(`^class\s*<<\s*(\w+)`)
@@ -181,13 +183,10 @@ var (
 	rbCbRe     = regexp.MustCompile(`^(` + strings.Join(rbCallbacks, "|") + `)\b`)
 	rbClassMRe = regexp.MustCompile(`^class_methods\s+do\b`)
 
-	rbChainRe = regexp.MustCompile(`(?:::)?[A-Za-z_]\w*[?!]?(?:\s*&?\.\s*[A-Za-z_]\w*[?!]?|::[A-Z]\w*)*`)
-	rbSegRe   = regexp.MustCompile(`\s*&?\.\s*`)
 	rbSendRe  = regexp.MustCompile(`(?:(` + rbConstPat + `|[a-z_]\w*)\s*&?\.\s*)?\b(send|public_send|__send__|try|method)\b\s*\(?\s*:([A-Za-z_]\w*[?!=]?)`)
 	rbSymRe   = regexp.MustCompile(`:([A-Za-z_]\w*[?!]?)`)
 	rbLabelRe = regexp.MustCompile(`([a-z_]\w*):`)
 
-	rbAssignRe  = regexp.MustCompile(`(?:^|[^\w.@$:])([a-z_]\w*)\s*(?:\|\||&&|[-+*/%])?=(?:[^=~>]|$)`)
 	rbMultiRe   = regexp.MustCompile(`^\s*\(?([a-z_]\w*(?:\s*,\s*\*?[a-z_]\w*)+)\)?\s*=[^=]`)
 	rbBlockPRe  = regexp.MustCompile(`(?:\bdo|\{)\s*\|([^|]*)\|`)
 	rbRescueRe  = regexp.MustCompile(`\brescue\b.*=>\s*([a-z_]\w*)`)
@@ -410,7 +409,7 @@ func rbScan(raw, code []string) hFile {
 			p := cur()
 			push('b', col, p.def, p.scope, p.inst, p.inDef)
 		}
-		for _, m := range rbKwRe.FindAllStringIndex(line, -1) {
+		for _, m := range rbKeywordSpans(line) {
 			kw := line[m[0]:m[1]]
 			if !rbKeywordAt(line, m[0], m[1]) {
 				continue
@@ -882,13 +881,13 @@ func rbAddLocals(line string, locals map[string]string) {
 	if strings.IndexByte(line, '=') >= 0 {
 		typed := map[string]string{}
 		var plain []string
-		for _, m := range rbAssignRe.FindAllStringSubmatchIndex(line, -1) {
-			name := line[m[2]:m[3]]
+		for _, m := range rbAssigns(line) {
+			name := line[m[0]:m[1]]
 			if rbKeywords[name] {
 				continue
 			}
-			eq := strings.IndexByte(line[m[3]:], '=') + m[3]
-			if op := strings.TrimSpace(line[m[3]:eq]); op == "" || op == "||" {
+			eq := strings.IndexByte(line[m[1]:], '=') + m[1]
+			if op := strings.TrimSpace(line[m[1]:eq]); op == "" || op == "||" {
 				typed[name] = rbExprAt(line, eq+1, locals) // x = …, x ||= …
 			} else {
 				plain = append(plain, name)
@@ -930,6 +929,191 @@ func rbAddLocals(line string, locals map[string]string) {
 		}
 	}
 	rbBindBlocks(line, locals)
+}
+
+// rbAssigns finds the names a line assigns (x = …, x ||= …, x += …), as
+// the [start, end) of each name: the leftmost-first matches of
+//
+//	(?:^|[^\w.@$:])([a-z_]\w*)\s*(?:\|\||&&|[-+*/%])?=(?:[^=~>]|$)
+//
+// found by hand, since that regexp was most of rbAddLocals' time. Like
+// the regexp it steps by rune, and a match takes the character before the
+// name and the one after the "=", so a = b = c finds only a
+// (TestRbAssignsMatchRegexp).
+func rbAssigns(line string) [][2]int {
+	// tail matches the rest of the pattern from a name at i: the name's
+	// end, and the match's.
+	tail := func(i int) (int, int, bool) {
+		if i >= len(line) || !(line[i] == '_' || line[i] >= 'a' && line[i] <= 'z') {
+			return 0, 0, false
+		}
+		j := i + 1
+		for j < len(line) && isWordByte(line[j]) {
+			j++
+		}
+		name := j
+		for j < len(line) && rbIsSpace(line[j]) {
+			j++
+		}
+		switch {
+		case strings.HasPrefix(line[j:], "||=") || strings.HasPrefix(line[j:], "&&="):
+			j += 2
+		case j+1 < len(line) && strings.IndexByte("-+*/%", line[j]) >= 0 && line[j+1] == '=':
+			j++
+		}
+		if j >= len(line) || line[j] != '=' {
+			return 0, 0, false
+		}
+		if j++; j == len(line) {
+			return name, j, true
+		}
+		if strings.IndexByte("=~>", line[j]) >= 0 {
+			return 0, 0, false
+		}
+		_, w := utf8.DecodeRuneInString(line[j:])
+		return name, j + w, true
+	}
+	var out [][2]int
+	for p := 0; p < len(line); {
+		if p == 0 {
+			if e, end, ok := tail(0); ok {
+				out = append(out, [2]int{0, e})
+				p = end
+				continue
+			}
+		}
+		_, w := utf8.DecodeRuneInString(line[p:])
+		if c := line[p]; c >= utf8.RuneSelf || !isWordByte(c) && strings.IndexByte(".@$:", c) < 0 {
+			if e, end, ok := tail(p + w); ok {
+				out = append(out, [2]int{p + w, e})
+				p = end
+				continue
+			}
+		}
+		p += w
+	}
+	return out
+}
+
+// rbBlockKeywords are the keywords rbScan counts blocks by.
+var rbBlockKeywords = map[string]bool{
+	"class": true, "module": true, "def": true, "if": true, "unless": true, "while": true,
+	"until": true, "case": true, "begin": true, "for": true, "do": true, "end": true,
+}
+
+// rbKeywordSpans finds the block keywords of a line as whole words, as
+// [start, end) pairs: what \b(class|…|end)\b would, without a regexp (it
+// runs on every line, and was a good part of a cold scan).
+func rbKeywordSpans(line string) [][2]int {
+	var out [][2]int
+	for i := 0; i < len(line); i++ {
+		if !isWordByte(line[i]) {
+			continue
+		}
+		j := i + 1
+		for j < len(line) && isWordByte(line[j]) {
+			j++
+		}
+		if rbBlockKeywords[line[i:j]] {
+			out = append(out, [2]int{i, j})
+		}
+		i = j
+	}
+	return out
+}
+
+// rbChains finds the call chains of a line, as [start, end) pairs: an
+// identifier (or ::Const) followed by any number of .m, &.m (spaces
+// allowed around the dot) and ::Const segments. Identifiers may end in ?
+// or !, constants after :: don't. It's the leftmost-first matches of
+//
+//	(?:::)?[A-Za-z_]\w*[?!]?(?:\s*&?\.\s*[A-Za-z_]\w*[?!]?|::[A-Z]\w*)*
+//
+// scanned by hand because that regexp was most of a cold Ruby scan. The
+// pattern never needs to backtrack (each step is decided by the next
+// byte), so the greedy scan below gives the same matches
+// (TestRbChainsMatchRegexp).
+func rbChains(line string) [][2]int {
+	identStart := func(i int) bool {
+		if i >= len(line) {
+			return false
+		}
+		c := line[i]
+		return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+	}
+	identEnd := func(i int) int {
+		i++
+		for i < len(line) && isWordByte(line[i]) {
+			i++
+		}
+		if i < len(line) && (line[i] == '?' || line[i] == '!') {
+			i++
+		}
+		return i
+	}
+	space := func(i int) int {
+		for i < len(line) && rbIsSpace(line[i]) {
+			i++
+		}
+		return i
+	}
+	var out [][2]int
+	for p := 0; p < len(line); {
+		q := p
+		if strings.HasPrefix(line[p:], "::") && identStart(p+2) {
+			q = p + 2
+		} else if !identStart(p) {
+			p++
+			continue
+		}
+		e := identEnd(q)
+		for {
+			k := space(e)
+			if k < len(line) && line[k] == '&' {
+				k++
+			}
+			if k < len(line) && line[k] == '.' {
+				if k = space(k + 1); identStart(k) {
+					e = identEnd(k)
+					continue
+				}
+			}
+			if strings.HasPrefix(line[e:], "::") && e+2 < len(line) && line[e+2] >= 'A' && line[e+2] <= 'Z' {
+				e += 3
+				for e < len(line) && isWordByte(line[e]) {
+					e++
+				}
+				continue
+			}
+			break
+		}
+		out = append(out, [2]int{p, e})
+		p = e
+	}
+	return out
+}
+
+// rbChainSegs splits a chain from rbChains at its dots: "a&.b . c" is
+// a, b, c; "A::B.c" is A::B, c.
+func rbChainSegs(chain string) []string {
+	var out []string
+	for i := 0; i < len(chain); {
+		j := i
+		for j < len(chain) && !rbIsSpace(chain[j]) && chain[j] != '&' && chain[j] != '.' {
+			j++
+		}
+		out = append(out, chain[i:j])
+		for j < len(chain) && (rbIsSpace(chain[j]) || chain[j] == '&' || chain[j] == '.') {
+			j++
+		}
+		i = j
+	}
+	return out
+}
+
+// rbIsSpace is the regexp \s: space, \t, \n, \f, \r.
+func rbIsSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r'
 }
 
 func rbIsConst(s string) bool {
@@ -992,7 +1176,7 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 			e = cl + 1
 		}
 	}
-	for _, m := range rbChainRe.FindAllStringIndex(line, -1) {
+	for _, m := range rbChains(line) {
 		s, e := m[0], m[1]
 		if s > 0 {
 			pc := line[s-1]
@@ -1003,7 +1187,7 @@ func rbLineCalls(line string, lineNo int, locals map[string]string, superName st
 		if e < len(line) && line[e] == ':' && (e+1 >= len(line) || line[e+1] != ':') {
 			continue // a label (key: value)
 		}
-		segs := rbSegRe.Split(line[s:e], -1)
+		segs := rbChainSegs(line[s:e])
 		recv, k := "", 0
 		if j := lastNonSpace(line[:s]); j >= 0 && line[j] == '.' {
 			// Hangs off an expression: x(…).m, Const.new(…).m, xs[0].m.
@@ -1108,7 +1292,7 @@ func (l *rbCalls) prepare(r *hResolver) {
 	if l.r == r {
 		return
 	}
-	l.r, l.classes = r, map[string][]string{}
+	l.r, l.classes, l.chains = r, map[string][]string{}, map[string][]hClassRef{}
 	for _, p := range r.paths {
 		for _, c := range r.files[p].Classes {
 			if strings.HasSuffix(c.Name, rbSelf) {
@@ -1183,7 +1367,20 @@ func (l *rbCalls) base(p, b string) (hClassRef, bool) {
 }
 
 // chain lists the classes a lookup from owner (in files) visits, in order.
+// The list is shared (memoized per resolver): callers mustn't change it.
 func (l *rbCalls) chain(r *hResolver, files []string, owner string) []hClassRef {
+	key := owner + "\x00" + strings.Join(files, "\x00")
+	if c, ok := l.chains[key]; ok && l.r == r {
+		return c
+	}
+	out := l.walkChain(r, files, owner)
+	if l.r == r {
+		l.chains[key] = out
+	}
+	return out
+}
+
+func (l *rbCalls) walkChain(r *hResolver, files []string, owner string) []hClassRef {
 	var queue, out []hClassRef
 	for _, f := range files {
 		queue = append(queue, hClassRef{f, owner})
