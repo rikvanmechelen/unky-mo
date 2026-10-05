@@ -874,7 +874,24 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
 .composer__error:empty { display: none; }
 
 /* ── Terminal drawer ────────────────────────────────────────── */
-.term-drawer { flex: none; background: var(--term-bg); color: var(--term-fg); display: flex; flex-direction: column; }
+.term-drawer { position: relative; flex: none; background: var(--term-bg); color: var(--term-fg); display: flex; flex-direction: column; }
+/* Drag handle on the drawer's top edge (terminal.js sets --term-h). */
+.term-drawer__handle {
+  position: absolute; z-index: 2; left: 0; right: 0; top: -3px; height: 6px;
+  cursor: row-resize; touch-action: none;
+}
+.term-drawer__handle[hidden] { display: none; }
+.term-drawer__handle::after {
+  content: ""; position: absolute; left: 50%; top: 1px; width: 40px; height: 4px; margin-left: -20px;
+  border-radius: 2px; background: var(--term-muted); opacity: 0; transition: opacity 120ms;
+}
+.term-drawer__handle:hover::after, .term-drawer__handle:active::after, .term-drawer__handle:focus-visible::after { opacity: 1; }
+.term-drawer__handle:focus-visible { outline: none; }
+@media (pointer: coarse) {
+  .term-drawer__handle { top: -8px; height: 16px; }
+  .term-drawer__handle::after { top: 6px; opacity: 0.6; }
+}
+body.is-resizing-term { cursor: row-resize; user-select: none; }
 .term-drawer[hidden] { display: none; }
 .term-drawer__bar { display: flex; align-items: stretch; height: 36px; border-bottom: 1px solid var(--term-line); min-width: 0; }
 .term-drawer__tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -900,7 +917,7 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
 
 .term-drawer__body[hidden] { display: none; }
 .term-drawer__output {
-  height: 160px; overflow: auto; padding: 12px 16px; margin: 0;
+  height: var(--term-h, 160px); overflow: auto; padding: 12px 16px; margin: 0;
   font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--term-text); white-space: pre-wrap; word-break: break-word;
 }
 .term-drawer__output.is-live { cursor: text; }

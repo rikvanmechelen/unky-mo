@@ -14,6 +14,11 @@
 const TERM_LIST_MS = 3000;
 const TERM_OUTPUT_MS = 1000;
 const TERM_LIVE_KEY = "mo.termLive";
+// The output's height, set by dragging the drawer's top edge.
+const TERM_HEIGHT_KEY = "mo.termHeight";
+const TERM_HEIGHT_DEFAULT = 160;
+const TERM_HEIGHT_MIN = 80;
+const TERM_TRANSCRIPT_MIN = 120; // the transcript keeps at least this much
 
 // liveKeyName maps a keydown to the tmux key name a live terminal sends
 // (the server allows the same set, liveKeyNames), or null to leave the key
@@ -201,7 +206,13 @@ function createTerminalDrawer(root) {
   const ctrlC = el("button", { class: "term-drawer__ctrlc", type: "button", text: "Ctrl-C", title: "Interrupt the running command" });
   const form = el("form", { class: "term-drawer__line" }, [el("span", { class: "term-drawer__prompt", text: "$" }), input, ctrlC]);
   const body = el("div", { class: "term-drawer__body" }, [outputEl, sink, hintEl, form]);
+  const handle = el("div", {
+    class: "term-drawer__handle", role: "separator", tabindex: "0",
+    "aria-orientation": "horizontal", "aria-label": "Resize terminal",
+    title: "Drag to resize, double-click to maximize",
+  });
   root.replaceChildren(
+    handle,
     el("div", { class: "term-drawer__bar" }, [tabsEl, emptyEl, newBtn, el("span", { class: "term-drawer__spacer" }), errorEl, liveBtn, closeBtn, toggleBtn]),
     body
   );
@@ -288,6 +299,8 @@ function createTerminalDrawer(root) {
     toggleBtn.hidden = !any;
     toggleBtn.textContent = open ? "Hide" : "Show";
     body.hidden = !open || !any;
+    handle.hidden = body.hidden;
+    if (!body.hidden) applyHeight(height);
     const writable = !!selected && !isShell(selected); // shells are read-only
     form.hidden = !writable || live;
     hintEl.hidden = !writable || !live;
@@ -306,6 +319,86 @@ function createTerminalDrawer(root) {
     if (!selected || isShell(selected) || body.hidden || window.matchMedia("(pointer: coarse)").matches) return;
     (live ? sink : input).focus({ preventScroll: true });
   }
+
+  // Resizing: the drawer's top edge drags the output taller or shorter.
+  // Only the browser's view changes; the tmux pane is never resized, the
+  // capture's scrollback just fills the extra room.
+  let height = (() => {
+    try {
+      const v = parseInt(localStorage.getItem(TERM_HEIGHT_KEY), 10);
+      if (v >= TERM_HEIGHT_MIN) return v;
+    } catch {}
+    return TERM_HEIGHT_DEFAULT;
+  })();
+
+  // maxHeight is the tallest output that still leaves the transcript
+  // TERM_TRANSCRIPT_MIN: the transcript is the flexible part, so whatever
+  // it has above that minimum can go to the drawer.
+  function maxHeight() {
+    const transcript = root.parentElement && root.parentElement.querySelector(".chat-transcript");
+    if (!transcript || body.hidden) return Infinity;
+    return Math.max(TERM_HEIGHT_MIN, outputEl.offsetHeight + transcript.clientHeight - TERM_TRANSCRIPT_MIN);
+  }
+
+  // applyHeight shows the output at h (clamped), staying at the bottom if
+  // it was there. The stored preference is left alone, so a small window
+  // doesn't shrink it for good.
+  function applyHeight(h) {
+    const pinned = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 24;
+    const clamped = Math.round(Math.max(TERM_HEIGHT_MIN, Math.min(h, maxHeight())));
+    root.style.setProperty("--term-h", `${clamped}px`);
+    if (pinned) outputEl.scrollTop = outputEl.scrollHeight;
+    handle.setAttribute("aria-valuenow", String(clamped));
+    return clamped;
+  }
+
+  function setHeight(h) {
+    height = applyHeight(h);
+    try { localStorage.setItem(TERM_HEIGHT_KEY, String(height)); } catch {}
+  }
+
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = outputEl.offsetHeight;
+    document.body.classList.add("is-resizing-term");
+    const move = (ev) => applyHeight(startH + startY - ev.clientY);
+    const done = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", done);
+      handle.removeEventListener("pointercancel", done);
+      document.body.classList.remove("is-resizing-term");
+      setHeight(outputEl.offsetHeight);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", done);
+    handle.addEventListener("pointercancel", done);
+  });
+
+  // Double-click toggles between the default and the tallest height.
+  handle.addEventListener("dblclick", () => {
+    const max = maxHeight();
+    setHeight(outputEl.offsetHeight >= max - 1 ? TERM_HEIGHT_DEFAULT : max);
+  });
+
+  handle.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 80 : 20;
+    const cur = outputEl.offsetHeight;
+    let h = null;
+    if (e.key === "ArrowUp") h = cur + step;
+    else if (e.key === "ArrowDown") h = cur - step;
+    else if (e.key === "Home") h = maxHeight();
+    else if (e.key === "End") h = TERM_HEIGHT_MIN;
+    if (h === null) return;
+    e.preventDefault();
+    setHeight(h);
+  });
+
+  // A smaller window takes room back from the drawer; a larger one gives
+  // the stored height back.
+  window.addEventListener("resize", () => { if (!body.hidden) applyHeight(height); });
 
   function showScreen(screen) {
     lastScreen = screen;
