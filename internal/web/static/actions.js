@@ -146,3 +146,93 @@ async function restartMo() {
 for (const btn of document.querySelectorAll("[data-restart-mo]")) {
   btn.addEventListener("click", () => restartMo());
 }
+
+// TRUST_STEPS are the per-platform steps for trusting mo web's local CA,
+// as `mo web tls trust` prints them.
+const TRUST_STEPS = {
+  ios: {
+    title: "iPhone / iPad",
+    href: "/ca.crt",
+    steps: [
+      "Open this page in Safari and tap Download; allow the configuration profile.",
+      "Settings → General → VPN & Device Management → the profile → Install.",
+      "Settings → General → About → Certificate Trust Settings → turn on full trust for it. Without this step HTTPS still fails.",
+      "Close this tab and open the page again.",
+    ],
+  },
+  android: {
+    title: "Android",
+    href: "/ca.crt?as=file",
+    steps: [
+      "Tap Download (Android won't install a CA straight from the browser).",
+      "Settings → Security & privacy → More security settings → Encryption & credentials → Install a certificate → CA certificate, and pick unky-mo-ca.crt. Search Settings for \"CA certificate\" if the path differs.",
+      "Force stop Chrome (Settings → Apps → Chrome → Force stop) and reopen this page: until it restarts, Chrome keeps treating the site as untrusted. Firefox needs \"Use third party CA certificates\" in its secret settings.",
+    ],
+  },
+};
+
+// showTrustDialog offers the local CA for download (GET /ca.crt), with its
+// fingerprint and the steps for this device's platform first.
+async function showTrustDialog(info) {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const order = ios ? ["ios", "android"] : /Android/.test(ua) ? ["android", "ios"] : ["ios", "android"];
+
+  const dialog = dialogNode("dialog", "dialog trust-dialog");
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.appendChild(dialogNode("div", "dialog__title", "Trust on another device"));
+  dialog.appendChild(dialogNode("div", "dialog__text",
+    "Open this dashboard on the phone or tablet itself (the certificate warning you get until this is done is expected) and install mo web's local CA from here."));
+
+  const fp = dialogNode("div", "trust-dialog__fp");
+  fp.appendChild(dialogNode("div", "trust-dialog__label", `SHA-256 fingerprint of ${info.name}`));
+  fp.appendChild(dialogNode("code", "trust-dialog__hash", info.fingerprint));
+  fp.appendChild(dialogNode("div", "trust-dialog__note",
+    "Check it against `mo web tls trust` on your machine, or in the certificate's details on the device: until the CA is trusted, this page's connection isn't verified."));
+  dialog.appendChild(fp);
+
+  order.forEach((key, i) => {
+    const p = TRUST_STEPS[key];
+    const block = dialogNode("details", "trust-dialog__platform");
+    if (i === 0) block.open = true;
+    block.appendChild(dialogNode("summary", "trust-dialog__summary", p.title));
+    const ol = dialogNode("ol", "trust-dialog__steps");
+    for (const step of p.steps) ol.appendChild(dialogNode("li", "", step));
+    block.appendChild(ol);
+    const dl = dialogNode("a", "btn btn--small btn--primary", `Download for ${p.title}`);
+    dl.href = p.href;
+    dl.setAttribute("download", "unky-mo-ca.crt");
+    block.appendChild(dl);
+    dialog.appendChild(block);
+  });
+
+  const row = dialogNode("div", "dialog__actions");
+  const done = dialogNode("button", "btn", "Close");
+  done.type = "button";
+  done.addEventListener("click", close);
+  row.appendChild(done);
+  dialog.appendChild(row);
+  dialog.addEventListener("cancel", () => dialog.remove());
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
+// The "Trust on another device" buttons only show when there's a local CA
+// to hand out (not with TLS off or a cert from [web] cert_file).
+(async () => {
+  const btns = document.querySelectorAll("[data-trust-device]");
+  if (!btns.length) return;
+  let info;
+  try {
+    const res = await fetch("/api/tls");
+    if (!res.ok) return;
+    info = await res.json();
+  } catch {
+    return;
+  }
+  if (!info.ca) return;
+  for (const btn of btns) {
+    btn.hidden = false;
+    btn.addEventListener("click", () => showTrustDialog(info));
+  }
+})();

@@ -199,6 +199,7 @@ h1, h2 {
 .theme-toggle__btn.is-active { background: var(--ink); color: var(--paper); }
 .theme-toggle__btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .link-btn.dash-header__restart { align-self: flex-start; font-size: 13px; font-weight: 400; }
+.dash-header__actions { display: flex; gap: 20px; flex-wrap: wrap; }
 .dash-header__usage { grid-column: 7 / span 6; display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
 @media (max-width: 900px) {
   .dash-header__brand, .dash-header__usage { grid-column: span 12; }
@@ -323,6 +324,7 @@ h1, h2 {
   all: unset; cursor: pointer; font-size: 14px; line-height: 1; font-weight: 700;
   border-bottom: 1px solid currentColor;
 }
+.link-btn[hidden] { display: none; }
 .link-btn:hover { color: var(--ink-3); }
 .link-btn:disabled { color: var(--ink-4); border-bottom-color: transparent; cursor: default; font-weight: 400; }
 .link-btn--danger { color: var(--red); }
@@ -364,6 +366,15 @@ h1, h2 {
 .dialog__input { flex: none; height: 40px; font-size: 15px; }
 .branch-row { gap: 10px; }
 .dialog__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.trust-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.trust-dialog__fp { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: var(--surface); }
+.trust-dialog__label { font-size: 13px; font-weight: 700; }
+.trust-dialog__hash { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.trust-dialog__note { font-size: 13px; line-height: 1.35; color: var(--ink-3); }
+.trust-dialog__platform { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.trust-dialog__summary { cursor: pointer; font-size: 15px; font-weight: 700; }
+.trust-dialog__steps { margin: 8px 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.4; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; }
+.trust-dialog a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* ── Tickets table ──────────────────────────────────────────── */
 .tickets-head, .ticket-row {

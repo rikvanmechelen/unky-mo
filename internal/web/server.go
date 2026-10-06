@@ -164,6 +164,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/sessions/{windowID}", s.handleStopSession)
 	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
 	s.mux.HandleFunc("GET /api/boot", s.handleBoot)
+	s.mux.HandleFunc("GET /api/tls", s.handleTLSInfo)
+	s.mux.HandleFunc("GET /ca.crt", s.handleCACert)
 	s.mux.HandleFunc("POST /api/restart", s.handleRestart)
 	s.mux.HandleFunc("GET /api/projects/{name}/sessions", s.handleProjectSessions)
 	s.mux.HandleFunc("POST /api/projects/{name}/sessions", s.handleLaunch)

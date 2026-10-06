@@ -11,6 +11,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"os"
@@ -280,6 +281,10 @@ type Deps struct {
 	// command from here — the browser picks an agent by key, never sends a
 	// command itself.
 	Agents []config.AgentConfig
+	// CA is the local CA the server cert is signed by, handed out at
+	// /ca.crt so other devices can trust it. nil when TLS is off or the
+	// cert comes from [web] cert_file.
+	CA *x509.Certificate
 }
 
 // Restarter asks the running TUI to restart itself, every sidebar and this

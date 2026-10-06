@@ -79,6 +79,18 @@ func webCmd() *cobra.Command {
 				return fmt.Errorf("refusing to serve on non-loopback %s without auth: run 'mo web auth set' first", addr)
 			}
 
+			// Loaded before the server is built so /ca.crt can hand out the CA.
+			var cert tls.Certificate
+			var res *web.TLSResult
+			if !cfg.Web.DisableTLS {
+				if cert, res, err = loadWebTLS(cfg.Web, addr); err != nil {
+					return fmt.Errorf("tls: %w", err)
+				}
+				if res != nil {
+					deps.CA = res.CA
+				}
+			}
+
 			refresh := time.Duration(cfg.Tickets.RefreshSeconds) * time.Second
 			var handler http.Handler = web.NewServer(deps, refresh, cfg.TmuxSession)
 			authNote := "no auth"
@@ -92,10 +104,6 @@ func webCmd() *cobra.Command {
 				return http.ListenAndServe(addr, handler)
 			}
 
-			cert, res, err := loadWebTLS(cfg.Web, addr)
-			if err != nil {
-				return fmt.Errorf("tls: %w", err)
-			}
 			srv := &http.Server{
 				Handler:           handler,
 				TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},

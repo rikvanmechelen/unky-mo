@@ -218,6 +218,8 @@ func printTrustSteps(res *web.TLSResult, t web.Trust) {
 	fmt.Println("  VPN & Device Management, then enable it under Settings → General → About →")
 	fmt.Println("  Certificate Trust Settings.")
 	fmt.Println("\nAndroid: Settings → Security → Encryption & credentials → Install a certificate → CA certificate.")
+	fmt.Println("\nOn a phone you can also open the dashboard (accept the warning once), log in and use")
+	fmt.Println("  \"Trust on another device\" in its header to download the CA and see these steps.")
 	fmt.Println("\nOther computers: copy ca.pem over and use the command for that OS:")
 	fmt.Println("  macOS:          " + web.SystemTrustCommand("darwin", "ca.pem", nil))
 	fmt.Println("  Debian/Ubuntu:  sudo cp ca.pem /usr/local/share/ca-certificates/unky-mo.crt && sudo update-ca-certificates")

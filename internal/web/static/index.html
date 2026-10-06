@@ -21,7 +21,10 @@
           <button class="theme-toggle__btn" type="button" data-theme-set="dark">Dark</button>
         </span>
       </div>
-      <button class="link-btn dash-header__restart" type="button" data-restart-mo title="Restart the TUI, sidebars and web server (ctrl+alt+r)">Restart mo</button>
+      <div class="dash-header__actions">
+        <button class="link-btn dash-header__restart" type="button" data-restart-mo title="Restart the TUI, sidebars and web server (ctrl+alt+r)">Restart mo</button>
+        <button class="link-btn dash-header__restart" type="button" data-trust-device hidden title="Install mo web's local CA on a phone or another device">Trust on another device</button>
+      </div>
     </div>
     <div class="dash-header__usage" id="usage"></div>
   </header>
