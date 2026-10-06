@@ -201,11 +201,21 @@ function createTerminalDrawer(root) {
     text: "Keys go straight to the shell: Tab completes, ↑ and Ctrl-R search history. Select text to copy.",
     title: "The browser keeps Ctrl-W, Ctrl-T and Ctrl-N; use Alt-Backspace to delete a word.",
   });
+  // A phone keyboard has no Tab, Esc, Ctrl or arrows: on touch screens a
+  // row of them sits under the live terminal. Ctrl is sticky, applying to
+  // the next letter typed (or arrow tapped).
+  const ctrlKey = el("button", { class: "term-key", type: "button", text: "Ctrl", "aria-pressed": "false", title: "Ctrl for the next key" });
+  const keysRow = el("div", { class: "term-drawer__keys" }, [
+    ...[["Esc", "Escape"], ["Tab", "Tab"]].map(([label, key]) => el("button", { class: "term-key", type: "button", text: label, "data-key": key })),
+    ctrlKey,
+    ...[["↑", "Up"], ["↓", "Down"], ["←", "Left"], ["→", "Right"]].map(([label, key]) => el("button", { class: "term-key", type: "button", text: label, "data-key": key, "aria-label": key })),
+    el("button", { class: "term-key", type: "button", text: "^C", "data-key": "C-c", "aria-label": "Ctrl-C" }),
+  ]);
   const liveBtn = el("button", { class: "term-drawer__toggle", type: "button", title: "Send each key to the shell, or type a whole line first" });
   const input = el("input", { class: "term-drawer__input", type: "text", autocomplete: "off", spellcheck: "false", "aria-label": "Terminal command" });
   const ctrlC = el("button", { class: "term-drawer__ctrlc", type: "button", text: "Ctrl-C", title: "Interrupt the running command" });
   const form = el("form", { class: "term-drawer__line" }, [el("span", { class: "term-drawer__prompt", text: "$" }), input, ctrlC]);
-  const body = el("div", { class: "term-drawer__body" }, [outputEl, sink, hintEl, form]);
+  const body = el("div", { class: "term-drawer__body" }, [outputEl, sink, hintEl, keysRow, form]);
   const handle = el("div", {
     class: "term-drawer__handle", role: "separator", tabindex: "0",
     "aria-orientation": "horizontal", "aria-label": "Resize terminal",
@@ -233,8 +243,9 @@ function createTerminalDrawer(root) {
       const v = localStorage.getItem(TERM_LIVE_KEY);
       if (v !== null) return v === "1";
     } catch {}
-    return !window.matchMedia("(pointer: coarse)").matches;
+    return true;
   })();
+  let ctrlArmed = false; // the keys row's sticky Ctrl
   let pending = []; // live keystrokes not sent yet
   let sending = false;
 
@@ -304,6 +315,7 @@ function createTerminalDrawer(root) {
     const writable = !!selected && !isShell(selected); // shells are read-only
     form.hidden = !writable || live;
     hintEl.hidden = !writable || !live;
+    keysRow.hidden = !writable || !live;
     sink.disabled = !writable || !live;
     outputEl.classList.toggle("is-live", writable && live);
     closeBtn.hidden = !writable;
@@ -544,12 +556,44 @@ function createTerminalDrawer(root) {
     if (e.isComposing) return;
     const text = sink.value.replace(/[\r\n]/g, "");
     sink.value = "";
-    if (text) queueKeys([{ text }]);
+    if (text) queueKeys(withCtrl(text));
   });
   sink.addEventListener("compositionend", () => {
     const text = sink.value.replace(/[\r\n]/g, "");
     sink.value = "";
-    if (text) queueKeys([{ text }]);
+    if (text) queueKeys(withCtrl(text));
+  });
+
+  function setCtrl(on) {
+    ctrlArmed = on;
+    ctrlKey.classList.toggle("is-on", on);
+    ctrlKey.setAttribute("aria-pressed", String(on));
+  }
+  // withCtrl turns typed text into keystrokes, applying an armed Ctrl to
+  // its first letter (or space); anything else just disarms it.
+  function withCtrl(text) {
+    if (!ctrlArmed) return [{ text }];
+    setCtrl(false);
+    const c = text[0].toLowerCase();
+    const key = c === " " ? "C-Space" : /[a-z]/.test(c) ? "C-" + c : null;
+    if (!key) return [{ text }];
+    return text.length > 1 ? [{ key }, { text: text.slice(1) }] : [{ key }];
+  }
+  // The keys row must not take focus from the sink, or the phone keyboard
+  // would close: pointerdown is cancelled and the key sent on click.
+  keysRow.addEventListener("pointerdown", (e) => { if (e.target.closest(".term-key")) e.preventDefault(); });
+  keysRow.addEventListener("click", (e) => {
+    const b = e.target.closest(".term-key");
+    if (!b || sink.disabled) return;
+    if (b === ctrlKey) {
+      setCtrl(!ctrlArmed);
+    } else {
+      let key = b.dataset.key;
+      if (ctrlArmed && /^(Up|Down|Left|Right)$/.test(key)) key = "C-" + key;
+      setCtrl(false);
+      queueKeys([{ key }]);
+    }
+    if (document.activeElement !== sink) sink.focus({ preventScroll: true });
   });
   sink.addEventListener("paste", (e) => {
     e.preventDefault();
