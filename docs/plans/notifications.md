@@ -1,6 +1,6 @@
 # Web Push notifications
 
-**Status:** planned, 2026-10-05. Steps below; each gets a "Step N in detail" section before it's built, and its own commit.
+**Status:** steps 1–4 built on main, 2026-10-05 (`0cd9730`, `6d39f4a`, `9472fe6`, `fe050f8`), installed. Step 5 (end to end) is open: the emulator run stopped at the dashboard's basic-auth login, so nothing has been checked on a device yet. CLAUDE.md isn't updated yet either.
 
 ## Goal
 
@@ -118,3 +118,11 @@ Built after step 1. **Change from the overview:** the service worker and the man
   - **Presence** (chat page): every 5 s it checks the shown window (`?window=` in the URL, which the nav's `pushState` updates) and whether the page is visible and focused. It beats (`POST /api/push/presence`) when that changes or 15 s have passed, sends `window: ""` when the page is hidden or blurred, and only while this device has a subscription. While a session shows, its notification (tag `mo-<window>`) is closed on this device.
 - **Tests:** no Node test for the DOM/worker code (none of the page scripts have one); the pure helpers (`urlBase64ToBytes`, `deviceLabel`, `sameKey`) live in `static/notify-model.js` and get `jstests/notify_model.test.js`. The end-to-end check is step 5.
 - **Built as planned,** plus: the manifest link carries `crossorigin="use-credentials"`, since browsers fetch a manifest without credentials by default and basic auth would refuse it.
+
+## Step 5 in detail: end to end
+
+- `make install` + `mo restart`, then on the Android emulator's Chrome (trusted CA): Notifications → Turn on → Send test, check the notification and that tapping it opens the dashboard. Then a real session: a throwaway Claude session asking an `AskUserQuestion` must notify with the question as the body, and tapping it must open that session's chat. With the chat for that session open and focused on the emulator, the same must not notify.
+- Desktop Chrome: the same Turn on / Send test.
+- iPhone: only if one is available (Home Screen app, basic auth kept or not). Otherwise listed as unverified.
+- CLAUDE.md: the push pieces (`internal/webpush`, `PushService`, the notifier, `sw.js`/`notify.js`, `[web] disable_push`) and their tests in `.claude/rules/testing.md`.
+- **Not done yet.** On the emulator, Chrome's dashboard tabs sat at the basic-auth prompt, so Turn on / Send test never ran. Next: try it on a real phone (signed in), then the real-session checks above.
