@@ -394,7 +394,10 @@ h1, h2 {
  * Chat view — three columns: session nav | transcript | files
  * ============================================================ */
 .chat-shell {
-  --nav-w: 260px; --files-w: 0px; --ov-nav-w: 340px;
+  /* Each rail's open width, in the chat and in Overview mode; rails.js
+     sets them from the widths dragged at the main column's edges. */
+  --chat-nav-w: 260px; --chat-files-w: 300px; --ov-nav-w: 340px; --ov-files-w: 320px;
+  --nav-w: var(--chat-nav-w); --files-w: 0px;
   height: 100vh;
   display: grid;
   grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--files-w);
@@ -402,7 +405,7 @@ h1, h2 {
   overflow: hidden;
   background: var(--paper);
 }
-.chat-shell.has-files { --files-w: 300px; }
+.chat-shell.has-files { --files-w: var(--chat-files-w); }
 /* Each column keeps its track, whether or not the others are in the flow
    (a hidden nav, or the Overview's inspector as a fixed sheet on a phone). */
 .chat-shell > .chat-nav { grid-column: 1; grid-row: 1; }
@@ -414,9 +417,29 @@ h1, h2 {
 /* The rails keep their width while the column shrinks, so their contents
    slide out of view instead of reflowing. */
 .chat-nav, .files-pane { min-width: 0; overflow: hidden; }
-.chat-nav > * { width: 260px; box-sizing: border-box; }
-.files-pane > * { width: 300px; box-sizing: border-box; }
-.chat-shell.is-overview .files-pane > * { width: 320px; }
+.chat-nav > * { width: var(--chat-nav-w); box-sizing: border-box; }
+.files-pane > * { width: var(--chat-files-w); box-sizing: border-box; }
+.chat-shell.is-overview .files-pane > * { width: var(--ov-files-w); }
+
+/* Dragging a rail's width at the main column's edge (rails.js). */
+.chat-shell.is-resizing-rail { transition: none; }
+.rail-resize { display: none; position: absolute; z-index: 1; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; }
+.rail-resize--nav { left: -4px; }
+.rail-resize--files { right: -4px; }
+/* Only where the rail is a column (see "Narrow widths" below). */
+@media (min-width: 761px) { .chat-shell:not(.hide-nav) .rail-resize--nav { display: block; } }
+@media (min-width: 1101px) { .chat-shell.has-files:not(.hide-files) .rail-resize--files { display: block; } }
+.rail-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: var(--ink-4); opacity: 0; transition: opacity 120ms;
+}
+.rail-resize:hover::after, .rail-resize:active::after, .rail-resize:focus-visible::after { opacity: 1; }
+.rail-resize:focus-visible { outline: none; }
+@media (pointer: coarse) {
+  .rail-resize { width: 16px; } .rail-resize::after { left: 7px; }
+  .rail-resize--nav { left: -8px; } .rail-resize--files { right: -8px; }
+}
+body.is-resizing-rail { cursor: col-resize; user-select: none; }
 
 /* The rail tabs sit centred on the main column's edges. */
 .rail-tab {
@@ -483,22 +506,11 @@ h1, h2 {
 
 /* Overview mode (chat.js: .is-overview while the Overview tab shows): the
    nav widens and holds the inspector (inspector.js) under a compact
-   session list, and the Files panel widens a little. Its width can be
-   dragged (rails.js sets --ov-nav-w). */
+   session list, and the Files panel widens a little. Both keep widths of
+   their own (rails.js sets --ov-nav-w and --ov-files-w). */
 .chat-shell.is-overview:not(.hide-nav) { --nav-w: var(--ov-nav-w); }
-.chat-shell.is-overview.has-files:not(.hide-files) { --files-w: 320px; }
+.chat-shell.is-overview.has-files:not(.hide-files) { --files-w: var(--ov-files-w); }
 .chat-shell.is-overview .chat-nav > * { width: var(--ov-nav-w); }
-.chat-shell.is-resizing-nav { transition: none; }
-.nav-resize { display: none; position: absolute; z-index: 1; top: 0; bottom: 0; left: -4px; width: 7px; cursor: col-resize; touch-action: none; }
-.chat-shell.is-overview:not(.hide-nav) .nav-resize { display: block; }
-.nav-resize::after {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
-  background: var(--ink-4); opacity: 0; transition: opacity 120ms;
-}
-.nav-resize:hover::after, .nav-resize:active::after, .nav-resize:focus-visible::after { opacity: 1; }
-.nav-resize:focus-visible { outline: none; }
-@media (pointer: coarse) { .nav-resize { left: -8px; width: 16px; } .nav-resize::after { left: 7px; } }
-body.is-resizing-nav { cursor: col-resize; user-select: none; }
 .chat-shell.is-overview .chat-nav__brand { padding: 18px 20px 12px; flex-direction: row; align-items: baseline; flex-wrap: wrap; column-gap: 12px; }
 .chat-shell.is-overview .chat-nav__wordmark { font-size: 26px; line-height: 26px; flex-basis: 100%; }
 .chat-shell.is-overview .chat-nav__list { flex: 0 1 auto; max-height: 30%; gap: 0; padding-bottom: 10px; }
@@ -1944,7 +1956,6 @@ button.file-row.overview-file { padding: 3px 12px; }
 }
 @media (max-width: 760px) {
   .chat-shell.is-overview:not(.hide-nav) { --nav-w: 0px; }
-  .chat-shell.is-overview:not(.hide-nav) .nav-resize { display: none; }
   .chat-shell.is-overview .chat-nav {
     display: flex; position: fixed; left: 0; right: 0; bottom: 0; height: 62vh; z-index: 20;
     border-top: 2px solid var(--ink); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
