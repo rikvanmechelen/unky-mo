@@ -11,6 +11,12 @@
 // default, arrow keys step it. The chat and Overview mode keep separate
 // widths (the Overview's nav holds the inspector), each in localStorage and
 // set as a custom property on the shell.
+//
+// Where a rail has no room for a column (the nav below 761px, the Files
+// panel below 1101px) its tab still shows, and opens the rail as an
+// overlay instead: across the whole phone but the tab's own strip, where
+// the tab moves to close it again. Overlays start closed, aren't
+// remembered, and close on Esc or once something opens behind them.
 
 const RAIL_WIDTHS = {
   nav: {
@@ -31,6 +37,14 @@ function createRails(shell) {
     nav: { key: "[", name: "sessions", cls: "hide-nav", side: "left" },
     files: { key: "]", name: "files", cls: "hide-files", side: "right" },
   };
+
+  // Below these widths a rail is an overlay (see the CSS's "Narrow widths").
+  const narrow = {
+    nav: window.matchMedia("(max-width: 760px)"),
+    files: window.matchMedia("(max-width: 1100px)"),
+  };
+  const overlay = { nav: false, files: false }; // open overlays
+  const isOverlay = (rail) => narrow[rail].matches;
 
   let hidden = {};
   try { hidden = JSON.parse(localStorage.getItem("mo.rails") || "{}") || {}; } catch (e) { hidden = {}; }
@@ -54,8 +68,10 @@ function createRails(shell) {
 
   function apply() {
     for (const [rail, r] of Object.entries(RAILS)) {
-      const isHidden = !!hidden[rail];
+      const asOverlay = isOverlay(rail);
+      const isHidden = asOverlay ? !overlay[rail] : !!hidden[rail];
       shell.classList.toggle(r.cls, isHidden);
+      shell.classList.toggle(`overlay-${rail}`, asOverlay && !isHidden);
       tabs[rail].classList.toggle("is-hidden", isHidden);
       const label = `${isHidden ? "Show" : "Hide"} ${r.name}`;
       tabs[rail].title = `${label}  ${r.key}`;
@@ -65,6 +81,13 @@ function createRails(shell) {
   }
 
   function toggle(rail) {
+    if (isOverlay(rail)) {
+      const open = !overlay[rail];
+      overlay.nav = overlay.files = false; // one overlay at a time
+      overlay[rail] = open;
+      apply();
+      return;
+    }
     hidden[rail] = !hidden[rail];
     try { localStorage.setItem("mo.rails", JSON.stringify(hidden)); } catch (e) { /* not remembered */ }
     apply();
@@ -75,11 +98,25 @@ function createRails(shell) {
     const t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
     if (document.querySelector("dialog[open]")) return;
+    if (e.key === "Escape" && (overlay.nav || overlay.files)) {
+      e.preventDefault();
+      closeOverlay();
+      return;
+    }
     const rail = Object.keys(RAILS).find((r) => RAILS[r].key === e.key);
     if (!rail) return;
     e.preventDefault();
     toggle(rail);
   });
+
+  // closeOverlay closes the open overlay, or only the given rail's.
+  function closeOverlay(rail) {
+    const rails = rail ? [rail] : ["nav", "files"];
+    if (!rails.some((r) => overlay[r])) return;
+    for (const r of rails) overlay[r] = false;
+    apply();
+  }
+  for (const mq of Object.values(narrow)) mq.addEventListener("change", apply);
 
   apply();
 
@@ -205,5 +242,8 @@ function createRails(shell) {
       }));
     },
     setCount(n) { countEl.textContent = n == null ? "" : String(n); },
+    // closeOverlay closes an open overlay rail (or only the given one),
+    // e.g. once a file opens behind it.
+    closeOverlay,
   };
 }

@@ -446,7 +446,7 @@ body.is-resizing-rail { cursor: col-resize; user-select: none; }
 /* The rail tabs sit centred on the main column's edges. */
 .rail-tab {
   all: unset; cursor: pointer; box-sizing: border-box;
-  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 5; /* above the Overview's sticky head (4), below the sheet (20) */
   width: 28px; max-height: 80%; overflow: hidden; padding: 10px 0 12px;
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   background: var(--surface); color: var(--ink); border: 1px solid var(--line);
@@ -475,12 +475,12 @@ body.is-resizing-rail { cursor: col-resize; user-select: none; }
    touch screens, with no hover, it always shows. */
 @media (hover: hover) {
   .rail-tab { transition: opacity 120ms linear; }
-  .chat-shell:not(.hide-nav):not(:has(.chat-nav:hover, .chat-nav :focus-visible, .rail-tab--left:hover, .rail-tab--left:focus-visible)) .rail-tab--left,
-  .chat-shell:not(.hide-files):not(:has(.files-pane:hover, .files-pane :focus-visible, .rail-tab--right:hover, .rail-tab--right:focus-visible)) .rail-tab--right {
+  .chat-shell:not(.hide-nav):not(.overlay-nav):not(:has(.chat-nav:hover, .chat-nav :focus-visible, .rail-tab--left:hover, .rail-tab--left:focus-visible)) .rail-tab--left,
+  .chat-shell:not(.hide-files):not(.overlay-files):not(:has(.files-pane:hover, .files-pane :focus-visible, .rail-tab--right:hover, .rail-tab--right:focus-visible)) .rail-tab--right {
     opacity: 0; pointer-events: none;
   }
 }
-@media (prefers-reduced-motion: reduce) { .chat-shell, .rail-tab { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .chat-shell, .rail-tab, .chat-shell > .chat-nav, .chat-shell > .files-pane { transition: none !important; } }
 
 /* ── Left nav: sessions + usage ─────────────────────────────── */
 .chat-nav { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
@@ -1462,14 +1462,33 @@ button.file-row.graph-file:hover { background: var(--surface-2); }
 .agent-dialog__meta { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-dialog__body { flex: 1; min-height: 0; padding: 20px 24px 24px; }
 
-/* ── Narrow widths: drop the files aside, then the nav ───────── */
+/* ── Narrow widths: the files aside, then the nav, become overlays ──
+   The rail's tab stays on the main column's edge; tapping it slides the
+   rail over the page (rails.js, .overlay-nav / .overlay-files), leaving
+   the tab's own strip, where the tab moves to close it. */
 @media (max-width: 1100px) {
   .chat-shell.has-files { --files-w: 0px; }
-  .files-pane, .rail-tab--right { display: none; }
+  .chat-shell { --ovl-files-w: min(var(--chat-files-w), calc(100vw - 28px)); }
+  .chat-shell.is-overview { --ovl-files-w: min(var(--ov-files-w), calc(100vw - 28px)); }
+  .chat-shell > .files-pane {
+    position: fixed; top: 0; bottom: 0; right: 0; z-index: 30; width: var(--ovl-files-w); background: var(--paper);
+    border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+    transform: translateX(100%); visibility: hidden; transition: transform 200ms ease-out, visibility 0s 200ms;
+  }
+  .chat-shell.overlay-files > .files-pane { transform: none; visibility: visible; transition: transform 200ms ease-out; }
+  .chat-shell > .files-pane > *, .chat-shell.is-overview > .files-pane > * { width: 100%; }
+  .chat-shell.overlay-files .rail-tab--right { position: fixed; right: var(--ovl-files-w); z-index: 31; }
 }
 @media (max-width: 760px) {
-  .chat-shell, .chat-shell.has-files { --nav-w: 0px; }
-  .chat-nav, .rail-tab--left { display: none; }
+  .chat-shell, .chat-shell.has-files { --nav-w: 0px; --ovl-files-w: calc(100vw - 28px); }
+  .chat-shell:not(.is-overview) > .chat-nav {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: calc(100vw - 28px);
+    border-right: 1px solid var(--line); box-shadow: 8px 0 24px rgba(0, 0, 0, 0.18);
+    transform: translateX(-100%); visibility: hidden; transition: transform 200ms ease-out, visibility 0s 200ms;
+  }
+  .chat-shell.overlay-nav:not(.is-overview) > .chat-nav { transform: none; visibility: visible; transition: transform 200ms ease-out; }
+  .chat-shell:not(.is-overview) > .chat-nav > * { width: 100%; }
+  .chat-shell.overlay-nav .rail-tab--left { position: fixed; left: calc(100vw - 28px); z-index: 31; }
   .chat-bar__back { display: inline; }
   .chat-bar__stop-more { display: none; }
   /* One line on a phone: the checkout/branch meta goes, and a long title
@@ -1988,6 +2007,21 @@ button.file-row.overview-file { padding: 3px 12px; }
   .chat-shell.is-overview .chat-nav > * { width: 100%; }
   .chat-shell.is-overview .chat-nav__brand, .chat-shell.is-overview .chat-nav__list, .chat-shell.is-overview .chat-nav__usage { display: none; }
   .chat-shell.is-overview .chat-nav__inspector { border-top: 0; }
+  /* Its tab opens the whole nav (sessions, inspector, usage) from the left
+     instead, like the chat's overlay. */
+  .chat-shell.is-overview.overlay-nav .chat-nav {
+    top: 0; right: auto; height: auto; width: calc(100vw - 28px); z-index: 30;
+    border-top: 0; border-right: 1px solid var(--line); box-shadow: 8px 0 24px rgba(0, 0, 0, 0.18);
+    transform: none; transition: none;
+  }
+  .chat-shell.is-overview.overlay-nav .chat-nav__brand,
+  .chat-shell.is-overview.overlay-nav .chat-nav__list,
+  .chat-shell.is-overview.overlay-nav .chat-nav__usage { display: flex; }
+  .chat-shell.is-overview.overlay-nav .chat-nav__inspector { border-top: 2px solid var(--ink); }
+  /* While the sheet is up the rail tabs move into the space above it. */
+  .chat-shell.is-overview:not(.overlay-nav):not(.overlay-files):has(.chat-nav__inspector.has-sel) .rail-tab {
+    top: 19dvh; max-height: calc(38dvh - 16px);
+  }
   .ov-head, .ov-head.is-compact { padding-left: 16px; padding-right: 16px; }
   .ov-verdict { font-size: 20px; line-height: 23px; }
   .ov-head.is-compact .ov-verdict { font-size: 17px; line-height: 20px; }

@@ -1126,16 +1126,22 @@ function main() {
     onShowInOverview: (path) => { editor.showOverview(); overview.showFile(path); },
   });
   const rails = createRails(shell);
+  // Selecting something in the Overview (e.g. a Review row) shows it in the
+  // inspector, which the Files overlay would cover. The nav overlay holds
+  // the inspector, so it stays.
+  overview.selection.subscribe((what) => { if (what === "select" && overview.selection.current()) rails.closeOverlay("files"); });
   createInspector(inspectorEl, overview);
   const reviewQueue = createReviewQueue(overview);
   const filesPane = createFilesPane(filesEl, {
     onCount: rails.setCount,
-    onOpen: (path) => editor.open(path, "file"),
-    onOpenDiff: (path) => editor.open(path, "diff"),
-    onOpenCommitFile: (hash, path) => editor.open(path, "commit", hash),
+    // On a phone the Files panel is an overlay: opening something closes it.
+    onOpen: (path) => { rails.closeOverlay(); editor.open(path, "file"); },
+    onOpenDiff: (path) => { rails.closeOverlay(); editor.open(path, "diff"); },
+    onOpenCommitFile: (hash, path) => { rails.closeOverlay(); editor.open(path, "commit", hash); },
     onMention: insertMention,
     onSelectionChange: (sel) => overview.setSelection(sel),
     onShowSelection: (sel) => {
+      rails.closeOverlay();
       overview.showSelection(sel);
       editor.showOverview();
     },
@@ -1474,6 +1480,7 @@ function main() {
   });
 
   function switchTo(id, push) {
+    rails.closeOverlay();
     if (id === windowID) return;
     if (push) history.pushState({}, "", `/chat?window=${encodeURIComponent(id)}`);
     // The Overview stays the open tab in the session switched to.

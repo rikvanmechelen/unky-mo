@@ -68,7 +68,11 @@ function branchMain() {
 
   // The rails: the inspector on the left, the Review list on the right.
   const shell = document.getElementById("chat-shell");
-  createRails(shell);
+  const rails = createRails(shell);
+  // Selecting something shows it in the inspector, which the Files overlay
+  // (a phone's Review list) would cover. The nav overlay holds the
+  // inspector, so it stays.
+  overview.selection.subscribe((what) => { if (what === "select" && overview.selection.current()) rails.closeOverlay("files"); });
   createInspector(document.getElementById("inspector"), overview);
   queue = createReviewQueue(overview);
   reviewPane(document.getElementById("files-pane"), queue);
