@@ -1457,6 +1457,13 @@ button.file-row.graph-file:hover { background: var(--surface-2); }
   .chat-shell, .chat-shell.has-files { --nav-w: 0px; }
   .chat-nav, .rail-tab--left { display: none; }
   .chat-bar__back { display: inline; }
+  .chat-bar__stop-more { display: none; }
+  /* One line on a phone: the checkout/branch meta goes, and a long title
+     ellipsizes before Stop and the status badge would wrap. */
+  .chat-bar { flex-wrap: nowrap; gap: 12px; }
+  .chat-bar > * { flex-shrink: 0; }
+  .chat-bar__meta { display: none; }
+  .chat-bar__title { flex-shrink: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chat-main { border-left: 0; }
   .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar, .editor-pane__banner, .editor-pane__info { padding-left: 16px; padding-right: 16px; }
   .editor-tabs { padding-left: 4px; padding-right: 16px; }
