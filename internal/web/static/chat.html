@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <title>Unky Mo — Chat</title>
 <link rel="icon" type="image/svg+xml" href="/favicon/idle.svg" id="favicon">
+<link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-title" content="Unky Mo">
 <link rel="stylesheet" href="/style.css">
 <script src="/theme.js"></script>
 </head>
@@ -16,6 +20,7 @@
       <span class="chat-nav__wordmark">Unky Mo</span>
       <a class="chat-nav__back" href="/">Dashboard</a>
       <button class="link-btn chat-nav__restart" type="button" data-restart-mo title="Restart the TUI, sidebars and web server (ctrl+alt+r)">Restart mo</button>
+      <button class="link-btn chat-nav__restart" type="button" data-notify-settings hidden title="Get a notification on this device when a session needs you">Notifications</button>
     </div>
     <div class="chat-nav__list" id="session-nav"></div>
     <div class="chat-nav__inspector" id="inspector" hidden></div>
@@ -85,6 +90,8 @@
 <script src="/common.js"></script>
 <script src="/markdown.js"></script>
 <script src="/actions.js"></script>
+<script src="/notify-model.js"></script>
+<script src="/notify.js"></script>
 <script src="/files.js"></script>
 <script src="/graph.js"></script>
 <script src="/terminal.js"></script>

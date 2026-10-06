@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Unky Mo</title>
 <link rel="icon" type="image/svg+xml" href="/favicon/idle.svg" id="favicon">
+<link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-title" content="Unky Mo">
 <link rel="stylesheet" href="/style.css">
 <script src="/theme.js"></script>
 </head>
@@ -23,6 +27,7 @@
       </div>
       <div class="dash-header__actions">
         <button class="link-btn dash-header__restart" type="button" data-restart-mo title="Restart the TUI, sidebars and web server (ctrl+alt+r)">Restart mo</button>
+        <button class="link-btn dash-header__restart" type="button" data-notify-settings hidden title="Get a notification on this device when a session needs you">Notifications</button>
         <button class="link-btn dash-header__restart" type="button" data-trust-device hidden title="Install mo web's local CA on a phone or another device">Trust on another device</button>
       </div>
     </div>
@@ -68,6 +73,8 @@
 </div>
 <script src="/common.js"></script>
 <script src="/actions.js"></script>
+<script src="/notify-model.js"></script>
+<script src="/notify.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
