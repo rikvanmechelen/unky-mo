@@ -98,7 +98,11 @@ func webCmd() *cobra.Command {
 			}
 
 			refresh := time.Duration(cfg.Tickets.RefreshSeconds) * time.Second
-			var handler http.Handler = web.NewServer(deps, refresh, cfg.TmuxSession)
+			webServer := web.NewServer(deps, refresh, cfg.TmuxSession)
+			if deps.Push != nil {
+				go webServer.RunNotifier(cmd.Context(), time.Second)
+			}
+			var handler http.Handler = webServer
 			authNote := "no auth"
 			if creds != nil {
 				handler = web.BasicAuth(handler, creds)
