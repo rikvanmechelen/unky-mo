@@ -47,6 +47,9 @@ type WebConfig struct {
 	// around each Bash call (`mo snapshot`), so the chat view shows no diff
 	// for what a command changed.
 	DisableBashDiffs bool `toml:"disable_bash_diffs"`
+	// DisablePush turns off Web Push notifications (the phone/desktop
+	// notifications when a session needs input or is done).
+	DisablePush bool `toml:"disable_push"`
 }
 
 // ListenAddr returns Addr, or the default when unset. A method rather than a

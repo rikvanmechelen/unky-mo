@@ -3,13 +3,8 @@ package webpush
 import (
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdh"
-	"crypto/hkdf"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -69,40 +64,14 @@ func TestEncryptRFC8291Example(t *testing.T) {
 	}
 }
 
-// decrypt is the user agent's side of RFC 8291, for round-trip tests.
+// decrypt opens a body with Decrypt, failing the test on error.
 func decrypt(t *testing.T, body []byte, uaPriv *ecdh.PrivateKey, auth []byte) []byte {
 	t.Helper()
-	if len(body) < 21 {
-		t.Fatal("body too short")
-	}
-	salt := body[:16]
-	if rs := binary.BigEndian.Uint32(body[16:20]); rs != recordSize {
-		t.Fatalf("record size %d", rs)
-	}
-	idlen := int(body[20])
-	asPub, err := ecdh.P256().NewPublicKey(body[21 : 21+idlen])
+	plain, err := Decrypt(body, uaPriv, auth)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("decrypt: %v", err)
 	}
-	secret, err := uaPriv.ECDH(asPub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prkKey, _ := hkdf.Extract(sha256.New, secret, auth)
-	ikm, _ := hkdf.Expand(sha256.New, prkKey, "WebPush: info\x00"+string(uaPriv.PublicKey().Bytes())+string(asPub.Bytes()), 32)
-	prk, _ := hkdf.Extract(sha256.New, ikm, salt)
-	cek, _ := hkdf.Expand(sha256.New, prk, "Content-Encoding: aes128gcm\x00", 16)
-	nonce, _ := hkdf.Expand(sha256.New, prk, "Content-Encoding: nonce\x00", 12)
-	block, _ := aes.NewCipher(cek)
-	gcm, _ := cipher.NewGCM(block)
-	plain, err := gcm.Open(nil, nonce, body[21+idlen:], nil)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if len(plain) == 0 || plain[len(plain)-1] != 0x02 {
-		t.Fatal("missing last-record delimiter")
-	}
-	return plain[:len(plain)-1]
+	return plain
 }
 
 // newSubscription makes a browser-side key pair and its subscription.

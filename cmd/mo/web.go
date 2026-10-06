@@ -70,6 +70,12 @@ func webCmd() *cobra.Command {
 				}
 			}
 
+			if !cfg.Web.DisablePush {
+				if deps.Push, err = web.NewPushService(filepath.Join(config.DefaultConfigDir(), "push"), nil, nil); err != nil {
+					return fmt.Errorf("push: %w", err)
+				}
+			}
+
 			credsPath := webCredentialsPath()
 			creds, err := web.LoadCredentials(credsPath)
 			if err != nil {

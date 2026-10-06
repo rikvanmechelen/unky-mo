@@ -71,3 +71,22 @@ A package with no knowledge of sessions or HTTP routes, only "send this payload 
 - **VAPID** (RFC 8292): an ES256 JWT `{aud: <endpoint's scheme://host>, exp: now+12h, sub: "https://github.com/rvanmech/unky-mo"}`, signature as raw `r ‖ s`. Header `Authorization: vapid t=<jwt>, k=<public key>`.
 - **Send:** `Sender{Keys, Client (Do(*http.Request)), Now}`. `Send(ctx, sub, payload, Options{TTL, Urgency, Topic})` POSTs with `Content-Encoding: aes128gcm`, `TTL` (seconds), `Urgency` (`very-low|low|normal|high`), `Topic` (≤32 base64url characters, else refused). 2xx is success. 404 and 410 return `ErrGone` (drop the subscription). Anything else is an error carrying the status and the start of the body.
 - **Tests:** the full RFC 8291 Appendix A example (fixed keys and salt → exactly the published header and ciphertext); a round trip through a test-only decryptor with a fresh key; the JWT's signature verifying against the public key and its claims; `Send` against a fake client (headers, decryptable body, 201, 404/410 → `ErrGone`, 400 → error, refused endpoint or topic → no request); key create/reload/corrupt-file; the allowlist table.
+
+## Step 2 in detail: the server side
+
+Built after step 1. **Change from the overview:** the service worker and the manifest move to step 4, next to the browser code that uses them; this step is only the Go side.
+
+- **`internal/web/push.go`, `PushService`** (a concrete type in `Deps.Push`, like `AttachmentStore`; nil when `[web] disable_push`): owns the VAPID keys (`<config dir>/push/vapid.pem`), the subscription store and a `webpush.Sender`. `NewPushService(dir, client webpush.Doer, now)`.
+  - **Store:** `<dir>/subscriptions.json` (0600, written to a temp file and renamed, under a mutex), a list of `{subscription, events: {input, done}, label, created}` keyed by endpoint. Re-subscribing the same endpoint replaces its entry. At most 32 entries (a 33rd is a 409): devices, not users, so a small cap bounds the file.
+  - **Presence:** in memory, endpoint → window → last heartbeat. `Present(endpoint, window)` is true for 30 s after a heartbeat.
+  - **`Deliver(ctx, entry, msg)`:** marshals the message (`{title, body, tag, url, window, kind}`), sends it with the options of its kind, and removes the entry on `webpush.ErrGone`. Step 3's notifier and the test endpoint both use it.
+- **Routes** (`handlers_push.go`, all JSON; with `Deps.Push` nil every one is a 404 except `GET /api/push`, which says `{enabled: false}`):
+  - `GET /api/push` → `{enabled, publicKey}`.
+  - `GET /api/push/subscriptions?endpoint=` → `{subscribed, events, label}` for that endpoint: the dialog's state for this device.
+  - `POST /api/push/subscriptions` `{subscription, events, label}`: body capped at 8 KB, `Subscription.Validate` (allowlist, key sizes) → 400 otherwise, label control-stripped and cut to 80 characters. 204.
+  - `DELETE /api/push/subscriptions` `{endpoint}` → 204 (also for an unknown endpoint).
+  - `POST /api/push/test` `{endpoint}`: sends "Notifications work" to that subscription only. 404 for an unknown endpoint, 410 if the push service says it's gone (and it's removed), 502 with the service's message for other failures.
+  - `POST /api/push/presence` `{endpoint, window}`: records a heartbeat (window `""` clears that endpoint's presence). Unknown endpoints are ignored (204), so a page that isn't subscribed can heartbeat harmlessly.
+- **Config:** `[web] disable_push` (`WebConfig.DisablePush`). `cmd/mo/web.go` builds the service unless it's set; a key or store that can't be loaded is a startup error, like the attachment store.
+- **Tests** (`handlers_push_test.go`, `push_test.go`, a temp dir and a fake `Doer`): subscribe/lookup/replace/unsubscribe, the store's file mode and reload, bad subscriptions refused (unknown host, bad keys, oversized body), the cap, the test push reaching the fake push service and decrypting to the expected JSON, a 410 removing the entry, presence expiring after 30 s with an injected clock, and `disable_push` → 404s.
+- **Built as planned,** plus one change to step 1: the test-only decryptor became `webpush.Decrypt`, so the web tests can read what the fake push service received.

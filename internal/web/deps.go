@@ -285,6 +285,8 @@ type Deps struct {
 	// /ca.crt so other devices can trust it. nil when TLS is off or the
 	// cert comes from [web] cert_file.
 	CA *x509.Certificate
+	// Push sends Web Push notifications; nil with [web] disable_push.
+	Push *PushService
 }
 
 // Restarter asks the running TUI to restart itself, every sidebar and this

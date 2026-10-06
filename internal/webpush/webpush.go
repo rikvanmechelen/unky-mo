@@ -411,3 +411,64 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte, opt
 		return fmt.Errorf("push service answered %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 }
+
+// Decrypt is the user agent's side of RFC 8291: it opens an aes128gcm body
+// with the subscription's private key and auth secret. mo never receives
+// pushes; tests use it to read what a push service was sent.
+func Decrypt(body []byte, uaPriv *ecdh.PrivateKey, auth []byte) ([]byte, error) {
+	if len(body) < 21 {
+		return nil, errors.New("body too short")
+	}
+	salt := body[:16]
+	if rs := binary.BigEndian.Uint32(body[16:20]); rs != recordSize {
+		return nil, fmt.Errorf("record size %d", rs)
+	}
+	idlen := int(body[20])
+	if len(body) < 21+idlen {
+		return nil, errors.New("body too short")
+	}
+	asPub, err := ecdh.P256().NewPublicKey(body[21 : 21+idlen])
+	if err != nil {
+		return nil, err
+	}
+	secret, err := uaPriv.ECDH(asPub)
+	if err != nil {
+		return nil, err
+	}
+	prkKey, err := hkdf.Extract(sha256.New, secret, auth)
+	if err != nil {
+		return nil, err
+	}
+	ikm, err := hkdf.Expand(sha256.New, prkKey, "WebPush: info\x00"+string(uaPriv.PublicKey().Bytes())+string(asPub.Bytes()), 32)
+	if err != nil {
+		return nil, err
+	}
+	prk, err := hkdf.Extract(sha256.New, ikm, salt)
+	if err != nil {
+		return nil, err
+	}
+	cek, err := hkdf.Expand(sha256.New, prk, "Content-Encoding: aes128gcm\x00", 16)
+	if err != nil {
+		return nil, err
+	}
+	nonce, err := hkdf.Expand(sha256.New, prk, "Content-Encoding: nonce\x00", 12)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(cek)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := gcm.Open(nil, nonce, body[21+idlen:], nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(plain) == 0 || plain[len(plain)-1] != 0x02 {
+		return nil, errors.New("missing last-record delimiter")
+	}
+	return plain[:len(plain)-1], nil
+}
