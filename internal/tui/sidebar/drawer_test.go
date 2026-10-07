@@ -26,6 +26,7 @@ func expectEnsureMoTermsFirstTime(tmux *mock_sidebar.MockTmuxClient, cwd, ghostP
 	tmux.EXPECT().NewDetachedSession(drawerModelTermSession, cwd).Return(ghostPaneID, nil)
 	tmux.EXPECT().SetSessionOption(drawerModelTermSession, "key-table", "popup-keys").Return(nil)
 	tmux.EXPECT().SetSessionOption(drawerModelTermSession, "mouse", "on").Return(nil)
+	tmux.EXPECT().SetSessionOption(drawerModelTermSession, "default-size", "200x50").Return(nil)
 	tmux.EXPECT().BindKey("popup-keys", "`", "detach-client").Return(nil)
 	tmux.EXPECT().BindKey("popup-keys", "WheelUpPane", "copy-mode", "-e").Return(nil)
 	tmux.EXPECT().BindKey("popup-keys", "WheelDownPane", "send-keys", "-M").Return(nil)

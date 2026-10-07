@@ -194,6 +194,9 @@ type Terminals interface {
 	SendKeys(paneID string, keys []tmux.Key) error
 	Paste(paneID, text string) error
 	Interrupt(paneID string) error
+	// Resize sizes a parked terminal to the browser's view of it (never a
+	// terminal shown in the tmux window: that one is the user's layout).
+	Resize(paneID string, cols, rows int) error
 	New(w state.ProjectState) (string, error)
 	Close(paneID string) error
 }
@@ -695,6 +698,10 @@ func (r realTerminals) SendLine(paneID, text string) error {
 // it on its next refresh.
 func (r realTerminals) Close(paneID string) error {
 	return r.client.KillPane(paneID)
+}
+
+func (r realTerminals) Resize(paneID string, cols, rows int) error {
+	return r.client.ResizeParkedPane(paneID, cols, rows)
 }
 
 func (r realTerminals) Interrupt(paneID string) error {

@@ -83,6 +83,7 @@ func TestTerminalsRejectForeignPane(t *testing.T) {
 		{http.MethodPost, "/api/sessions/@5/terminals/2/interrupt", ""},
 		{http.MethodPost, "/api/sessions/@5/terminals/2/keys", `{"keys":[{"key":"Enter"}]}`},
 		{http.MethodPost, "/api/sessions/@5/terminals/2/keys", `{"paste":"rm -rf /\n"}`},
+		{http.MethodPost, "/api/sessions/@5/terminals/2/size", `{"cols":80,"rows":24}`},
 	} {
 		if rec := do(t, srv, c.method, c.path, c.body); rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s: want 404, got %d", c.method, c.path, rec.Code)
@@ -197,6 +198,50 @@ func TestTerminalInterrupt(t *testing.T) {
 
 	if rec := do(t, srv, http.MethodPost, "/api/sessions/@5/terminals/21/interrupt", ""); rec.Code != http.StatusOK {
 		t.Errorf("want 200, got %d: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestTerminalSize(t *testing.T) {
+	srv, terms := termFixture(t)
+	terms.EXPECT().Resize("%21", 50, 30).Return(nil)
+
+	rec := do(t, srv, http.MethodPost, "/api/sessions/@5/terminals/21/size", `{"cols":50,"rows":30}`)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"resized":true}` {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The terminal shown in the tmux window is the user's layout: asking to
+// resize it succeeds without touching tmux (no Resize expectation).
+func TestTerminalSizeLeavesVisibleTerminal(t *testing.T) {
+	srv, _ := termFixture(t)
+
+	rec := do(t, srv, http.MethodPost, "/api/sessions/@5/terminals/20/size", `{"cols":50,"rows":30}`)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"resized":false}` {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestTerminalSizeRejects(t *testing.T) {
+	srv, _ := termFixture(t)
+	for _, body := range []string{
+		``, `nope`, `{}`,
+		`{"cols":19,"rows":24}`, `{"cols":401,"rows":24}`,
+		`{"cols":80,"rows":4}`, `{"cols":80,"rows":201}`,
+		`{"cols":-80,"rows":24}`,
+	} {
+		if rec := do(t, srv, http.MethodPost, "/api/sessions/@5/terminals/21/size", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%q: want 400, got %d", body, rec.Code)
+		}
+	}
+}
+
+func TestTerminalSizeError(t *testing.T) {
+	srv, terms := termFixture(t)
+	terms.EXPECT().Resize("%21", 80, 24).Return(errors.New("no server"))
+
+	if rec := do(t, srv, http.MethodPost, "/api/sessions/@5/terminals/21/size", `{"cols":80,"rows":24}`); rec.Code != http.StatusBadGateway {
+		t.Errorf("want 502, got %d", rec.Code)
 	}
 }
 

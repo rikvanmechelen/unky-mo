@@ -1136,6 +1136,20 @@ func (mr *MockTerminalsMockRecorder) Paste(paneID, text any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Paste", reflect.TypeOf((*MockTerminals)(nil).Paste), paneID, text)
 }
 
+// Resize mocks base method.
+func (m *MockTerminals) Resize(paneID string, cols, rows int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Resize", paneID, cols, rows)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Resize indicates an expected call of Resize.
+func (mr *MockTerminalsMockRecorder) Resize(paneID, cols, rows any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resize", reflect.TypeOf((*MockTerminals)(nil).Resize), paneID, cols, rows)
+}
+
 // SendKeys mocks base method.
 func (m *MockTerminals) SendKeys(paneID string, keys []tmux.Key) error {
 	m.ctrl.T.Helper()

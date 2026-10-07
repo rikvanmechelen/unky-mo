@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,6 +16,14 @@ import (
 // NewDetachedSession callers) to detach-client — so closing the popup
 // preserves the shells.
 const MoTermsSession = "mo-terms"
+
+// DetachedCols and DetachedRows are the size parked terminals start at.
+// Nothing is attached to a mo-terms session, so tmux would otherwise fall
+// back to 80x24; mo web resizes a pane to its browser once it's looked at.
+const (
+	DetachedCols = 200
+	DetachedRows = 50
+)
 
 // MoWebSession is the detached tmux session the main TUI runs `mo web` in,
 // so the dashboard survives TUI restarts and its output stays inspectable
@@ -80,7 +89,7 @@ func (c *Client) SessionExistsNamed(name string) bool {
 // mo-session-specific options — the caller configures whatever the session
 // needs.
 func (c *Client) NewDetachedSession(name, cwd string) (string, error) {
-	args := []string{"new-session", "-d", "-s", name}
+	args := []string{"new-session", "-d", "-s", name, "-x", strconv.Itoa(DetachedCols), "-y", strconv.Itoa(DetachedRows)}
 	if cwd != "" {
 		args = append(args, "-c", cwd)
 	}

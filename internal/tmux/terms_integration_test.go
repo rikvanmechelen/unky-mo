@@ -171,3 +171,42 @@ func TestIntegrationCaptureScreen(t *testing.T) {
 		t.Errorf("cursor at line %d col %d (visible %v), want after \"$ abc\" in:\n%q", sc.CursorLine, sc.CursorCol, sc.CursorVisible, sc.Text)
 	}
 }
+
+// A session made by NewDetachedSession starts roomy, ResizeParkedPane sizes
+// a parked pane's window, and the window goes back to "latest" so a popup
+// attaching later can still resize it.
+func TestIntegrationResizeParkedPane(t *testing.T) {
+	c := newTestClient(t)
+	if _, err := c.NewDetachedSession("mo-terms-x", "/tmp"); err != nil {
+		t.Fatalf("NewDetachedSession: %v", err)
+	}
+	if err := c.runTmux("set-option", "-t", "mo-terms-x", "default-size", "200x50"); err != nil {
+		t.Fatalf("set default-size: %v", err)
+	}
+	pane, err := c.NewWindowInSession("mo-terms-x", "/tmp")
+	if err != nil {
+		t.Fatalf("NewWindowInSession: %v", err)
+	}
+	size := func() string {
+		out, err := c.tmuxCmd("display-message", "-p", "-t", pane, "#{window_width}x#{window_height} #{window_flags}").Output()
+		if err != nil {
+			t.Fatalf("display-message: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if got := size(); !strings.HasPrefix(got, "200x50") {
+		t.Errorf("new window starts at %q, want 200x50", got)
+	}
+	if err := c.ResizeParkedPane(pane, 49, 24); err != nil {
+		t.Fatalf("ResizeParkedPane: %v", err)
+	}
+	if got := size(); !strings.HasPrefix(got, "49x24") {
+		t.Errorf("after resize %q, want 49x24", got)
+	}
+	if got := c.WindowOption(pane, "window-size"); got != "latest" {
+		t.Errorf("window-size = %q, want latest", got)
+	}
+	if err := c.ResizeParkedPane("%9999", 49, 24); err == nil {
+		t.Error("resizing a missing pane should fail")
+	}
+}

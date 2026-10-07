@@ -2,7 +2,8 @@
 // terminal drawer. Tabs list the window's terminals (the one shown in the
 // tmux drawer, plus those parked in its mo-terms session); the output pane
 // mirrors the selected one, colours and cursor included, via tmux
-// capture-pane (nothing is attached or resized).
+// capture-pane (nothing is attached; a parked terminal is resized to this view,
+// see syncSize).
 //
 // Input has two modes. Live (the default with a keyboard): every keystroke
 // goes straight to the shell, so its own Tab completion, suggestions and
@@ -16,9 +17,16 @@ const TERM_OUTPUT_MS = 1000;
 const TERM_LIVE_KEY = "mo.termLive";
 // The output's height, set by dragging the drawer's top edge.
 const TERM_HEIGHT_KEY = "mo.termHeight";
-const TERM_HEIGHT_DEFAULT = 160;
+const TERM_HEIGHT_DEFAULT = 240;
 const TERM_HEIGHT_MIN = 80;
 const TERM_TRANSCRIPT_MIN = 120; // the transcript keeps at least this much
+// A parked terminal is sized to the drawer (columns for the width; rows
+// never below this, so full-screen programs and prompts still have room
+// and the scrollback fills the rest).
+const TERM_MIN_ROWS = 24;
+const TERM_MAX_COLS = 400;
+const TERM_MAX_ROWS = 200;
+const TERM_SIZE_DEBOUNCE_MS = 300;
 
 // liveKeyName maps a keydown to the tmux key name a live terminal sends
 // (the server allows the same set, liveKeyNames), or null to leave the key
@@ -294,6 +302,7 @@ function createTerminalDrawer(root) {
           }
           selected = t.key;
           open = true;
+          sentSize.delete(`${windowID}/${t.key}`);
           lastOutput = null;
           lastScreen = null;
           pending = [];
@@ -318,9 +327,11 @@ function createTerminalDrawer(root) {
     keysRow.hidden = !writable || !live;
     sink.disabled = !writable || !live;
     outputEl.classList.toggle("is-live", writable && live);
+    outputEl.classList.toggle("is-wrap", isShell(selected));
     closeBtn.hidden = !writable;
     liveBtn.hidden = !writable;
     liveBtn.textContent = live ? "Line input" : "Live keys";
+    syncSize();
   }
 
   // focusInput puts the caret in the command line (or the live terminal)
@@ -367,6 +378,54 @@ function createTerminalDrawer(root) {
   function setHeight(h) {
     height = applyHeight(h);
     try { localStorage.setItem(TERM_HEIGHT_KEY, String(height)); } catch {}
+    syncSize();
+  }
+
+  // Sizing: the columns and rows the output has room for, measured with a
+  // probe line in the output's own font.
+  const probe = el("span", { class: "term-drawer__probe", "aria-hidden": "true", text: "M".repeat(40) });
+  body.appendChild(probe); // not in the output: showScreen replaces its children
+  function gridSize() {
+    const cs = getComputedStyle(outputEl);
+    const charW = probe.getBoundingClientRect().width / 40;
+    const lineH = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.6;
+    const w = outputEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const h = outputEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (!(charW > 0) || !(w > 0)) return null;
+    return {
+      cols: Math.min(TERM_MAX_COLS, Math.floor(w / charW)),
+      rows: Math.min(TERM_MAX_ROWS, Math.max(TERM_MIN_ROWS, Math.floor(h / lineH))),
+    };
+  }
+
+  // syncSize tells the server how big this browser's view of the selected
+  // terminal is, so its lines wrap at the drawer's width (a phone's 50
+  // columns, a desktop's 200). Only the browser that is looking sends it,
+  // and only when the size changed since it last did: with two devices open
+  // the last one to look wins, and looking again (a tab click, the page
+  // coming back to the front) takes the size back. A terminal shown in the
+  // tmux window keeps its size (the answer says so) and scrolls sideways.
+  const sentSize = new Map(); // "<window>/<pane>" -> "<cols>x<rows>"
+  async function syncSize() {
+    if (!windowID || !available || !open || body.hidden || !selected || isShell(selected)) return;
+    const g = gen, pane = selected;
+    const size = gridSize();
+    if (!size || size.cols < 20) return;
+    const key = `${windowID}/${pane}`, want = `${size.cols}x${size.rows}`;
+    if (sentSize.get(key) === want) return;
+    sentSize.set(key, want);
+    try {
+      const data = await call("POST", `${base()}/${pane}/size`, size);
+      if (g === gen && pane === selected && data.resized) refreshOutput();
+    } catch (err) {
+      sentSize.delete(key);
+      if (g === gen) setError(err.message);
+    }
+  }
+  let sizeTimer = null;
+  function syncSizeSoon() {
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(syncSize, TERM_SIZE_DEBOUNCE_MS);
   }
 
   handle.addEventListener("pointerdown", (e) => {
@@ -410,7 +469,7 @@ function createTerminalDrawer(root) {
 
   // A smaller window takes room back from the drawer; a larger one gives
   // the stored height back.
-  window.addEventListener("resize", () => { if (!body.hidden) applyHeight(height); });
+  window.addEventListener("resize", () => { if (!body.hidden) applyHeight(height); syncSizeSoon(); });
 
   function showScreen(screen) {
     lastScreen = screen;
@@ -677,7 +736,13 @@ function createTerminalDrawer(root) {
     if (open) { focusInput(); refreshOutput(); }
   });
 
-  document.addEventListener("visibilitychange", () => { refreshList(); refreshOutput(); });
+  document.addEventListener("visibilitychange", () => {
+    // Another device may have resized the terminal meanwhile: take it back.
+    if (document.visibilityState === "visible") sentSize.clear();
+    refreshList();
+    refreshOutput();
+    syncSizeSoon();
+  });
   setInterval(refreshList, TERM_LIST_MS);
   setInterval(refreshOutput, TERM_OUTPUT_MS);
 

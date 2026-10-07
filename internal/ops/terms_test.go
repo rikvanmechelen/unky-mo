@@ -51,6 +51,7 @@ func TestEnsureTermSessionCreatesAndConfigures(t *testing.T) {
 	tm.EXPECT().NewDetachedSession("mo-terms-x", "/ws/foo").Return("%9", nil)
 	tm.EXPECT().SetSessionOption("mo-terms-x", "key-table", "popup-keys").Return(nil)
 	tm.EXPECT().SetSessionOption("mo-terms-x", "mouse", "on").Return(nil)
+	tm.EXPECT().SetSessionOption("mo-terms-x", "default-size", "200x50").Return(nil)
 	tm.EXPECT().BindKey("popup-keys", "`", "detach-client").Return(nil)
 	tm.EXPECT().BindKey("popup-keys", gomock.Any(), gomock.Any(), gomock.Any()).Times(3)
 

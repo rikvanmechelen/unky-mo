@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"fmt"
 	"strings"
 
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
@@ -84,6 +85,8 @@ func EnsureTermSession(t TermSessionTmux, name, cwd string) (string, error) {
 		return "", err
 	}
 	_ = t.SetSessionOption(name, "mouse", "on")
+	// New windows (more terminals) start roomy too, not at tmux's 80x24.
+	_ = t.SetSessionOption(name, "default-size", fmt.Sprintf("%dx%d", ttmux.DetachedCols, ttmux.DetachedRows))
 	_ = t.BindKey("popup-keys", "`", "detach-client")
 	// Mouse bindings so the popup supports scroll and text selection.
 	// WheelUp enters copy-mode (auto-exits at bottom), WheelDown passes

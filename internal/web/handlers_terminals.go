@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
@@ -40,24 +41,29 @@ func (s *Server) windowRow(windowID string) (state.ProjectState, bool) {
 // address Claude's pane, the sidebar, or another window's panes. Writes
 // the error response and returns ok=false otherwise.
 func (s *Server) ownedTerminal(w http.ResponseWriter, r *http.Request) (string, bool) {
+	t, ok := s.ownedTerminalInfo(w, r)
+	return t.ID, ok
+}
+
+func (s *Server) ownedTerminalInfo(w http.ResponseWriter, r *http.Request) (ops.Terminal, bool) {
 	windowID, pane := r.PathValue("windowID"), r.PathValue("pane")
 	row, ok := s.windowRow(windowID)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no window %s", windowID))
-		return "", false
+		return ops.Terminal{}, false
 	}
 	terms, err := s.deps.Terminals.List(row)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
-		return "", false
+		return ops.Terminal{}, false
 	}
 	for _, t := range terms {
 		if t.ID == "%"+pane {
-			return t.ID, true
+			return t, true
 		}
 	}
 	writeError(w, http.StatusNotFound, fmt.Errorf("no terminal %s in window %s", pane, windowID))
-	return "", false
+	return ops.Terminal{}, false
 }
 
 func (s *Server) handleTerminals(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +257,45 @@ func (s *Server) handleTerminalInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{})
+}
+
+// Bounds for a terminal's size: below the minimum a shell is unusable, above
+// the maximum is a typo or abuse (every capture and scrollback grows with it).
+const (
+	minTermCols, maxTermCols = 20, 400
+	minTermRows, maxTermRows = 5, 200
+)
+
+// handleTerminalSize sizes a parked terminal to the browser's view of it,
+// so lines wrap at the width the drawer actually has (a phone's, say).
+// A terminal shown in the tmux window is the user's layout and isn't
+// resized: the answer says so, and the browser scrolls it sideways instead.
+func (s *Server) handleTerminalSize(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.ownedTerminalInfo(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Cols int `json:"cols"`
+		Rows int `json:"rows"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("bad size: %w", err))
+		return
+	}
+	if req.Cols < minTermCols || req.Cols > maxTermCols || req.Rows < minTermRows || req.Rows > maxTermRows {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("size must be %d-%d columns by %d-%d rows", minTermCols, maxTermCols, minTermRows, maxTermRows))
+		return
+	}
+	if t.Visible {
+		writeJSON(w, map[string]bool{"resized": false})
+		return
+	}
+	if err := s.deps.Terminals.Resize(t.ID, req.Cols, req.Rows); err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"resized": true})
 }
 
 func (s *Server) handleTerminalInterrupt(w http.ResponseWriter, r *http.Request) {

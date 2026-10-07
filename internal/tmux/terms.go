@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -93,6 +94,23 @@ func (c *Client) CapturePane(paneID string, lines int) (string, error) {
 		return "", fmt.Errorf("capture-pane: %s", strings.TrimSpace(string(out)))
 	}
 	return strings.TrimRight(string(out), "\n"), nil
+}
+
+// ResizeParkedPane sizes the window of a pane parked in a mo-terms session
+// to cols x rows, for mo web's terminal view to match its browser. Only for
+// parked panes: nothing is attached to them, so no one's layout moves. The
+// resize pins the window to a manual size; handing it back to "latest"
+// right away lets the popup resize it again when it attaches. The size
+// stays until something resizes it.
+func (c *Client) ResizeParkedPane(paneID string, cols, rows int) error {
+	out, err := c.tmuxCmd(
+		"resize-window", "-t", paneID, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows), ";",
+		"set-option", "-w", "-t", paneID, "window-size", "latest",
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("resize-window: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // Screen is a pane's scrollback and screen with its colours, plus where
