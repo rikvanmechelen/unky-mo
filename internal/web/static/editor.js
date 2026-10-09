@@ -14,13 +14,25 @@
 // Claude's edit. Unsaved edits are kept as drafts in localStorage, so
 // switching sessions or reloading the page doesn't lose them.
 //
+// A "note" tab is a scratch note: plain text kept per window in
+// localStorage, never written to the checkout. Ctrl/Cmd+W (or Alt+W) closes
+// the active file, diff or note tab, Ctrl/Cmd+T (Alt+T) opens a new note and
+// Ctrl/Cmd+Shift+T (Alt+Shift+T) reopens the last closed tab, from a
+// per-window history; Chat and Overview never close. See tabs-model.js for
+// why the Alt keys are there too.
+//
 // CodeMirror is the vendored bundle's window.CM (vendor/codemirror.js,
 // rebuilt with `make codemirror`); el() comes from common.js, showDialog
-// from actions.js, createReview from review.js.
+// from actions.js, createReview from review.js, the tab helpers from
+// tabs-model.js.
 
 const EDITOR_POLL_MS = 3000;
 const EDITOR_TABS_KEY = "mo.editorTabs.";
 const EDITOR_DRAFT_KEY = "mo.editorDraft.";
+const EDITOR_NOTE_KEY = "mo.editorNote.";
+const EDITOR_CLOSED_KEY = "mo.editorClosed.";
+const NOTE_ID_RE = /^[a-z0-9]{1,16}$/;
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || "");
 const DRAFT_SAVE_MS = 400;
 const QUICK_OPEN_LIMIT = 50;
 const DIFF_SPLIT_MIN_WIDTH = 760; // px of editor pane for a side-by-side diff (two ~50-column sides)
@@ -180,7 +192,7 @@ function loadSavedTabs(windowID) {
     return {
       tabs: saved.tabs.filter((t) => t && typeof t.path === "string" &&
         (t.kind === "file" || isDiffKind(t.kind) || (t.kind === "commit" && COMMIT_RE.test(t.hash)) || (t.kind === "range" && RANGE_RE.test(t.hash)) ||
-        (t.kind === "sdiff" && (!t.hash || RANGE_RE.test(t.hash))))),
+        (t.kind === "sdiff" && (!t.hash || RANGE_RE.test(t.hash))) || (t.kind === "note" && NOTE_ID_RE.test(t.hash)))),
       active: saved.active,
     };
   }
@@ -194,7 +206,8 @@ function clockTime() {
 
 // createEditorTabs builds the tab strip. Without a chatPanel (the reviewer
 // view) there's no Chat tab and the Overview is the home tab.
-function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = () => ({ kind: "diff" }), onShowInOverview }) {
+// onUseNote, when given, puts a scratch note's text in the message box.
+function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = () => ({ kind: "diff" }), onShowInOverview, onUseNote }) {
   let windowID = null; // the target's storage key (a window id, or "branch:…")
   let api = ""; // the target's API prefix, e.g. /api/sessions/@3
   let available = false;
@@ -210,15 +223,19 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
   let active = null; // a tab, or null for the chat (or overview) tab
   let overviewShown = false; // the pinned Overview tab is showing
   let gen = 0; // bumped on window switch; stale responses are dropped
+  let closed = []; // the window's closed tabs, newest last (tabs-model.js)
 
   const stripTabs = el("div", { class: "editor-tabs__list", role: "tablist" });
   const reviewBtn = el("button", { class: "editor-tabs__review", type: "button", title: "Your line comments for Claude", hidden: "" });
   const openBtn = el("button", { class: "editor-tabs__open", type: "button", title: "Open a file (Ctrl+P)", text: "Open file…" });
-  strip.replaceChildren(stripTabs, reviewBtn, openBtn);
+  const newBtn = el("button", { class: "editor-tabs__new", type: "button", text: "+",
+    title: `New note (${tabShortcutLabel("new", IS_MAC)}); reopen a closed tab with ${tabShortcutLabel("reopen", IS_MAC)}`, "aria-label": "New note" });
+  newBtn.addEventListener("click", () => newNote());
+  strip.replaceChildren(stripTabs, newBtn, reviewBtn, openBtn);
 
   const review = createReview({
     onChange(paths) {
-      for (const t of tabs) if (t.view && !t.deleted && !isFixedKind(t.kind) && paths.has(t.path)) review.apply(t.view, t.path);
+      for (const t of tabs) if (t.view && !t.deleted && !isFixedKind(t.kind) && t.kind !== "note" && paths.has(t.path)) review.apply(t.view, t.path);
       renderReviewBtn();
     },
     onSent: () => activate(null), // show the chat, where Claude answers
@@ -232,6 +249,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
 
   const fileURL = () => `${api}/file`;
   const draftKey = (tab) => EDITOR_DRAFT_KEY + windowID + "\u0000" + tab.key;
+  const noteKey = (id) => EDITOR_NOTE_KEY + windowID + "\u0000" + id;
 
   function save() {
     if (windowID) storageSet(EDITOR_TABS_KEY + windowID, { tabs: tabs.map((t) => ({ kind: t.kind, path: t.path, ...(t.hash ? { hash: t.hash } : {}) })), active: overviewShown ? "overview" : active ? active.key : null });
@@ -241,7 +259,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
     const items = [
       ...(chatPanel ? [{ tab: null, label: "Chat", title: "Conversation" }] : []),
       ...(overview ? [{ tab: null, pinned: "overview", label: "Overview", title: "The shape of this branch's change" }] : []),
-      ...tabs.map((t) => ({
+      ...tabs.map((t) => t.kind === "note" ? { tab: t, label: t.title, title: `Scratch note: ${t.title}` } : ({
         tab: t,
         label: (isDiffKind(t.kind) || t.kind === "range" ? "± " : t.kind === "commit" ? t.hash.slice(0, 7) + " " : "") + t.path.split("/").pop(),
         title: isDiffKind(t.kind) ? `Changes in ${t.path} against ${DIFF_BASE_LABEL[t.kind]}`
@@ -257,7 +275,8 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
       ]);
       btn.addEventListener("click", () => pinned ? showOverview() : activate(tab));
       if (!tab) return btn;
-      const close = el("span", { class: "editor-tab__close", role: "button", title: `Close ${tab.path}`, "aria-label": `Close ${tab.path}` }, [
+      const name = tab.kind === "note" ? tab.title : tab.path;
+      const close = el("span", { class: "editor-tab__close", role: "button", title: `Close ${name} (${tabShortcutLabel("close", IS_MAC)})`, "aria-label": `Close ${name}` }, [
         el("span", { class: "editor-tab__x", text: "×" }),
         el("span", { class: "editor-tab__dot", text: "●" }),
       ]);
@@ -279,7 +298,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
     renderStrip();
     save();
     if (tab) {
-      if (tab.kind !== "file" && tab.view && tab.layout !== diffLayout(tab)) rebuildView(tab);
+      if (tab.kind !== "file" && tab.kind !== "note" && tab.view && tab.layout !== diffLayout(tab)) rebuildView(tab);
       load(tab);
     }
   }
@@ -301,9 +320,11 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
     return b;
   }
 
-  const tabKey = (kind, path, hash) => isFixedKind(kind) || kind === "sdiff" ? `${kind}:${hash || ""}:${path}` : kind + ":" + path;
+  const tabKey = (kind, path, hash) => kind === "note" ? "note:" + hash
+    : isFixedKind(kind) || kind === "sdiff" ? `${kind}:${hash || ""}:${path}` : kind + ":" + path;
 
   function newTab(kind, path, hash) {
+    if (kind === "note") return newNoteTab(hash);
     const tab = {
       kind, path, hash, key: tabKey(kind, path, hash), before: null, after: null, loaded: false,
       view: null, merge: null, layout: null, base: null, etag: null, conflict: null,
@@ -358,6 +379,88 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
     return tab;
   }
 
+  // newNoteTab builds a scratch note's tab; its editor is made on first
+  // show, from the text stored under id.
+  function newNoteTab(id) {
+    const tab = {
+      kind: "note", path: "", hash: id, key: tabKey("note", "", id), title: noteTitle(storageGet(noteKey(id))),
+      view: null, dirty: false, draftTimer: 0, pendingLine: 0,
+    };
+    tab.status = el("span", { class: "editor-pane__status", text: "Kept in this browser, never saved to the checkout" });
+    const buttons = [];
+    if (onUseNote) {
+      buttons.push(barButton("Add to message", () => {
+        const text = tab.view ? docText(tab).trim() : "";
+        if (text) onUseNote(text);
+      }));
+    }
+    tab.host = el("div", { class: "editor-pane__host" });
+    tab.wrap = el("div", { class: "editor-pane" }, [
+      el("div", { class: "editor-pane__bar" }, [
+        el("span", { class: "editor-pane__path" }, [el("bdi", { text: "Scratch note" })]),
+        tab.status,
+        el("span", { class: "editor-pane__actions" }, buttons),
+      ]),
+      tab.host,
+    ]);
+    tab.wrap.hidden = true;
+    editorPanel.appendChild(tab.wrap);
+    return tab;
+  }
+
+  function buildNoteView(tab) {
+    if (tab.view) return;
+    const text = storageGet(noteKey(tab.hash));
+    tab.view = new CM.EditorView({
+      parent: tab.host,
+      state: CM.EditorState.create({
+        doc: typeof text === "string" ? text : "",
+        extensions: [...editorExtensions("", { onSave: () => {}, onChange: () => noteChanged(tab) }), CM.EditorView.lineWrapping],
+      }),
+    });
+  }
+
+  function noteChanged(tab) {
+    scheduleDraft(tab);
+    const title = noteTitle(docText(tab));
+    if (title !== tab.title) { tab.title = title; renderStrip(); }
+  }
+
+  function writeNote(tab) {
+    if (!windowID || !tabs.includes(tab) || !tab.view) return;
+    const text = docText(tab);
+    storageSet(noteKey(tab.hash), text ? text : null);
+  }
+
+  // insertTab puts a new tab right after the active one, like most editors.
+  function insertTab(tab) {
+    const at = active ? tabs.indexOf(active) + 1 : tabs.length;
+    tabs.splice(at, 0, tab);
+  }
+
+  // newNote opens an empty scratch note (text, when reopening one).
+  function newNote(text) {
+    if (!windowID) return;
+    let id;
+    do id = Math.random().toString(36).slice(2, 10) || "0"; while (tabs.some((t) => t.hash === id));
+    if (text) storageSet(noteKey(id), text);
+    const tab = newNoteTab(id);
+    insertTab(tab);
+    activate(tab);
+    tab.view?.focus();
+  }
+
+  // reopenClosed brings back the last closed tab that isn't open again.
+  function reopenClosed() {
+    if (!windowID) return;
+    const { entry, rest } = popClosed(closed, (e) => e.kind !== "note" && tabs.some((t) => t.key === tabKey(e.kind, e.path, e.hash)));
+    closed = rest;
+    storageSet(EDITOR_CLOSED_KEY + windowID, closed.length ? closed : null);
+    if (!entry) return;
+    if (entry.kind === "note") newNote(entry.text);
+    else open(entry.path, entry.kind, entry.hash);
+  }
+
   // open shows (creating if needed) the tab for path: kind "file" is the
   // file itself, "diff" its changes against HEAD, "bdiff" against the
   // branch's merge base, "commit" its changes in commit hash, "range" its
@@ -368,9 +471,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
     let tab = tabs.find((t) => t.key === key);
     if (!tab) {
       tab = newTab(kind, path, hash);
-      // New tabs open right after the active one, like most editors.
-      const at = active ? tabs.indexOf(active) + 1 : tabs.length;
-      tabs.splice(at, 0, tab);
+      insertTab(tab);
     }
     activate(tab);
   }
@@ -383,10 +484,14 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
     const line = v ? v.state.doc.lineAt(v.state.selection.main.head).number : 0;
     const target = to === "file" ? { kind: "file" } : diffKind(tab.path) || { kind: "diff" };
     reveal(tab.path, line > 1 ? line : undefined, target.kind, target.hash);
-    if (!tab.dirty && active !== tab && tabs.includes(tab)) closeTab(tab);
+    if (!tab.dirty && active !== tab && tabs.includes(tab)) closeTab(tab, { remember: false });
   }
 
-  async function closeTab(tab) {
+  // closeTab closes a tab, asking first if it has unsaved edits, and adds
+  // it to the closed-tab history unless remember is false (a tab replaced
+  // by another view of the same file). A note takes its text along; an
+  // empty one isn't remembered.
+  async function closeTab(tab, { remember = true } = {}) {
     if (tab.dirty) {
       const ok = await showDialog({
         title: "Discard unsaved changes?",
@@ -396,13 +501,26 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
       if (!ok || !tabs.includes(tab)) return;
     }
     clearTimeout(tab.draftTimer);
-    storageSet(draftKey(tab), null);
+    if (tab.kind === "note") {
+      const text = tab.view ? docText(tab) : storageGet(noteKey(tab.hash)) || "";
+      storageSet(noteKey(tab.hash), null);
+      if (remember && text.trim()) rememberClosed({ kind: "note", path: "", hash: tab.hash, text });
+    } else {
+      storageSet(draftKey(tab), null);
+      if (remember) rememberClosed({ kind: tab.kind, path: tab.path, ...(tab.hash ? { hash: tab.hash } : {}) });
+    }
     const i = tabs.indexOf(tab);
     tabs.splice(i, 1);
     destroyView(tab);
     tab.wrap.remove();
     if (active === tab) activate(tabs[i] || tabs[i - 1] || null);
     else { renderStrip(); save(); }
+  }
+
+  function rememberClosed(entry) {
+    closed = pushClosed(closed, entry);
+    // Too big to store (a long note): kept for this page only.
+    storageSet(EDITOR_CLOSED_KEY + windowID, closed);
   }
 
   function destroyView(tab) {
@@ -464,6 +582,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
   function writeDraft(tab) {
     clearTimeout(tab.draftTimer);
     tab.draftTimer = 0;
+    if (tab.kind === "note") { writeNote(tab); return; }
     // Without an editor (not loaded yet, or showing a note) there's nothing
     // to compare against: leave any stored draft for when it loads.
     if (!windowID || !tabs.includes(tab) || !tab.view) return;
@@ -733,6 +852,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
 
   // load fetches the tab's file (and, for a diff tab, HEAD's version).
   async function load(tab) {
+    if (tab.kind === "note") { buildNoteView(tab); return; }
     if (isFixedKind(tab.kind) && available) return loadCommit(tab);
     if (!available || tab.loading || tab.saving) {
       if (!available && !tab.view) showNote(tab, "No live session.");
@@ -828,7 +948,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
   // edit started from; "Keep mine and save" passes the conflicting disk
   // version's hash to overwrite it deliberately.
   async function saveTab(tab, baseHash) {
-    if (!tab.view || tab.saving || tab.deleted || isFixedKind(tab.kind) || !windowID) return;
+    if (!tab.view || tab.saving || tab.deleted || isFixedKind(tab.kind) || tab.kind === "note" || !windowID) return;
     if (!tab.dirty && !tab.conflict) return;
     if (tab.mixedEol || tab.readOnly) return;
     const g = gen;
@@ -1018,6 +1138,19 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
   qoDialog.addEventListener("click", (e) => { if (e.target === qoDialog) qoDialog.close(); }); // backdrop
   openBtn.addEventListener("click", showQuickOpen);
   document.addEventListener("keydown", (e) => {
+    const action = tabShortcut(e, IS_MAC);
+    // A key the focused element already handled (the terminal's live keys,
+    // CodeMirror) stays its own, and so does anything under a dialog.
+    if (action && windowID && !e.defaultPrevented && !document.querySelector("dialog[open]")) {
+      // Always taken, even on the Chat or Overview tab, which never close:
+      // where the browser lets the page see Ctrl/Cmd+W, it would otherwise
+      // close the whole window.
+      e.preventDefault();
+      if (action === "close") { if (active) closeTab(active); }
+      else if (action === "new") newNote();
+      else reopenClosed();
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
     const key = e.key.toLowerCase();
     if (key === "p") {
@@ -1045,7 +1178,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (active && active.kind !== "file" && active.view && active.layout !== diffLayout(active)) rebuildView(active);
+      if (active && active.kind !== "file" && active.kind !== "note" && active.view && active.layout !== diffLayout(active)) rebuildView(active);
     }, 150);
   });
 
@@ -1085,6 +1218,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
       if (rvDialog.open) rvDialog.close();
       review.setWindow(id, sendTo);
       renderReviewBtn();
+      closed = id ? (Array.isArray(storageGet(EDITOR_CLOSED_KEY + id)) ? storageGet(EDITOR_CLOSED_KEY + id) : []) : [];
       const saved = id ? loadSavedTabs(id) : { tabs: [], active: null };
       for (const t of saved.tabs) tabs.push(newTab(t.kind, t.path, t.hash));
       activate(tabs.find((t) => t.key === saved.active) || null);
@@ -1097,7 +1231,7 @@ function createEditorTabs({ strip, chatPanel, editorPanel, overview, diffKind = 
       available = ok;
       openBtn.disabled = !ok;
       if (ok && active) load(active);
-      if (!ok && active && !active.view) showNote(active, "No live session.");
+      if (!ok && active && active.kind !== "note" && !active.view) showNote(active, "No live session.");
     },
   };
 }

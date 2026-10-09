@@ -1125,6 +1125,7 @@ function main() {
     overview,
     diffKind: () => overview.diffKind(),
     onShowInOverview: (path) => { editor.showOverview(); overview.showFile(path); },
+    onUseNote: insertMention,
   });
   const rails = createRails(shell);
   // Selecting something in the Overview (e.g. a Review row) shows it in the
