@@ -490,12 +490,14 @@ body.is-resizing-rail { cursor: col-resize; user-select: none; }
 .chat-shell:not(.has-files) .rail-tab--right { display: none; }
 /* An open rail's tab only shows while the pointer is over the rail (or the
    tab), or keyboard focus is in it; a hidden rail's tab always shows. On
-   touch screens, with no hover, it always shows. */
+   touch screens, with no hover, it always shows. The faded tab stays
+   hoverable: it sits in the main column, so the pointer leaves the rail on
+   its way to the tab, and only the tab's own :hover keeps it shown. */
 @media (hover: hover) {
   .rail-tab { transition: opacity 120ms linear; }
   .chat-shell:not(.hide-nav):not(.overlay-nav):not(:has(.chat-nav:hover, .chat-nav :focus-visible, .rail-tab--left:hover, .rail-tab--left:focus-visible)) .rail-tab--left,
   .chat-shell:not(.hide-files):not(.overlay-files):not(:has(.files-pane:hover, .files-pane :focus-visible, .rail-tab--right:hover, .rail-tab--right:focus-visible)) .rail-tab--right {
-    opacity: 0; pointer-events: none;
+    opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) { .chat-shell, .rail-tab, .chat-shell > .chat-nav, .chat-shell > .files-pane { transition: none !important; } }
