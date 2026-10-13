@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/tmux"
 	mock_web "github.com/rvanmech/unky-mo/internal/web/mocks"
 	"go.uber.org/mock/gomock"
 )
@@ -250,11 +252,13 @@ func TestLaunchModeSibling(t *testing.T) {
 	}
 }
 
-func TestLaunchOccupiedWindowWithoutSessionOffersReplaceOrSibling(t *testing.T) {
-	// Window exists but the state file doesn't know its session yet (e.g.
-	// launched a second ago) — can't offer "switch".
+func TestLaunchOccupiedWindowWithoutSessionOffersToOpenIt(t *testing.T) {
+	// Window exists but the state file doesn't know its session: it may have
+	// just launched, or be stopped on a prompt (trusting the folder). The
+	// browser can open it, where the chat view shows what it waits on.
 	f := newSessionFixture(t)
 	f.sessions.EXPECT().WindowExists("alpha").Return(true)
+	f.sessions.EXPECT().ListWindows().Return([]tmux.Window{{ID: "@0", Name: "fish"}, {ID: "@9", Name: "alpha", InstanceID: "x"}}, nil)
 
 	rec := f.do(http.MethodPost, "/api/projects/alpha/sessions", `{"branch":"main"}`)
 	if rec.Code != http.StatusConflict {
@@ -262,7 +266,26 @@ func TestLaunchOccupiedWindowWithoutSessionOffersReplaceOrSibling(t *testing.T) 
 	}
 	var got conflictResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if strings.Join(got.Choices, ",") != "replace,sibling" || got.Primary != nil {
+	if strings.Join(got.Choices, ",") != "open,replace,sibling" || got.Primary != nil ||
+		got.Starting == nil || got.Starting.WindowID != "@9" || got.Starting.WindowName != "alpha" {
+		t.Fatalf("conflict: %+v", got)
+	}
+}
+
+func TestLaunchOccupiedWindowWithoutSessionAndUnlistedOffersReplaceOrSibling(t *testing.T) {
+	// The window can't be found to open (listing failed): no "open" or
+	// "switch" to offer.
+	f := newSessionFixture(t)
+	f.sessions.EXPECT().WindowExists("alpha").Return(true)
+	f.sessions.EXPECT().ListWindows().Return(nil, errors.New("tmux gone"))
+
+	rec := f.do(http.MethodPost, "/api/projects/alpha/sessions", `{"branch":"main"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: want 409, got %d", rec.Code)
+	}
+	var got conflictResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if strings.Join(got.Choices, ",") != "replace,sibling" || got.Primary != nil || got.Starting != nil {
 		t.Fatalf("conflict: %+v", got)
 	}
 }

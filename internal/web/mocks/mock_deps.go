@@ -497,6 +497,21 @@ func (mr *MockSessionOpsMockRecorder) LiftSessionToWorktree(p any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LiftSessionToWorktree", reflect.TypeOf((*MockSessionOps)(nil).LiftSessionToWorktree), p)
 }
 
+// ListWindows mocks base method.
+func (m *MockSessionOps) ListWindows() ([]tmux.Window, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListWindows")
+	ret0, _ := ret[0].([]tmux.Window)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListWindows indicates an expected call of ListWindows.
+func (mr *MockSessionOpsMockRecorder) ListWindows() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWindows", reflect.TypeOf((*MockSessionOps)(nil).ListWindows))
+}
+
 // LiveSessions mocks base method.
 func (m *MockSessionOps) LiveSessions() ([]claude.Session, error) {
 	m.ctrl.T.Helper()

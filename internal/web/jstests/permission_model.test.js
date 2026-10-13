@@ -66,6 +66,9 @@ test("choiceTone on the probed labels", () => {
     "Tell Claude what to change": "allow",
     "No": "deny",
     "No, and tell Claude what to do differently (esc)": "deny",
+    // The folder trust dialog (startup banner) uses the same buttons.
+    "Yes, I trust this folder": "allow",
+    "No, exit": "deny",
   };
   for (const [label, want] of Object.entries(cases)) assert.equal(choiceTone(label), want, label);
 });

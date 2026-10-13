@@ -3,11 +3,16 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/tmux"
+	mock_web "github.com/rvanmech/unky-mo/internal/web/mocks"
+	"go.uber.org/mock/gomock"
 )
 
 func nrow(window, session, status string) state.ProjectState {
@@ -179,14 +184,14 @@ func TestPushMessageFor(t *testing.T) {
 		ev          notifyEvent
 		title, body string
 	}{
-		{"question", notifyEvent{"input", q}, "unky-mo needs you", "Which storage backend?"},
-		{"bash", notifyEvent{"input", withPending(nrow("@3", "s", "permission"), "Bash", `{"command":"rm -rf build","description":"clean"}`)}, "unky-mo needs permission", "rm -rf build"},
-		{"edit", notifyEvent{"input", withPending(nrow("@3", "s", "permission"), "Edit", `{"file_path":"/repo/internal/web/notifier.go"}`)}, "unky-mo needs permission", "Edit notifier.go"},
-		{"plan", notifyEvent{"input", withPending(nrow("@3", "s", "permission"), "ExitPlanMode", `{"plan":"# x"}`)}, "unky-mo needs permission", "Approve the plan"},
-		{"fetch", notifyEvent{"input", withPending(nrow("@3", "s", "permission"), "WebFetch", `{"url":"https://go.dev/doc"}`)}, "unky-mo needs permission", "Fetch go.dev"},
-		{"mcp", notifyEvent{"input", withPending(nrow("@3", "s", "permission"), "mcp__x__y", `{}`)}, "unky-mo needs permission", "mcp__x__y"},
-		{"unknown question", notifyEvent{"input", nrow("@3", "s", "question")}, "unky-mo needs you", "Waiting for your answer"},
-		{"unknown permission", notifyEvent{"input", nrow("@3", "s", "permission")}, "unky-mo needs permission", "Waiting for permission"},
+		{"question", notifyEvent{Kind: "input", Row: q}, "unky-mo needs you", "Which storage backend?"},
+		{"bash", notifyEvent{Kind: "input", Row: withPending(nrow("@3", "s", "permission"), "Bash", `{"command":"rm -rf build","description":"clean"}`)}, "unky-mo needs permission", "rm -rf build"},
+		{"edit", notifyEvent{Kind: "input", Row: withPending(nrow("@3", "s", "permission"), "Edit", `{"file_path":"/repo/internal/web/notifier.go"}`)}, "unky-mo needs permission", "Edit notifier.go"},
+		{"plan", notifyEvent{Kind: "input", Row: withPending(nrow("@3", "s", "permission"), "ExitPlanMode", `{"plan":"# x"}`)}, "unky-mo needs permission", "Approve the plan"},
+		{"fetch", notifyEvent{Kind: "input", Row: withPending(nrow("@3", "s", "permission"), "WebFetch", `{"url":"https://go.dev/doc"}`)}, "unky-mo needs permission", "Fetch go.dev"},
+		{"mcp", notifyEvent{Kind: "input", Row: withPending(nrow("@3", "s", "permission"), "mcp__x__y", `{}`)}, "unky-mo needs permission", "mcp__x__y"},
+		{"unknown question", notifyEvent{Kind: "input", Row: nrow("@3", "s", "question")}, "unky-mo needs you", "Waiting for your answer"},
+		{"unknown permission", notifyEvent{Kind: "input", Row: nrow("@3", "s", "permission")}, "unky-mo needs permission", "Waiting for permission"},
 	}
 	for _, c := range cases {
 		msg := pushMessageFor(c.ev)
@@ -200,12 +205,12 @@ func TestPushMessageFor(t *testing.T) {
 
 	wt := nrow("@4", "s", "idle")
 	wt.Name, wt.Parent, wt.WindowName, wt.Branch = "@small-tasks", "unky-mo", "unky-mo@small-tasks", "small-tasks"
-	if msg := pushMessageFor(notifyEvent{"done", wt}); msg.Title != "unky-mo @small-tasks is done" || msg.Body != "unky-mo@small-tasks · small-tasks" {
+	if msg := pushMessageFor(notifyEvent{Kind: "done", Row: wt}); msg.Title != "unky-mo @small-tasks is done" || msg.Body != "unky-mo@small-tasks · small-tasks" {
 		t.Errorf("worktree done = %q / %q", msg.Title, msg.Body)
 	}
 
 	long := withPending(nrow("@3", "s", "permission"), "Bash", `{"command":"`+strings.Repeat("é", 300)+`"}`)
-	if body := pushMessageFor(notifyEvent{"input", long}).Body; len([]rune(body)) != maxNotifyBody || !strings.HasSuffix(body, "…") {
+	if body := pushMessageFor(notifyEvent{Kind: "input", Row: long}).Body; len([]rune(body)) != maxNotifyBody || !strings.HasSuffix(body, "…") {
 		t.Errorf("long body: %d chars", len([]rune(body)))
 	}
 }
@@ -289,5 +294,125 @@ func TestNotifyTickSendsToWantingDevices(t *testing.T) {
 	}
 	if len(sentTo) != 3 || !sentTo[watching.sub.Endpoint] {
 		t.Errorf("question after the heartbeat expired went to %v", sentTo)
+	}
+}
+
+func blockedAt(id, name string) blockedDialog {
+	return blockedDialog{
+		window: tmux.Window{ID: id, Name: name, InstanceID: "x", CWD: "/ws/" + name},
+		view:   parseStartupDialog(startupFixtureText("trust-plain.txt")),
+	}
+}
+
+func startupFixtureText(name string) string {
+	b, err := os.ReadFile(filepath.Join("testdata", "startup", name))
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+func TestNotifyTrackerBlockedWindow(t *testing.T) {
+	tr := newNotifyTracker()
+	other := blockedAt("@5", "other")
+
+	// Dialogs already up on the first look were there before mo web started.
+	if evs := tr.observeBlocked([]blockedDialog{other}); len(evs) != 0 {
+		t.Fatalf("priming look notified: %s", kinds(evs))
+	}
+	if evs := tr.observeBlocked([]blockedDialog{other}); len(evs) != 0 {
+		t.Fatalf("a primed dialog notified later: %s", kinds(evs))
+	}
+
+	// A new one needs two looks in a row, then notifies once.
+	b := blockedAt("@9", "shop-api")
+	if evs := tr.observeBlocked([]blockedDialog{other, b}); len(evs) != 0 {
+		t.Fatalf("notified on the first look: %s", kinds(evs))
+	}
+	evs := tr.observeBlocked([]blockedDialog{other, b})
+	if kinds(evs) != "input:@9" || evs[0].Folder != "/home/dev/work/scratch" || evs[0].Row.WindowName != "shop-api" {
+		t.Fatalf("second look = %+v", evs)
+	}
+	if evs := tr.observeBlocked([]blockedDialog{other, b}); len(evs) != 0 {
+		t.Fatalf("notified again for the same dialog: %s", kinds(evs))
+	}
+
+	// Answered (gone), then asking again is a new notification.
+	tr.observeBlocked([]blockedDialog{other})
+	tr.observeBlocked([]blockedDialog{other, b})
+	if got := kinds(tr.observeBlocked([]blockedDialog{other, b})); got != "input:@9" {
+		t.Errorf("a dialog that came back = %q", got)
+	}
+
+	// A different folder in the same window is a different dialog.
+	b2 := b
+	b2.view.folder = "/home/dev/work/elsewhere"
+	tr.observeBlocked([]blockedDialog{other, b2})
+	if got := kinds(tr.observeBlocked([]blockedDialog{other, b2})); got != "input:@9" {
+		t.Errorf("a new dialog in the same window = %q", got)
+	}
+}
+
+func TestBlockedDue(t *testing.T) {
+	tr := newNotifyTracker()
+	now := time.Unix(1_800_000_000, 0)
+	if !tr.blockedDue(now) || tr.blockedDue(now.Add(time.Second)) || !tr.blockedDue(now.Add(blockedEvery)) {
+		t.Error("the panes should be read once per blockedEvery")
+	}
+}
+
+func TestPushMessageForBlockedWindow(t *testing.T) {
+	row := state.ProjectState{Name: "shop-api", WindowName: "shop-api", WindowID: "@9", Status: "startup"}
+	msg := pushMessageFor(notifyEvent{Kind: "input", Row: row, Folder: "/home/dev/work/shop-api"})
+	if msg.Title != "shop-api needs you" || msg.Body != "Trust this folder? /home/dev/work/shop-api" ||
+		msg.URL != "/chat?window=%409&new=1" || msg.Tag != "mo-@9" || msg.Window != "@9" || msg.Kind != "input" {
+		t.Errorf("%+v", msg)
+	}
+}
+
+func TestNotifyTickBlockedWindow(t *testing.T) {
+	_, push, fake, clock, _ := newPushTestServer(t)
+	ctrl := gomock.NewController(t)
+	sess := mock_web.NewMockSessionOps(ctrl)
+	sess.EXPECT().ListWindows().Return([]tmux.Window{
+		{ID: "@0", Name: "fish"},                      // the TUI: not a mo launch
+		{ID: "@2", Name: "alpha", InstanceID: "a"},    // has a session
+		{ID: "@9", Name: "shop-api", InstanceID: "b"}, // launched, no session
+	}, nil).AnyTimes()
+	screen := "\n\n"
+	pane := mock_web.NewMockClaudePane(ctrl)
+	// Only the session-less window's pane is ever read.
+	pane.EXPECT().Capture("test:@9.0").DoAndReturn(func(string) (string, error) { return screen, nil }).AnyTimes()
+	st := &fixedState{st: &state.StateFile{Projects: []state.ProjectState{nrow("@2", "s2", "idle")}}}
+	srv := NewServer(Deps{Push: push, State: st, Sessions: sess, ClaudePane: pane}, 0, "test")
+
+	phone := newTestDevice(t, "https://fcm.googleapis.com/fcm/send/phone")
+	_ = push.Subscribe(phone.sub, PushEvents{Input: true}, "phone")
+	doneOnly := newTestDevice(t, "https://fcm.googleapis.com/fcm/send/other")
+	_ = push.Subscribe(doneOnly.sub, PushEvents{Done: true}, "other")
+
+	tr := newNotifyTracker()
+	tick := func() {
+		clock.t = clock.t.Add(blockedEvery)
+		<-srv.notifyTick(context.Background(), tr, clock.t)
+	}
+	tick() // nothing yet: primes
+	screen = startupFixtureText("trust-preapproved.txt")
+	tick()
+	if fake.count() != 0 {
+		t.Fatalf("sent on the first look of the dialog")
+	}
+	tick()
+	if fake.count() != 1 || fake.reqs[0].URL.String() != phone.sub.Endpoint {
+		t.Fatalf("sent %d, want 1 to the phone (not the done-only device)", fake.count())
+	}
+	m := phone.open(t, fake, 0)
+	if m.Title != "shop-api needs you" || !strings.Contains(m.Body, "Trust this folder?") || m.URL != "/chat?window=%409&new=1" {
+		t.Errorf("phone got %+v", m)
+	}
+	tick()
+	tick()
+	if fake.count() != 1 {
+		t.Errorf("the same dialog notified again (%d sends)", fake.count())
 	}
 }

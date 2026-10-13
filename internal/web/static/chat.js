@@ -1067,6 +1067,7 @@ function main() {
     onError: (msg) => { sendError.textContent = msg; },
   });
   const permissionBanner = document.getElementById("permission-banner");
+  const startupBanner = document.getElementById("startup-banner");
   const questionBanner = document.getElementById("question-banner");
   const chatNotice = document.getElementById("chat-notice");
   const stopBtn = document.getElementById("stop-btn");
@@ -1329,6 +1330,7 @@ function main() {
 
   function hideBanners() {
     stopPermission();
+    stopStartup();
     questionBanner.style.display = "none";
     questionKey = null;
   }
@@ -1406,6 +1408,82 @@ function main() {
     }
   }
 
+  // A window with no session yet may be stopped on a dialog Claude Code
+  // shows before it starts (trusting a new folder). Nothing else can see
+  // it, so /startup reads it from the pane while there's no session, and
+  // the banner shows its own rows like the permission banner does.
+  let startupKey = null;
+  let startupTimer = null;
+  let startupSeq = 0;
+  let startupBlocked = false;
+  let startupGaveUp = false; // not a window mo launched: stop asking
+
+  function stopStartup() {
+    if (startupTimer) clearInterval(startupTimer);
+    startupTimer = null;
+    startupSeq++;
+    startupKey = null;
+    startupBlocked = false;
+    startupBanner.style.display = "none";
+  }
+
+  function startStartup() {
+    if (startupTimer || startupGaveUp) return;
+    startupTimer = setInterval(fetchStartup, 1500);
+    fetchStartup();
+  }
+
+  async function fetchStartup() {
+    const seq = ++startupSeq;
+    const id = windowID;
+    try {
+      const res = await fetch(`/api/windows/${encodeURIComponent(id)}/startup`);
+      if (seq !== startupSeq || id !== windowID || !startupTimer) return;
+      if (res.status === 400 || res.status === 404) { startupGaveUp = true; stopStartup(); return; }
+      if (!res.ok) return;
+      const dialog = (await res.json()).dialog;
+      if (seq !== startupSeq || !startupTimer) return;
+      if (!dialog) {
+        startupBlocked = false;
+        startupKey = null;
+        startupBanner.style.display = "none";
+        return;
+      }
+      startupBlocked = true;
+      const key = JSON.stringify([id, dialog.sig]);
+      if (key !== startupKey) {
+        startupKey = key;
+        startupBanner.replaceChildren(renderPermissionBanner({ tool: "", input: null, dialog }, answerStartup));
+      }
+      startupBanner.style.display = "flex";
+      setNotice("Claude Code is waiting for your answer before it starts.");
+    } catch (err) {
+      // transient — keep the last banner
+    }
+  }
+
+  // answerStartup has the server press the row of the dialog it showed
+  // (startup.go). Resolves to "" or an error message for the banner.
+  async function answerStartup(answer) {
+    try {
+      const res = await fetch(`/api/windows/${encodeURIComponent(windowID)}/startup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(answer),
+      });
+      if (res.ok) {
+        // Rebuilt from the next poll if the dialog is still there.
+        setTimeout(() => { startupKey = null; fetchStartup(); }, 800);
+        return "";
+      }
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) startupKey = null;
+      return data.error || `request failed (${res.status})`;
+    } catch (err) {
+      return String(err);
+    }
+  }
+
   // answerQuestion has the server drive Claude Code's question dialog
   // (answer.go). Resolves to "" or an error message for the form.
   async function answerQuestion(questions, answers) {
@@ -1450,6 +1528,7 @@ function main() {
     openedAt = Date.now();
     everSeen = false;
     ended = false;
+    startupGaveUp = false;
     setPrompt("");
     attachments.clear();
     sendError.textContent = "";
@@ -1571,11 +1650,14 @@ function main() {
       const p = row && row.session_id ? row : null;
       if (!p) {
         if (everSeen) { markEnded(); return; }
-        if (!starting) setNotice("No session is running in this window.");
+        startStartup();
+        if (startupBlocked) setNotice("Claude Code is waiting for your answer before it starts.");
+        else if (!starting) setNotice("No session is running in this window.");
         else if (Date.now() - openedAt < STARTUP_GRACE_MS) setNotice("Starting session…");
         else setNotice("The session hasn't come up yet. It may be waiting on a prompt in tmux (for example, trusting a new folder).");
       } else {
         everSeen = true;
+        stopStartup();
         setNotice("");
       }
       // After the block above, so the poll that first sees the session

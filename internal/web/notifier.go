@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
 // doneMinActive is how long a turn must have run before its end notifies:
@@ -24,6 +25,10 @@ const doneMinActive = 15 * time.Second
 // restart doesn't notify.
 const notifyForget = 2 * time.Minute
 
+// blockedEvery is how often the notifier reads the panes of windows that
+// have no session yet, looking for a startup dialog.
+const blockedEvery = 2 * time.Second
+
 // maxNotifyBody bounds a notification's body text, in characters.
 const maxNotifyBody = 180
 
@@ -31,6 +36,9 @@ const maxNotifyBody = 180
 type notifyEvent struct {
 	Kind string // "input" or "done"
 	Row  state.ProjectState
+	// Folder is set for a window stopped on Claude Code's folder trust
+	// dialog: it has no session row, so Row only names the window.
+	Folder string
 }
 
 // observation is what the tracker compares between reads.
@@ -53,10 +61,77 @@ type trackedRow struct {
 type notifyTracker struct {
 	primed bool
 	rows   map[string]*trackedRow
+
+	blocked       map[string]*blockedSeen // by window id
+	blockedPrimed bool
+	lastBlocked   time.Time
 }
 
 func newNotifyTracker() *notifyTracker {
-	return &notifyTracker{rows: map[string]*trackedRow{}}
+	return &notifyTracker{rows: map[string]*trackedRow{}, blocked: map[string]*blockedSeen{}}
+}
+
+// blockedSeen is a startup dialog a window has shown for some consecutive
+// looks.
+type blockedSeen struct {
+	sig      string
+	looks    int
+	notified bool
+}
+
+// blockedDialog is a session-less window found on a startup dialog.
+type blockedDialog struct {
+	window tmux.Window
+	view   startupView
+}
+
+// blockedDue says whether it's time to look at the panes again.
+func (t *notifyTracker) blockedDue(now time.Time) bool {
+	if !t.lastBlocked.IsZero() && now.Sub(t.lastBlocked) < blockedEvery {
+		return false
+	}
+	t.lastBlocked = now
+	return true
+}
+
+// observeBlocked takes one look at the windows on a startup dialog. Like
+// observe, the first look only primes it and a dialog must show twice in a
+// row before it counts; each dialog notifies once, and a window whose dialog
+// goes (answered, or the session started) is forgotten.
+func (t *notifyTracker) observeBlocked(found []blockedDialog) []notifyEvent {
+	var events []notifyEvent
+	seen := map[string]bool{}
+	for _, b := range found {
+		id := b.window.ID
+		seen[id] = true
+		sig := b.view.sig()
+		bs := t.blocked[id]
+		if bs == nil || bs.sig != sig {
+			bs = &blockedSeen{sig: sig}
+			t.blocked[id] = bs
+		}
+		bs.looks++
+		if !t.blockedPrimed {
+			bs.notified = true // already up when mo web started
+		}
+		if bs.looks >= 2 && !bs.notified {
+			bs.notified = true
+			events = append(events, notifyEvent{
+				Kind: "input",
+				Row: state.ProjectState{
+					Name: b.window.Name, WindowName: b.window.Name, WindowID: id, Path: b.window.CWD, Status: "startup",
+				},
+				Folder: b.view.folder,
+			})
+		}
+	}
+	for id := range t.blocked {
+		if !seen[id] {
+			delete(t.blocked, id)
+		}
+	}
+	t.blockedPrimed = true
+	return events
 }
 
 func observe(row state.ProjectState) observation {
@@ -210,6 +285,10 @@ func pushMessageFor(ev notifyEvent) PushMessage {
 		Window: row.WindowID,
 	}
 	switch {
+	case ev.Folder != "":
+		msg.URL += "&new=1"
+		msg.Title = label + " needs you"
+		msg.Body = clip("Trust this folder? "+ev.Folder, maxNotifyBody)
 	case ev.Kind == "done":
 		msg.Title = label + " is done"
 		parts := []string{row.WindowName}
@@ -258,6 +337,11 @@ func (s *Server) notifyTick(ctx context.Context, tracker *notifyTracker, now tim
 		return done
 	}
 	events := tracker.observe(st.Projects, now)
+	if tracker.blockedDue(now) {
+		if found, ok := s.blockedDialogs(st); ok {
+			events = append(events, tracker.observeBlocked(found)...)
+		}
+	}
 	if len(events) == 0 {
 		close(done)
 		return done
@@ -300,6 +384,38 @@ func (s *Server) notifyTick(ctx context.Context, tracker *notifyTracker, now tim
 		close(done)
 	}()
 	return done
+}
+
+// blockedDialogs reads the pane of every window mo launched that has no
+// session yet, and returns those showing a startup dialog. ok is false when
+// the windows couldn't be listed, so the tracker keeps what it knew.
+func (s *Server) blockedDialogs(st *state.StateFile) (found []blockedDialog, ok bool) {
+	if s.deps.Sessions == nil || s.deps.ClaudePane == nil {
+		return nil, false
+	}
+	windows, err := s.deps.Sessions.ListWindows()
+	if err != nil {
+		return nil, false
+	}
+	hasSession := map[string]bool{}
+	for _, p := range st.Projects {
+		if p.SessionID != "" {
+			hasSession[p.WindowID] = true
+		}
+	}
+	for _, w := range windows {
+		if w.InstanceID == "" || hasSession[w.ID] || !windowIDPattern.MatchString(w.ID) {
+			continue
+		}
+		screen, err := s.deps.ClaudePane.Capture(s.claudeTarget(w.ID))
+		if err != nil {
+			continue
+		}
+		if v := parseStartupDialog(screen); v.found {
+			found = append(found, blockedDialog{window: w, view: v})
+		}
+	}
+	return found, true
 }
 
 // deviceName names a device in logs: its label, else its push host.

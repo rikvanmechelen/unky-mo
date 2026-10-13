@@ -151,6 +151,27 @@ type conflictResponse struct {
 	Error   string           `json:"error"`
 	Choices []string         `json:"choices"`
 	Primary *liveSessionView `json:"primary"`
+	// Starting is the primary window when it has no session yet.
+	Starting *startingWindowView `json:"starting,omitempty"`
+}
+
+type startingWindowView struct {
+	WindowID   string `json:"window_id"`
+	WindowName string `json:"window_name"`
+}
+
+// windowIDByName is the id of the window called name, or "".
+func (s *Server) windowIDByName(name string) string {
+	windows, err := s.deps.Sessions.ListWindows()
+	if err != nil {
+		return ""
+	}
+	for _, w := range windows {
+		if w.Name == name {
+			return w.ID
+		}
+	}
+	return ""
 }
 
 // handleLaunch starts or resumes a session on a project checkout. Same
@@ -259,7 +280,16 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			Error:   "a session is already running in " + primaryName,
 			Choices: []string{"replace", "sibling"},
 		}
-		if primary != nil {
+		if primary == nil {
+			// A window with no session behind it: still starting, or
+			// stopped on a prompt (e.g. trusting the folder). Offer to
+			// open it, where the chat view shows what it's waiting on.
+			if id := s.windowIDByName(primaryName); id != "" {
+				resp.Error = primaryName + " has a window that hasn't started a session yet; it may be waiting on a prompt"
+				resp.Choices = []string{"open", "replace", "sibling"}
+				resp.Starting = &startingWindowView{WindowID: id, WindowName: primaryName}
+			}
+		} else {
 			resp.Error = "a session is already running in " + primary.WindowName
 			resp.Choices = []string{"switch", "replace", "sibling"}
 			resp.Primary = &liveSessionView{

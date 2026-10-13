@@ -88,6 +88,9 @@ type SessionHistory interface {
 type SessionOps interface {
 	LiveSessions() ([]claude.Session, error)
 	WindowExists(name string) bool
+	// ListWindows lists the session's tmux windows with the ids and the
+	// @mo_instance_id mo gave the ones it launched.
+	ListWindows() ([]tmux.Window, error)
 	SwitchToWindow(target string) error
 	Launch(p ops.LaunchParams) (*ops.LaunchResult, error)
 	LaunchSibling(p ops.SiblingParams) (*ops.LaunchResult, error)
@@ -410,6 +413,7 @@ func NewSessionOps(ctx *ops.Context) SessionOps { return realSessionOps{ctx: ctx
 
 func (r realSessionOps) LiveSessions() ([]claude.Session, error) { return r.ctx.Claude.LiveSessions() }
 func (r realSessionOps) WindowExists(name string) bool           { return r.ctx.Tmux.WindowExists(name) }
+func (r realSessionOps) ListWindows() ([]tmux.Window, error)     { return r.ctx.Tmux.ListWindows() }
 func (r realSessionOps) SwitchToWindow(target string) error      { return r.ctx.Tmux.SwitchToWindow(target) }
 
 func (r realSessionOps) Launch(p ops.LaunchParams) (*ops.LaunchResult, error) {

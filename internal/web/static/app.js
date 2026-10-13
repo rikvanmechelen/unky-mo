@@ -68,6 +68,10 @@ async function startSession(projectName, body, button) {
           location.href = chatURL(data.primary.window_id, false);
           return;
         }
+        if (mode === "open" && data.starting) {
+          location.href = chatURL(data.starting.window_id, true);
+          return;
+        }
         body = { ...body, mode };
         continue;
       }
@@ -171,12 +175,13 @@ async function moveSession(projectName, branch, sessionID, isLive, reload) {
 function chooseMode(conflict) {
   const name = conflict.primary ? conflict.primary.window_name : "the primary window";
   const options = {
+    open:    { label: "Open it", value: "open" },
     switch:  { label: "Switch to running session", value: "switch" },
     replace: { label: `Replace it (stops ${name})`, value: "replace", danger: true },
     sibling: { label: "Run alongside", value: "sibling" },
   };
   return showDialog({
-    title: "A session is already running here",
+    title: conflict.starting ? "A session is still starting here" : "A session is already running here",
     text: conflict.error,
     actions: [...conflict.choices.map((c) => options[c]).filter(Boolean), { label: "Cancel" }],
   });
