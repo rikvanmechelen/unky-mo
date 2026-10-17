@@ -39,6 +39,9 @@ func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, key, p
 	for _, msg := range backlog {
 		fmt.Fprintf(w, "event: transcript\ndata: %s\n\n", msg)
 	}
+	// Tells the browser the stored history is complete, so it can render it
+	// in one go instead of line by line.
+	fmt.Fprint(w, "event: caught-up\ndata: {}\n\n")
 	_ = rc.Flush()
 
 	for {

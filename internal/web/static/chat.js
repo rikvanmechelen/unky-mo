@@ -687,9 +687,31 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     requestAnimationFrame(() => { transcriptScroll.scrollTop = transcriptScroll.scrollHeight; });
   }
   function withPin(fn) {
+    if (batching) { fn(); return; } // endBatch scrolls once; isPinned would force a layout per line
     const pinned = isPinned();
     fn();
     if (pinned) scrollToBottom();
+  }
+
+  // The backlog replays in one burst on every connect. Rendering it line by
+  // line (a forced layout and a scroll each) is what made a long session
+  // visibly "scroll down" on switch, so the replay is built with the
+  // transcript out of layout and shown, already at the bottom, once the
+  // server says it has caught up.
+  let batching = false;
+  let batchDirty = false; // a branch switch inside the batch: re-render once at the end
+  function beginBatch() {
+    batching = true;
+    batchDirty = false;
+    transcript.style.display = "none";
+  }
+  function endBatch() {
+    if (!batching) return;
+    if (batchDirty) rerenderActiveBranch();
+    batching = false;
+    transcript.style.display = "";
+    transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
+    scrollToBottom(); // again after layout settles (images, late highlights)
   }
 
   // appendBubble adds one transcript row. images (user rows only) are data:
@@ -1006,7 +1028,8 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     } else {
       // A new branch (edited/resubmitted prompt, rewind): show it instead.
       leaf = msg.uuid;
-      withPin(rerenderActiveBranch);
+      if (batching) batchDirty = true;
+      else withPin(rerenderActiveBranch);
     }
   }
 
@@ -1022,6 +1045,8 @@ function createTranscriptView(container, scrollEl, opts = {}) {
   }
 
   function clear() {
+    batching = false;
+    transcript.style.display = "";
     nodes.clear();
     messages = [];
     leaf = null;
@@ -1044,7 +1069,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     return true;
   }
 
-  return { onLine, clear, withPin, scrollToBottom, toolCards, reveal };
+  return { onLine, clear, beginBatch, endBatch, withPin, scrollToBottom, toolCards, reveal };
 }
 
 function main() {
@@ -1228,6 +1253,7 @@ function main() {
 
   function connectTranscript(sessionID) {
     clearTranscript();
+    view.beginBatch();
     streamSessionID = sessionID;
     bashChanges.setWindow(windowID);
     const stream = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
@@ -1238,6 +1264,10 @@ function main() {
       view.onLine(line);
       overview.onTranscriptLine(line);
       if (queueTracker.onLine(line)) renderQueue();
+    });
+    // Sent once the stored backlog is out; live lines follow.
+    stream.addEventListener("caught-up", () => {
+      if (es === stream) view.endBatch();
     });
   }
 
