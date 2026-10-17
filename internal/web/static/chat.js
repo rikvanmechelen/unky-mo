@@ -986,7 +986,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
 
   function onLine(msg) {
     if (!msg.uuid) {
-      if (msg.type !== "link") withPin(() => renderMessage(msg));
+      if (msg.type !== "link" && msg.type !== "queue-operation") withPin(() => renderMessage(msg));
       return;
     }
     if (nodes.has(msg.uuid)) return; // replayed by an EventSource reconnect
@@ -1198,7 +1198,28 @@ function main() {
   let everSeen = false;
   let ended = false;
 
+  // What Claude has queued, from the transcript's queue-operation lines. The
+  // transcript replays from its start on every connect, hence the resets.
+  const queueTracker = createQueueTracker();
+  const queueStrip = document.getElementById("queue-strip");
+  let queueStatus = "none";
+
+  function renderQueue() {
+    const items = queueStatus === "active" ? queueTracker.pending() : [];
+    const key = JSON.stringify(items);
+    if (queueStrip.dataset.key === key) return;
+    queueStrip.dataset.key = key;
+    queueStrip.hidden = items.length === 0;
+    queueStrip.replaceChildren(...(items.length ? [
+      el("span", { class: "queue-strip__label", text: items.length === 1 ? "Queued" : `Queued (${items.length})` }),
+      ...items.map((t) => el("span", { class: "queue-strip__item", text: t, title: t })),
+      el("span", { class: "queue-strip__hint", text: "Claude reads these after its current step" }),
+    ] : []));
+  }
+
   function clearTranscript() {
+    queueTracker.reset();
+    renderQueue();
     if (es) { es.close(); es = null; }
     streamSessionID = null;
     view.clear();
@@ -1216,6 +1237,7 @@ function main() {
       const line = JSON.parse(e.data);
       view.onLine(line);
       overview.onTranscriptLine(line);
+      if (queueTracker.onLine(line)) renderQueue();
     });
   }
 
@@ -1729,6 +1751,8 @@ function main() {
       }
       if (heldUntilStart) setNotice(`Starting session… your message will be sent when it's ready: “${heldUntilStart}”`);
 
+      queueStatus = status;
+      renderQueue();
       const cs = composerState({
         status, hasSession: !!p, name: p && p.name, pendingTool: p && p.pending_tool,
         waitingToStart, held: !!heldUntilStart,

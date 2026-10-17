@@ -55,7 +55,7 @@ type linkStub struct {
 // readNew reads any bytes appended to the file since the last call (or
 // since construction, for a fresh cursor), splits them into complete lines,
 // and returns the ones forwarded to the browser: user and assistant lines,
-// plus system lines whose subtype is in forwardedSystemSubtypes, verbatim;
+// plus system lines whose subtype is in forwardedSystemSubtypes and queue-operation lines, verbatim;
 // any other line with a uuid becomes a linkStub. An
 // incomplete trailing line (the
 // file was read mid-write) is held and prefixed onto the next call's data
@@ -121,6 +121,9 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 		switch {
 		case envelope.Type == "user" || envelope.Type == "assistant":
 		case envelope.Type == "system" && forwardedSystemSubtypes[envelope.Subtype]:
+		case envelope.Type == "queue-operation":
+			// Not part of the conversation (no uuid), but it's how the
+			// chat view knows what Claude has queued (queue-model.js).
 		case envelope.UUID != "":
 			// Not shown, but part of the conversation tree (attachments,
 			// hook summaries…): forward just its link so the browser can

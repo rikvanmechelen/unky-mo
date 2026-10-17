@@ -23,6 +23,7 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 	commandLine := `{"type":"system","subtype":"local_command","content":"<local-command-stdout>ok</local-command-stdout>","uuid":"s2"}`
 	// Lines that aren't shown but sit in the conversation tree come back as
 	// link stubs (uuid + parentUuid only); lines without a uuid are dropped.
+	queueLine := `{"type":"queue-operation","operation":"enqueue","content":"next, please"}`
 	dropped := []string{
 		`{"type":"mode","mode":"default"}`,
 		`{"type":"last-prompt","lastPrompt":"hi"}`,
@@ -33,7 +34,7 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 		`{"type":"system","subtype":"compact_boundary","uuid":"s4","parentUuid":null,"logicalParentUuid":"a1"}`,
 	}
 	content := userLine + "\n" + dropped[0] + "\n" + stubbed[0] + "\n" + assistantLine + "\n" + stubbed[1] + "\n" +
-		turnLine + "\n" + dropped[1] + "\n" + stubbed[2] + "\n" + commandLine + "\n"
+		turnLine + "\n" + queueLine + "\n" + dropped[1] + "\n" + stubbed[2] + "\n" + commandLine + "\n"
 	path := writeFile(t, dir, "session.jsonl", content)
 
 	c := newTranscriptCursor(path)
@@ -47,6 +48,7 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 		assistantLine,
 		`{"type":"link","uuid":"s3","parentUuid":"a1"}`,
 		turnLine,
+		queueLine,
 		`{"type":"link","uuid":"s4","parentUuid":null,"logicalParentUuid":"a1"}`,
 		commandLine,
 	}

@@ -1131,6 +1131,15 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
   cursor: pointer; text-align: left;
 }
 .composer__send:active { background: var(--ink-2); }
+.queue-strip {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  padding: 6px 16px; border-top: 1px solid var(--line); background: var(--surface);
+  font-size: 13px; color: var(--ink-2);
+}
+.queue-strip[hidden] { display: none; }
+.queue-strip__label { font-weight: 700; letter-spacing: var(--tracking-bold); color: var(--ink); }
+.queue-strip__item { max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-strip__hint { margin-left: auto; color: var(--ink-4); }
 .composer__send-now {
   flex: none; height: 48px; padding: 0 16px;
   border: 1px solid var(--ink); border-radius: 0; background: var(--paper); color: var(--ink);

@@ -37,6 +37,54 @@ function composerState(c) {
   return { canSend, canSendNow: active && !c.waitingToStart, label, placeholder };
 }
 
+// A queue-operation line is how Claude Code's JSONL records its message
+// queue (probed on 2.1.302):
+//   enqueue  {content}                 a message joins the queue
+//   remove   {content, reason}         read mid-turn ("absorbed_mid_turn")
+//   dequeue  {}                        the oldest entry became a new turn
+//   popAll   {content}                 pulled back into the input box (once
+//                                      per message)
+// Background-task notifications and agent messages travel through the same
+// queue; they aren't the user's messages.
+const SYSTEM_QUEUE_ENTRY = /^\s*<(task-notification|agent-message)\b/;
+
+// createQueueTracker folds queue-operation lines, in file order, into the
+// user messages still waiting. The transcript replays from its start on
+// every (re)connect, so callers reset() first.
+function createQueueTracker() {
+  let items = []; // {content, system}, oldest first
+  const dropFirst = (content) => {
+    const i = items.findIndex((it) => it.content === content);
+    if (i >= 0) items.splice(i, 1);
+  };
+  return {
+    reset() { items = []; },
+    // Returns true when the pending list may have changed.
+    onLine(msg) {
+      if (!msg || msg.type !== "queue-operation") return false;
+      const content = typeof msg.content === "string" ? msg.content : null;
+      switch (msg.operation) {
+        case "enqueue":
+          if (content === null) return false;
+          items.push({ content, system: SYSTEM_QUEUE_ENTRY.test(content) });
+          return true;
+        case "remove":
+        case "popAll":
+          if (content === null) items.shift();
+          else dropFirst(content);
+          return true;
+        case "dequeue":
+          items.shift();
+          return true;
+        default:
+          return false;
+      }
+    },
+    // The user's queued messages, oldest first.
+    pending() { return items.filter((it) => !it.system).map((it) => it.content); },
+  };
+}
+
 if (typeof module === "object" && module.exports) {
-  module.exports = { composerState };
+  module.exports = { composerState, createQueueTracker };
 }
