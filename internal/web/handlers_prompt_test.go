@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/tmux"
 	mock_web "github.com/rvanmech/unky-mo/internal/web/mocks"
 	"go.uber.org/mock/gomock"
 )
@@ -312,5 +313,66 @@ func TestHandlePromptActive409WhenBoxUnreadable(t *testing.T) {
 	rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status: want 409, got %d", rec.Code)
+	}
+}
+
+// statesServer serves one state read per status, in order.
+func statesServer(t *testing.T, pane *mock_web.MockClaudePane, prompts *mock_web.MockPromptSender, statuses ...string) *Server {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	var calls []any
+	for _, st := range statuses {
+		calls = append(calls, mockState.EXPECT().Read().Return(&state.StateFile{
+			Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: st}},
+		}, nil))
+	}
+	gomock.InOrder(calls...)
+	return NewServer(Deps{State: mockState, Prompts: prompts, ClaudePane: pane}, 0, "test")
+}
+
+// Send now types the message (it queues), then presses Claude Code's
+// ctrl+x ctrl+s so it's taken at once.
+func TestHandlePromptSendNowPressesChordAfterText(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	prompts := mock_web.NewMockPromptSender(ctrl)
+	gomock.InOrder(
+		pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil),
+		prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil),
+		pane.EXPECT().SendKeys("test:@1.0", []tmux.Key{{Name: "C-x"}, {Name: "C-s"}}).Return(nil),
+	)
+	srv := statesServer(t, pane, prompts, "active", "active")
+	rec := postPrompt(t, srv, "@1", `{"text":"now please","sendNow":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// If Claude finished meanwhile the message went in as a normal prompt and
+// there is nothing to flush; the chord would land in an idle box.
+func TestHandlePromptSendNowSkipsChordWhenNoLongerActive(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	prompts := mock_web.NewMockPromptSender(ctrl)
+	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil)
+	prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil)
+	srv := statesServer(t, pane, prompts, "active", "idle") // no SendKeys expected
+	rec := postPrompt(t, srv, "@1", `{"text":"now please","sendNow":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// sendNow means nothing for an idle session: no chord, no pane read.
+func TestHandlePromptSendNowIgnoredWhenIdle(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	prompts := mock_web.NewMockPromptSender(ctrl)
+	prompts.EXPECT().SendLiteralText("test:@1.0", "hi").Return(nil)
+	srv := statesServer(t, pane, prompts, "idle")
+	rec := postPrompt(t, srv, "@1", `{"text":"hi","sendNow":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

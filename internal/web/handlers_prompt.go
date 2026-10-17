@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
 // maxPromptBytes bounds one prompt; tmux takes the text as a command-line
@@ -32,6 +34,10 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text        string   `json:"text"`
 		Attachments []string `json:"attachments"`
+		// SendNow asks Claude to take the message at once instead of at
+		// its next tool boundary (Claude Code's ctrl+x ctrl+s). It only
+		// means something while the session is working.
+		SendNow bool `json:"sendNow"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
@@ -95,7 +101,28 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to deliver prompt: %w", err))
 		return
 	}
+	if body.SendNow && status == "active" {
+		if err := s.sendNow(windowID, target); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("queued, but couldn't send it now: %w", err))
+			return
+		}
+	}
 	writeJSON(w, map[string]any{})
+}
+
+// sendNowKeys is Claude Code's "send now" chord: it moves a running tool to
+// the background (or stops streaming text) and delivers the queued message.
+// Nothing is killed, unlike Esc.
+var sendNowKeys = []tmux.Key{{Name: "C-x"}, {Name: "C-s"}}
+
+// sendNow presses the chord, unless the session stopped working since the
+// message was typed (then there's no queue to flush, and the keys would
+// land in an idle message box).
+func (s *Server) sendNow(windowID, target string) error {
+	if _, _, status, ok := s.resolveSession(windowID); !ok || status != "active" {
+		return nil
+	}
+	return s.deps.ClaudePane.SendKeys(target, sendNowKeys)
 }
 
 // stripControl drops control characters other than newline and tab. The
