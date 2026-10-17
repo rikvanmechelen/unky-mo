@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
@@ -115,14 +116,33 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 // Nothing is killed, unlike Esc.
 var sendNowKeys = []tmux.Key{{Name: "C-x"}, {Name: "C-s"}}
 
-// sendNow presses the chord, unless the session stopped working since the
-// message was typed (then there's no queue to flush, and the keys would
-// land in an idle message box).
+// sendNowHint is what Claude Code shows under a queued message.
+const sendNowHint = "ctrl+x ctrl+s to send now"
+
+// sendNowTries bounds the wait for the queued message to show up on screen
+// (tries × Server.modeSettle).
+const sendNowTries = 80
+
+// sendNow presses the chord once Claude's screen shows the message as
+// queued. Pressing right after Enter is too early: the chord does nothing
+// until the message is in the queue. It does nothing if the session
+// stopped working meanwhile (the message went in as a normal prompt, and
+// the keys would land in an idle message box).
 func (s *Server) sendNow(windowID, target string) error {
-	if _, _, status, ok := s.resolveSession(windowID); !ok || status != "active" {
-		return nil
+	for range sendNowTries {
+		if _, _, status, ok := s.resolveSession(windowID); !ok || status != "active" {
+			return nil
+		}
+		screen, err := s.deps.ClaudePane.Capture(target)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(screen, sendNowHint) {
+			return s.deps.ClaudePane.SendKeys(target, sendNowKeys)
+		}
+		time.Sleep(s.modeSettle)
 	}
-	return s.deps.ClaudePane.SendKeys(target, sendNowKeys)
+	return fmt.Errorf("Claude didn't show the message as queued")
 }
 
 // stripControl drops control characters other than newline and tab. The

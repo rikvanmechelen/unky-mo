@@ -340,9 +340,13 @@ func TestHandlePromptSendNowPressesChordAfterText(t *testing.T) {
 	gomock.InOrder(
 		pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil),
 		prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil),
+		// Not queued yet on the first look (Enter was just pressed).
+		pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil),
+		pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-queued.txt"), nil),
 		pane.EXPECT().SendKeys("test:@1.0", []tmux.Key{{Name: "C-x"}, {Name: "C-s"}}).Return(nil),
 	)
-	srv := statesServer(t, pane, prompts, "active", "active")
+	srv := statesServer(t, pane, prompts, "active", "active", "active")
+	srv.modeSettle = 0
 	rec := postPrompt(t, srv, "@1", `{"text":"now please","sendNow":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -358,6 +362,7 @@ func TestHandlePromptSendNowSkipsChordWhenNoLongerActive(t *testing.T) {
 	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil)
 	prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil)
 	srv := statesServer(t, pane, prompts, "active", "idle") // no SendKeys expected
+	srv.modeSettle = 0
 	rec := postPrompt(t, srv, "@1", `{"text":"now please","sendNow":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -374,5 +379,25 @@ func TestHandlePromptSendNowIgnoredWhenIdle(t *testing.T) {
 	rec := postPrompt(t, srv, "@1", `{"text":"hi","sendNow":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A queued message that never shows up means the chord would do nothing (or
+// Claude Code changed its hint): say so instead of failing silently.
+func TestHandlePromptSendNowErrorsWhenNeverQueued(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	prompts := mock_web.NewMockPromptSender(ctrl)
+	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil).Times(1 + sendNowTries)
+	prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil)
+	var statuses []string
+	for range 1 + sendNowTries {
+		statuses = append(statuses, "active")
+	}
+	srv := statesServer(t, pane, prompts, statuses...)
+	srv.modeSettle = 0
+	rec := postPrompt(t, srv, "@1", `{"text":"now please","sendNow":true}`)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: want 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
