@@ -1055,6 +1055,7 @@ function main() {
   const statusBadge = document.getElementById("status-badge");
   const composer = document.getElementById("composer");
   const promptInput = document.getElementById("prompt-input");
+  const sendNowBtn = document.getElementById("send-now-btn");
   const sendBtn = document.getElementById("send-btn");
   const sendError = document.getElementById("send-error");
   const attachments = createAttachments({
@@ -1184,8 +1185,8 @@ function main() {
   let streamSessionID = null;
 
   // A message typed while a just-launched session is still starting is
-  // queued, then sent the first time the session reads idle (pollStatus).
-  let queued = null;
+  // held, then sent the first time the session reads idle (pollStatus).
+  let heldUntilStart = null;
 
   // Lifecycle around launches from the dashboard (?new=1): the window exists
   // before the main TUI has attributed a Claude session to it, so for a few
@@ -1218,13 +1219,13 @@ function main() {
     });
   }
 
-  async function sendPrompt(text, attachmentIDs = []) {
+  async function sendPrompt(text, attachmentIDs = [], sendNow = false) {
     sendError.textContent = "";
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, attachments: attachmentIDs }),
+        body: JSON.stringify({ text, attachments: attachmentIDs, sendNow }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -1264,6 +1265,13 @@ function main() {
       modeChip.cycle();
       return;
     }
+    // ctrl/cmd+enter sends now while Claude is working.
+    if (e.key === "Enter" && !e.isComposing && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      if (!sendNowBtn.hidden && !sendNowBtn.disabled) sendNowBtn.click();
+      else if (!sendBtn.disabled) composer.requestSubmit();
+      return;
+    }
     // Enter sends; shift+enter or alt+enter adds a line, as in Claude Code.
     if (e.key === "Enter" && !e.isComposing && !e.shiftKey && !e.altKey && !enterAddsLine) {
       e.preventDefault();
@@ -1271,8 +1279,9 @@ function main() {
     }
   });
 
-  composer.addEventListener("submit", async (e) => {
-    e.preventDefault();
+  // sendNow: ask Claude to take the message at once (it's still queued if
+  // the session isn't working, in which case this is a plain send).
+  async function submitPrompt(sendNow) {
     if (!windowID) return;
     const text = promptInput.value.trim();
     if (attachments.pending()) {
@@ -1286,17 +1295,23 @@ function main() {
     const ids = attachments.ids();
     if (!text && !ids.length) return;
     if (starting && !everSeen) {
-      queued = text;
+      heldUntilStart = text;
       setPrompt("");
       sendError.textContent = "";
       pollStatus();
       return;
     }
-    if (await sendPrompt(text, ids)) {
+    if (await sendPrompt(text, ids, sendNow)) {
       setPrompt("");
       attachments.clear();
     }
+  }
+
+  composer.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitPrompt(false);
   });
+  sendNowBtn.addEventListener("click", () => submitPrompt(true));
 
   function setNotice(text) {
     chatNotice.textContent = text || "";
@@ -1524,7 +1539,7 @@ function main() {
   function resetSession(id, isStarting) {
     windowID = id;
     clearTranscript();
-    queued = null;
+    heldUntilStart = null;
     starting = isStarting;
     openedAt = Date.now();
     everSeen = false;
@@ -1706,27 +1721,24 @@ function main() {
       spinner.setActive(status === "active");
       modeChip.setStatus(status);
 
-      if (queued && status === "idle") {
-        const text = queued;
-        queued = null;
+      if (heldUntilStart && status === "idle") {
+        const text = heldUntilStart;
+        heldUntilStart = null;
         if (await sendPrompt(text, attachments.ids())) attachments.clear();
         else setPrompt(text); // give it back to retry
       }
-      if (queued) setNotice(`Starting session… your message will be sent when it's ready: “${queued}”`);
+      if (heldUntilStart) setNotice(`Starting session… your message will be sent when it's ready: “${heldUntilStart}”`);
 
-      const canSend = status === "idle" || status === "question" || (waitingToStart && !queued);
-      sendBtn.disabled = !canSend;
-      sendBtn.classList.toggle("is-locked", !canSend);
-      sendBtn.textContent = waitingToStart ? (queued ? "Queued" : "Send when ready")
-        : canSend ? "Send"
-        : !p ? "No session"
-        : status === "permission" ? "Waiting for permission"
-        : external ? "External session"
-        : "Claude is working…";
-      promptInput.placeholder = status === "question"
-        ? (p.pending_tool === "AskUserQuestion" ? "Answer in the form above…" : "Type a number or your answer…")
-        : status === "permission" ? "Answer the prompt above, or in the terminal"
-        : p ? `Message ${p.name}` : "Message this session";
+      const cs = composerState({
+        status, hasSession: !!p, name: p && p.name, pendingTool: p && p.pending_tool,
+        waitingToStart, held: !!heldUntilStart,
+      });
+      sendBtn.disabled = !cs.canSend;
+      sendBtn.classList.toggle("is-locked", !cs.canSend);
+      sendBtn.textContent = cs.label;
+      sendNowBtn.hidden = !cs.canSendNow;
+      sendNowBtn.disabled = !cs.canSendNow;
+      promptInput.placeholder = cs.placeholder;
     } catch (err) {
       // transient — leave the last known status showing
     }

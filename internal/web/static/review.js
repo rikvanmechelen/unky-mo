@@ -209,7 +209,7 @@ function createReview({ onChange, onSent }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        return res.status === 409 ? "Claude is busy — send the review once the session is idle." : data.error || `request failed (${res.status})`;
+        return res.status === 409 ? `Can't send the review right now: ${data.error || "Claude is busy"}.` : data.error || `request failed (${res.status})`;
       }
       if (win !== windowID) {
         const left = (storageGet(REVIEW_KEY + win) || []).filter((c) => !sent.has(c.id));

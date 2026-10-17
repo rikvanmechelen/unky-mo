@@ -1131,6 +1131,14 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
   cursor: pointer; text-align: left;
 }
 .composer__send:active { background: var(--ink-2); }
+.composer__send-now {
+  flex: none; height: 48px; padding: 0 16px;
+  border: 1px solid var(--ink); border-radius: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--font-sans); font-size: 16px; font-weight: 700; letter-spacing: var(--tracking-bold);
+  cursor: pointer;
+}
+.composer__send-now[hidden] { display: none; }
+.composer__send-now:active { background: var(--surface-2); }
 .composer__send.is-locked { background: var(--ink-3); cursor: not-allowed; }
 /* Permission mode: tints the composer and sits as a chip under it. */
 .composer[data-mode="acceptEdits"] { --mode: var(--mode-accept); }
@@ -1531,6 +1539,7 @@ button.file-row.graph-file:hover { background: var(--surface-2); }
   .chat-bar, .chat-transcript, .chat-footer, .editor-pane__bar, .editor-pane__banner, .editor-pane__info { padding-left: 16px; padding-right: 16px; }
   .editor-tabs { padding-left: 4px; padding-right: 16px; }
   .composer__send { min-width: 0; }
+  .composer__send-now { padding: 0 10px; font-size: 14px; }
 }
 
 /* Overview tab (overview.js): the shape of the branch's change. */
