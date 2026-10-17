@@ -1,6 +1,6 @@
 # Sending messages while Claude is working
 
-**Status:** step 1 (probe) done 2026-10-17; steps 2–6 not built.
+**Status:** steps 1–5 built on main 2026-10-17 (probe, queue mode, send now, composer, pending chips); step 6's real-session check of the chord was done by hand (one `send-keys C-x C-s` backgrounds the Bash call and the message is absorbed within 2 s), the full browser round trip still needs `make install` + `mo restart`, not pushed.
 
 ## Goal
 
