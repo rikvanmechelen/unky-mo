@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func TestHandlePrompt409WhenNotIdle(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockState := mock_web.NewMockStateReader(ctrl)
 	mockState.EXPECT().Read().Return(&state.StateFile{
-		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: "active"}},
+		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: "dead"}},
 	}, nil)
 
 	srv := NewServer(Deps{State: mockState}, 0, "test")
@@ -252,5 +253,64 @@ func TestHandlePrompt400OnTooManyAttachments(t *testing.T) {
 	rec := postPrompt(t, srv, "@5", `{"text":"hi","attachments":[`+ids+`]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: want 400, got %d", rec.Code)
+	}
+}
+
+func readQueueFixture(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile("testdata/queue/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func activePromptServer(t *testing.T, pane *mock_web.MockClaudePane, prompts *mock_web.MockPromptSender) *Server {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	mockState.EXPECT().Read().Return(&state.StateFile{
+		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: "active"}},
+	}, nil)
+	return NewServer(Deps{State: mockState, Prompts: prompts, ClaudePane: pane}, 0, "test")
+}
+
+// A working session queues what is typed, as Claude Code's own terminal does.
+func TestHandlePromptQueuesWhileActive(t *testing.T) {
+	for _, fixture := range []string{"working-empty.txt", "working-queued.txt"} {
+		t.Run(fixture, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			pane := mock_web.NewMockClaudePane(ctrl)
+			pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, fixture), nil)
+			prompts := mock_web.NewMockPromptSender(ctrl)
+			prompts.EXPECT().SendLiteralText("test:@1.0", "hello").Return(nil)
+			rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// Text already typed in the terminal would mix with the queued message.
+func TestHandlePromptActive409WhenTerminalBoxHasText(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-typed.txt"), nil)
+	prompts := mock_web.NewMockPromptSender(ctrl) // no expectations: nothing typed
+	rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: want 409, got %d", rec.Code)
+	}
+}
+
+func TestHandlePromptActive409WhenBoxUnreadable(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	pane.EXPECT().Capture("test:@1.0").Return("some dialog, no prompt box", nil)
+	prompts := mock_web.NewMockPromptSender(ctrl)
+	rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: want 409, got %d", rec.Code)
 	}
 }

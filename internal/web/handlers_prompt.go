@@ -15,7 +15,8 @@ const maxPromptBytes = 64 << 10
 const maxPromptAttachments = 10
 
 // handlePrompt injects a prompt into a live session's tmux pane, gated on
-// the session currently being idle or blocked on an interactive question
+// the session currently being idle, working (Claude Code queues what is typed
+// mid-turn and reads it at its next tool boundary) or blocked on an interactive question
 // (status "question" — e.g. AskUserQuestion) — answering is exactly what's
 // needed to unblock those. A genuine "permission" status stays rejected: we
 // don't yet know the tool/input Claude Code's PermissionRequest hook carries,
@@ -55,9 +56,17 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
 		return
 	}
-	if status != "idle" && status != "question" {
+	if status != "idle" && status != "question" && status != "active" {
 		writeError(w, http.StatusConflict, fmt.Errorf("session is %s, not idle", status))
 		return
+	}
+	if status == "active" {
+		// Typing into a working session queues the message. It would mix
+		// with anything already typed in the terminal's message box.
+		if err := s.checkInputBoxEmpty(s.claudeTarget(windowID)); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 	}
 
 	paths := make([]string, 0, len(body.Attachments))
@@ -100,4 +109,26 @@ func stripControl(text string) string {
 		}
 		return -1
 	}, text)
+}
+
+var errInputBoxBusy = fmt.Errorf("there's text in the terminal's message box; send or clear it first")
+
+// checkInputBoxEmpty refuses to type into a pane whose message box already
+// holds text, or whose box can't be read.
+func (s *Server) checkInputBoxEmpty(target string) error {
+	if s.deps.ClaudePane == nil {
+		return fmt.Errorf("can't check Claude's message box")
+	}
+	screen, err := s.deps.ClaudePane.Capture(target)
+	if err != nil {
+		return fmt.Errorf("can't read Claude's message box: %w", err)
+	}
+	text, ok := parseInputBox(screen)
+	if !ok {
+		return fmt.Errorf("can't see Claude's message box (a dialog may be open)")
+	}
+	if text != "" {
+		return errInputBoxBusy
+	}
+	return nil
 }
