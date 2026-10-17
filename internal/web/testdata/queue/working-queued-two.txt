@@ -1,0 +1,50 @@
+  turned, and that was what mattered.
+
+  On the first Tuesday of December, a storm came in from the northeast. It was the kind of storm the old keepers wrote about in their
+  logbooks, with waves that broke over the lower rail and a wind that found every gap in the stone. Marguerite made her rounds at dusk as
+  always. At the top, she lit the lamp, and the beam swept out over the black water.
+
+  Halfway through the night, she saw a light answer it. Small and yellow, bobbing in the trough between swells, it was a fishing boat, and
+  it was turning toward the rocks. She picked up the radio and called the number that was still painted on the door. A young voice answered,
+  thick with fear. The engine had died. They were drifting.
+
+  "Keep your eyes on the light," she told him. "Don't look at the waves. Look at the light."
+
+  She talked him through the hours. She told him about the gannets that dived off the point in summer, the way the seals hauled themselves
+  onto the ledge at low tide, the name of every rock. When his voice steadied, she asked him his name. Teodor, he said. He was nineteen. His
+  father had taken the boat out alone that morning and had not come back, and Teodor had gone looking for him.
+
+  Near dawn, the sea settled. A coast guard cutter came around the point with its searchlight hunting the water. Teodor was found clinging
+  to a shattered oar, cold and coughing but alive, and his father's body was recovered by noon.
+
+  When the storm passed, Marguerite climbed the ninety-six steps one last time. The fourth rang high, and the fifty-first creaked under her
+  weight. At the top, she stood beside the lens and watched the grey light spread over the bay.
+
+  The next morning, she took the government letter from the drawer and wrote a reply. She asked whether the station could remain staffed
+  through the spring, for the fishermen, in case of another storm. She didn't expect the answer to be yes. But she signed her name in the
+  careful hand her mother had taught her, and she posted it before she could change her mind.
+
+  Then she went back up the steps.
+
+  pear
+
+✻ Sautéed for 8s · done 6:00 PM
+
+❯ Run exactly this one Bash call: for i in 1 2 3 4 5 6 7 8; do sleep 4; done
+
+  Running an eight-iteration four-second sleep loop · 7s
+  ⎿  $ for i in 1 2 3 4 5 6 7 8; do sleep 4; done (8s)
+     (ctrl+b ctrl+b (twice) to run in background)
+
+❯ queued example
+
+❯ a
+  b
+  ctrl+x ctrl+s to send now
+
+✻ Manifesting… (9s · ↓ 111 tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt
