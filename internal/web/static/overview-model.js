@@ -962,6 +962,31 @@ function ovFirstChange(rows) {
   return (rows || []).findIndex((r) => r.sign === "+" || r.sign === "-");
 }
 
+// ovFoldRows turns a whole file's rows into what the inspector draws:
+// [{row, i}] for a row (i is its index in rows) and [{fold: true, from,
+// count}] for a run of unchanged rows left out. Every +/− row stays, with
+// ctx rows around it and around the focus index; a hidden run shorter than
+// minHidden stays too (a fold that hides two rows is no help). A run whose
+// first index is in open is shown. With changesOnly false nothing folds.
+function ovFoldRows(rows, { ctx = 3, minHidden = 4, focus = -1, open = null, changesOnly = true } = {}) {
+  rows = rows || [];
+  if (!changesOnly) return rows.map((row, i) => ({ row, i }));
+  const keep = new Array(rows.length).fill(false);
+  const mark = (i) => { for (let j = Math.max(0, i - ctx); j <= Math.min(rows.length - 1, i + ctx); j++) keep[j] = true; };
+  rows.forEach((r, i) => { if (r.sign === "+" || r.sign === "-") mark(i); });
+  if (focus >= 0 && focus < rows.length) mark(focus);
+  const out = [];
+  for (let i = 0; i < rows.length;) {
+    if (keep[i]) { out.push({ row: rows[i], i }); i++; continue; }
+    let j = i;
+    while (j < rows.length && !keep[j]) j++;
+    if (j - i < minHidden || open?.has(i)) for (let k = i; k < j; k++) out.push({ row: rows[k], i: k, ...(open?.has(i) ? { from: i } : {}) });
+    else out.push({ fold: true, from: i, count: j - i });
+    i = j;
+  }
+  return out;
+}
+
 // ── The map ────────────────────────────────────────────────────
 
 const MAP_BOX_MIN = 240, MAP_BOX_MAX = 300, MAP_GAP_X = 24, MAP_GAP_Y = 44;
@@ -1180,6 +1205,6 @@ if (typeof module === "object" && module.exports) {
     createIntentTrace, turnForRange, buildTraceRows, scopeRequestFrom, oneLine, summarizeOverview, layoutTreemap, layoutArchGraph,
     buildModel, ovRelated, ovWhere, ovLabel, ovSection, ovVerdict, ovVerdictSub, ovRulesText, ovChecks, ovCaveats, ovChips, ovReviewQueue, ovProgress,
     reviewSig, cellID, parseCell, ovFileOf, pl,
-    ovSectionSummaries, ovGuessOrigin, ovMapUnits, ovMapFns, ovLayoutMap, ovLens, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
+    ovSectionSummaries, ovGuessOrigin, ovMapUnits, ovMapFns, ovLayoutMap, ovLens, ovCallWords, ovFindingTitle, ovFixPrompt, ovFirstChange, ovFoldRows, selInitial, selPush, selBack, selForward, selCurrent, selCrumbs, selValid,
   };
 }

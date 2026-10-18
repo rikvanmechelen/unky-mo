@@ -396,3 +396,30 @@ test("a Bash call's recorded change counts as its edits", () => {
   t.reset();
   assert.equal(t.edits.length, 0);
 });
+
+test("ovFoldRows folds long unchanged runs and keeps context", () => {
+  const rows = (signs) => [...signs].map((c, i) => ({ sign: c, ln: i + 1, text: "l" + i }));
+  const shape = (items) => items.map((x) => (x.fold ? `~${x.count}` : x.row.sign)).join("");
+  // 20 unchanged, one change, 20 unchanged: 3 rows of context each side.
+  const big = rows(" ".repeat(20) + "+" + " ".repeat(20));
+  assert.equal(shape(m.ovFoldRows(big)), "~17   +   ~17");
+  // a fold's index and count say which rows it hides
+  const f = m.ovFoldRows(big)[0];
+  assert.deepEqual([f.fold, f.from, f.count], [true, 0, 17]);
+  // a hidden run shorter than minHidden is shown; changes close together merge
+  assert.equal(shape(m.ovFoldRows(rows("+" + " ".repeat(10) + "-"))), "+   ~4   -");
+  assert.equal(shape(m.ovFoldRows(rows("+" + " ".repeat(9) + "-"))), "+" + " ".repeat(9) + "-");
+  // the focus row is never folded away
+  const focus = m.ovFoldRows(rows(" ".repeat(30) + "+"), { focus: 5 });
+  assert.ok(focus.some((x) => x.i === 5 && x.row), "focus row kept");
+  assert.deepEqual(focus.filter((x) => x.fold).map((x) => [x.from, x.count]), [[9, 18]]);
+  // open runs are shown in full, others still folded
+  const opened = m.ovFoldRows(big, { open: new Set([0]) });
+  assert.equal(shape(opened), " ".repeat(20) + "+   ~17");
+  // no changes at all: one fold (or nothing for a short file)
+  assert.equal(shape(m.ovFoldRows(rows(" ".repeat(30)))), "~30");
+  assert.equal(shape(m.ovFoldRows(rows("   "))), "   ");
+  assert.deepEqual(m.ovFoldRows([]), []);
+  // changesOnly false: every row, no folds
+  assert.equal(m.ovFoldRows(big, { changesOnly: false }).length, big.length);
+});
