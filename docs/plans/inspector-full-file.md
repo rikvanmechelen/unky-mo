@@ -84,3 +84,13 @@ So the work is mostly UI plus one server parameter; no new git work.
   context; the point here is to stay in the rail.
 - **Choice for you**: fold unchanged runs by default (proposed), or show
   every line by default? The toggle covers both; only the default differs.
+
+## Revision: preview in the rail (2026-10-17)
+
+The per-block "Whole file" toggle was replaced by this behaviour: wherever
+the Overview offers Diff or File, clicking it previews the whole file in the
+inspector (diff: +/− rows with unchanged runs folded; file: the new version).
+An icon button (square with an arrow out of its top-left corner) opens the
+same place in the main panel. State: `selection.preview` in `overview.js`;
+view: `previewView` in `inspector.js`. Not covered: the Files panel's own
+Changed / Branch files lists, which still open tabs.

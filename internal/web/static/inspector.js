@@ -47,6 +47,8 @@ function createInspector(host, overview) {
       body.replaceChildren(el("div", { class: "insp-note", text: overview.hasData() ? "" : "Nothing to show yet." }));
       return;
     }
+    const pv = sel.preview();
+    if (pv) { body.replaceChildren(...previewView(M, pv)); return; }
     if (!id) { body.replaceChildren(...startHere(M)); return; }
     const exists = id.startsWith("cell:") ? M.E.has("file:" + parseCell(id).path) : M.E.has(id);
     if (!exists) {
@@ -160,19 +162,14 @@ function createInspector(host, overview) {
     overview.excerpt(path, line, opts).then(done, () => box.replaceChildren(el("div", { class: "insp-code__note", text: "Not available." })));
   }
 
-  // fullState is a block's whole-file view: whether it's on, whether every
-  // line shows (else unchanged runs fold), and which folds are open. Kept
-  // per selection + file + side, so a re-render keeps what was opened.
-  const fulls = new Map();
-  function fullState(key) {
-    if (!fulls.has(key)) fulls.set(key, { on: false, all: false, runs: new Set() });
-    return fulls.get(key);
-  }
+  // previewState is the preview's own state: whether every line shows
+  // (else unchanged runs fold) and which folds are open. It starts over
+  // for another file.
+  let pvState = { key: "", all: false, runs: new Set() };
 
-  // fullLines is the whole file: unchanged runs folded (a click opens one),
-  // in a scroll box that starts at the focus row.
-  function fullLines(x, focusAt, st, redraw) {
-    const rows = x.rows || [];
+  // fullLines is a whole file: unchanged runs folded (a click opens one),
+  // in a scroll box that starts at the focus row (or the first change).
+  function fullLines(rows, focusAt, st, redraw) {
     const box = el("div", { class: "insp-code__lines is-full" });
     for (const it of ovFoldRows(rows, { focus: focusAt, open: st.runs, changesOnly: !st.all })) {
       if (it.fold) {
@@ -189,37 +186,83 @@ function createInspector(host, overview) {
     return wrap;
   }
 
-  // codeBlock is a titled excerpt of path around line, with Whole file,
-  // Diff and File.
+  // The icon of the preview's "open in the main panel" button: a square
+  // with an arrow leaving its top-left corner.
+  function openMainIcon() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("width", "14");
+    svg.setAttribute("height", "14");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.5");
+    for (const d of ["M9 3H13V13H3V9", "M8 8L3 3", "M7 3H3V7"]) {
+      const e = document.createElementNS(ns, "path");
+      e.setAttribute("d", d);
+      svg.append(e);
+    }
+    return svg;
+  }
+
+  // previewView is a file or diff shown in the rail: the whole file with
+  // + and − rows (diff) or as the new version (file), and the button that
+  // opens it in the main panel.
+  function previewView(M, pv) {
+    const { path, line, side, how } = pv;
+    const key = `${path}|${how}`;
+    if (pvState.key !== key) pvState = { key, all: false, runs: new Set() };
+    const st = pvState;
+    const lines = el("div", { class: "insp-code__body" });
+    const links = el("span", { class: "insp-code__links" });
+    const main = btn("insp-preview__main", "", "Open in the main panel", () => overview.openMain(pv));
+    main.append(openMainIcon());
+    const close = btn("insp-code__link", "Close", "Back to what was selected (Esc)", () => sel.setPreview(null));
+    const draw = () => {
+      links.replaceChildren(...(how === "diff" ? [btn("insp-code__link", st.all ? "Changes only" : "All lines", st.all ? "Fold unchanged lines" : "Show every line", () => { st.all = !st.all; draw(); })] : []));
+      fill(lines, path, line || 1, { side, all: true }, make);
+    };
+    const make = (x) => {
+      if (!x || x.binary || x.tooLarge) return [el("div", { class: "insp-code__note", text: x?.binary ? "A binary file." : x?.tooLarge ? "Too large to show." : "Not available." })];
+      let rows = x.rows || [];
+      if (!rows.length) return [el("div", { class: "insp-code__note", text: "Empty." })];
+      let focusAt = line ? rows.findIndex((r) => isFocus(r, line, side)) : -1;
+      if (how === "file") {
+        // The new version as it is: no removed rows, no markers.
+        const keep = rows.map((r, i) => ({ r, i })).filter((q) => q.r.sign !== "-");
+        focusAt = keep.findIndex((q) => q.i === focusAt);
+        rows = keep.map((q) => ({ ...q.r, sign: " " }));
+      } else if (focusAt < 0) focusAt = ovFirstChange(rows);
+      return [
+        ...(x.truncated ? [el("div", { class: "insp-code__note", text: `Showing lines ${x.offset + 1}–${x.offset + x.rows.length} of ${x.total}.` })] : []),
+        fullLines(rows, focusAt, how === "file" ? { ...st, all: true } : st, draw),
+      ];
+    };
+    draw();
+    return [
+      el("div", { class: "insp-kicker", text: how === "file" ? "File" : "Changes" }),
+      el("div", { class: "insp-preview__head" }, [
+        el("div", { class: "insp-title insp-preview__path", text: path }),
+        main,
+      ]),
+      el("div", { class: "insp-preview__bar" }, [links, close]),
+      el("div", { class: "insp-code__box" }, [lines]),
+    ];
+  }
+
+  // codeBlock is a titled excerpt of path around line, with Diff and File.
   function codeBlock(title, path, line, { side = "new", end = 0, ctx = 3, first = false } = {}) {
     if (!path) return null;
     const at = el("span", { class: "insp-code__at", text: line && !first ? `${path}:${line}` : path });
     const lines = el("div", { class: "insp-code__body" });
-    const st = fullState((sel.current() || "") + "|" + path + "|" + side);
-    const links = el("span", { class: "insp-code__links" });
     const block = el("div", { class: "insp-code" }, [
       el("div", { class: "insp-h", text: title }),
       el("div", { class: "insp-code__box" }, [
-        el("div", { class: "insp-code__head" }, [at, links, ...openLinks(path, line, side)]),
+        el("div", { class: "insp-code__head" }, [at, ...openLinks(path, line, side)]),
         lines,
       ]),
     ]);
-    const draw = () => {
-      links.replaceChildren(
-        btn("insp-code__link", st.on ? "Collapse" : "Whole file", st.on ? "Back to the short excerpt" : "Show the whole file with its + and − lines", () => { st.on = !st.on; draw(); }),
-        ...(st.on ? [btn("insp-code__link", st.all ? "Changes only" : "All lines", st.all ? "Fold unchanged lines" : "Show every line", () => { st.all = !st.all; draw(); })] : []),
-      );
-      if (st.on) fill(lines, path, line || 1, { side, all: true }, makeFull);
-      else fill(lines, path, line || 1, first ? { side, end: 400, ctx: 0 } : { side, end, ctx }, make);
-    };
-    const makeFull = (x) => {
-      if (!x || x.binary || x.tooLarge) return [el("div", { class: "insp-code__note", text: x?.binary ? "A binary file." : x?.tooLarge ? "Too large to show." : "Not available." })];
-      if (!x.rows?.length) return [el("div", { class: "insp-code__note", text: "Empty." })];
-      return [
-        ...(x.truncated ? [el("div", { class: "insp-code__note", text: `Showing lines ${x.offset + 1}–${x.offset + x.rows.length} of ${x.total}.` })] : []),
-        fullLines(x, first ? ovFirstChange(x.rows) : x.rows.findIndex((r) => isFocus(r, line, side)), st, draw),
-      ];
-    };
     const make = (x) => {
       if (!x || x.binary || x.tooLarge) return [el("div", { class: "insp-code__note", text: x?.binary ? "A binary file." : x?.tooLarge ? "Too large to show." : "Not available." })];
       let rows = x.rows || [];
@@ -235,13 +278,13 @@ function createInspector(host, overview) {
       if (!rows.length) return [el("div", { class: "insp-code__note", text: "That line isn't in this version." })];
       return [codeLines(rows, focus, side)];
     };
-    draw();
+    fill(lines, path, line || 1, first ? { side, end: 400, ctx: 0 } : { side, end, ctx }, make);
     return block;
   }
 
   function openLinks(path, line, side) {
-    const out = [btn("insp-code__link", "Diff", "Open the change in a tab", () => overview.open(cellish(path, line, side), "diff"))];
-    if (side === "new") out.push(btn("insp-code__link", "File", "Open the whole file in a tab", () => overview.open(cellish(path, line, side), "file")));
+    const out = [btn("insp-code__link", "Diff", "Preview the change here", () => overview.open(cellish(path, line, side), "diff"))];
+    if (side === "new") out.push(btn("insp-code__link", "File", "Preview the whole file here", () => overview.open(cellish(path, line, side), "file")));
     return out;
   }
 
@@ -343,8 +386,8 @@ function createInspector(host, overview) {
   function openActs(id, w) {
     if (!w) return [];
     return [
-      { label: "Diff", title: "Open the change in a tab (o)", act: () => overview.open(id, "diff") },
-      ...(w.side === "new" ? [{ label: "File", title: "Open the whole file in a tab (f)", act: () => overview.open(id, "file") }] : []),
+      { label: "Diff", title: "Preview the change here (o)", act: () => overview.open(id, "diff") },
+      ...(w.side === "new" ? [{ label: "File", title: "Preview the whole file here (f)", act: () => overview.open(id, "file") }] : []),
     ];
   }
 

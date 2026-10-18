@@ -167,7 +167,12 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
   let hovered = null;
   let focusFn = null;
   const selSubs = new Set();
+  // preview is the file or diff the inspector shows over the selection
+  // ({path, line, side, how: "diff"|"file"}), until another selection, Esc
+  // or the main-panel button.
+  let preview = null;
   function selChanged(what) {
+    if (what === "select" || what === "focus") preview = null;
     if (what !== "hover" && windowID) {
       try { sessionStorage.setItem(SEL_KEY + windowID, JSON.stringify(hist)); } catch (_) { /* not remembered */ }
     }
@@ -227,6 +232,11 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
       if (id) { hist = selPush(hist, id); }
       selChanged("focus");
     },
+    preview: () => preview,
+    setPreview(p) {
+      preview = p || null;
+      selChanged("preview");
+    },
     current: () => selCurrent(hist),
     hovered: () => hovered,
     focus: () => focusFn,
@@ -249,7 +259,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
       e.preventDefault();
       if (e.key === "ArrowLeft") selection.back(); else selection.forward();
     } else if (e.key === "Escape" && !e.altKey && !e.shiftKey) {
-      if (focusFn) selection.setFocus(null);
+      if (preview) selection.setPreview(null);
+      else if (focusFn) selection.setFocus(null);
       else if (selCurrent(hist)) selection.select(null);
       else return;
       e.preventDefault();
@@ -1067,15 +1078,24 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
     }));
   }
 
-  // openEntity opens where id is (an entity id, or a place {path, line,
-  // side}): its diff ("diff") or the file ("file"), at its line when that
-  // line is in the new version.
-  function openEntity(id, how = "diff") {
+  // openEntity previews where id is (an entity id, or a place {path, line,
+  // side}) in the inspector: its diff ("diff") or the file ("file"), at its
+  // line when that line is in the new version. openMain is the same place
+  // in the main panel, which the preview's button calls.
+  function placeOf(id, how) {
     const w = typeof id === "object" ? id : ovWhere(getModel(), id);
-    if (!w?.path || !data) return;
-    const line = w.side === "new" && w.line ? w.line : undefined;
-    if (how === "file" && w.side === "new") onOpenFile?.(w.path, line);
-    else openDiff({ path: w.path }, line);
+    if (!w?.path || !data) return null;
+    return { path: w.path, line: w.side === "new" && w.line ? w.line : undefined, side: w.side || "new", how: how === "file" && w.side === "new" ? "file" : "diff" };
+  }
+  function openEntity(id, how = "diff") {
+    const p = placeOf(id, how);
+    if (p) selection.setPreview(p);
+  }
+  function openMain(p) {
+    if (!p || !data) return;
+    if (p.how === "file") onOpenFile?.(p.path, p.line);
+    else openDiff({ path: p.path }, p.line);
+    selection.setPreview(null);
   }
 
   // openDiff shows a file's changes, scrolled to line if given.
@@ -1219,6 +1239,7 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
     model: getModel,
     selection,
     open: openEntity,
+    openMain,
     // diffKind is the editor tab kind (and hash) that shows a file's change
     // the way the tab compares it.
     diffKind() {
