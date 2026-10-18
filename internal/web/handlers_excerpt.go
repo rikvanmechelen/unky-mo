@@ -18,6 +18,7 @@ type excerptQuery struct {
 	line, end  int
 	side       string
 	contextLen int
+	all        bool // the whole file (line only says where to centre a huge one)
 }
 
 // Bounds on an excerpt request's numbers.
@@ -26,7 +27,8 @@ const (
 	maxExcerptContext     = 20
 )
 
-// parseExcerpt reads ?path=&line=[&end=][&side=new|old][&ctx=].
+// parseExcerpt reads ?path=&line=[&end=][&side=new|old][&ctx=], or
+// ?path=&all=1[&line=][&side=] for the whole file.
 func parseExcerpt(r *http.Request) (excerptQuery, error) {
 	v := r.URL.Query()
 	q := excerptQuery{path: v.Get("path"), side: v.Get("side"), contextLen: defaultExcerptContext}
@@ -45,7 +47,14 @@ func parseExcerpt(r *http.Request) (excerptQuery, error) {
 		return n, nil
 	}
 	var err error
-	if v.Get("line") == "" {
+	switch v.Get("all") {
+	case "":
+	case "1":
+		q.all = true
+	default:
+		return q, fmt.Errorf("bad all %q", v.Get("all"))
+	}
+	if v.Get("line") == "" && !q.all {
 		return q, fmt.Errorf("missing line")
 	}
 	if q.line, err = num("line", 0, 1, 1<<30); err != nil {
@@ -155,7 +164,12 @@ func (s *Server) serveExcerpt(w http.ResponseWriter, r *http.Request, o *gitfile
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	body, err := json.Marshal(v.(*gitfiles.Annotated).Cut(eq.line, eq.end, eq.side, eq.contextLen))
+	a := v.(*gitfiles.Annotated)
+	cut := func() *gitfiles.Excerpt { return a.Cut(eq.line, eq.end, eq.side, eq.contextLen) }
+	if eq.all {
+		cut = func() *gitfiles.Excerpt { return a.Window(eq.line, eq.side) }
+	}
+	body, err := json.Marshal(cut())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

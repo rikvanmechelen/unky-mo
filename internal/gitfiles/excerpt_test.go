@@ -73,6 +73,38 @@ func texts(e *Excerpt) string {
 	return strings.Join(s, ",")
 }
 
+func TestWindow(t *testing.T) {
+	a := cutFixture()
+	e := a.Window(2, SideNew)
+	if got := texts(e); got != "one,two,TWO,2.5,three" || e.Total != len(a.Rows) || e.Offset != 0 || e.Truncated {
+		t.Errorf("whole file: %q total %d offset %d truncated %v", got, e.Total, e.Offset, e.Truncated)
+	}
+	if e := a.Window(0, SideNew); len(e.Rows) != len(a.Rows) {
+		t.Errorf("no line: %d rows", len(e.Rows))
+	}
+
+	big := &Annotated{Path: "big.go"}
+	for i := 1; i <= MaxFullFileRows+1000; i++ {
+		big.Rows = append(big.Rows, Row{Ln: i, OldLn: i, Sign: " "})
+	}
+	for _, c := range []struct{ line, first int }{
+		{0, 1}, {10, 1}, {3000, 3000 - MaxFullFileRows/2}, {MaxFullFileRows + 1000, 1001},
+	} {
+		e := big.Window(c.line, SideNew)
+		if !e.Truncated || len(e.Rows) != MaxFullFileRows || e.Rows[0].Ln != c.first || e.Offset != c.first-1 || e.Total != len(big.Rows) {
+			t.Errorf("window(%d): truncated %v, %d rows from %d (offset %d, total %d), want from %d",
+				c.line, e.Truncated, len(e.Rows), e.Rows[0].Ln, e.Offset, e.Total, c.first)
+		}
+	}
+
+	if e := (&Annotated{Path: "b", Binary: true}).Window(1, SideNew); !e.Binary || e.Rows == nil || len(e.Rows) != 0 {
+		t.Errorf("binary window: %+v", e)
+	}
+	if e := (&Annotated{Path: "t", TooLarge: true}).Window(1, SideNew); !e.TooLarge || len(e.Rows) != 0 {
+		t.Errorf("too large window: %+v", e)
+	}
+}
+
 func TestCut(t *testing.T) {
 	a := cutFixture()
 	cases := []struct {

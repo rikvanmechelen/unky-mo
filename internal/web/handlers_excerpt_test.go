@@ -40,7 +40,7 @@ func TestExcerptRefusesBadParams(t *testing.T) {
 	for _, q := range []string{
 		"line=2", "path=a.go", "path=a.go&line=0", "path=a.go&line=x", "path=a.go&line=-3",
 		"path=a.go&line=5&end=4", "path=a.go&line=5&end=406", "path=a.go&line=2&ctx=21",
-		"path=a.go&line=2&ctx=-1", "path=a.go&line=2&side=both", "path=a.go&line=2&base=nope",
+		"path=a.go&line=2&ctx=-1", "path=a.go&line=2&side=both", "path=a.go&all=2", "path=a.go&all=1&line=0", "path=a.go&all=1&side=both", "path=a.go&line=2&base=nope",
 		"path=a.go&line=2&base=commits&commits=HEAD",
 	} {
 		if rec := get(t, srv, "/api/sessions/@5/excerpt?"+q); rec.Code != http.StatusBadRequest {
@@ -49,6 +49,30 @@ func TestExcerptRefusesBadParams(t *testing.T) {
 	}
 	if rec := get(t, srv, "/api/sessions/@99/excerpt?path=a.go&line=1"); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown window: %d", rec.Code)
+	}
+}
+
+// all=1 returns every row of the cached annotation, with no line needed
+// (and no second annotation for it).
+func TestExcerptWholeFile(t *testing.T) {
+	srv, git := filesFixture(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("one\nTWO\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := &gitfiles.Overview{Root: root, Mode: gitfiles.ModeBranch, Rev: mergeBase, MergeBase: mergeBase, Files: []gitfiles.OverviewFile{{Path: "a.go", Status: "M"}}}
+	git.EXPECT().Overview("/ws/foo/sub", gitfiles.ModeBranch).Return(o, nil).AnyTimes()
+	git.EXPECT().Annotate(o, "a.go").Return(annotated("a.go"), nil).Times(1)
+
+	e := decodeExcerpt(t, get(t, srv, "/api/sessions/@5/excerpt?path=a.go&all=1"))
+	if len(e.Rows) != 4 || e.Total != 4 || e.Truncated {
+		t.Errorf("whole file: %+v", e)
+	}
+	if e := decodeExcerpt(t, get(t, srv, "/api/sessions/@5/excerpt?path=a.go&all=1&line=2&side=old")); len(e.Rows) != 4 || e.Side != "old" {
+		t.Errorf("with line and side: %+v", e)
+	}
+	if e := decodeExcerpt(t, get(t, srv, "/api/sessions/@5/excerpt?path=a.go&line=2&ctx=0")); len(e.Rows) != 1 || e.Total != 0 {
+		t.Errorf("a plain excerpt must stay a cut: %+v", e)
 	}
 }
 

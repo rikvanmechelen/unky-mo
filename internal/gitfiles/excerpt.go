@@ -37,7 +37,11 @@ type Excerpt struct {
 	Binary    bool   `json:"binary,omitempty"`
 	TooLarge  bool   `json:"tooLarge,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
-	Rows      []Row  `json:"rows"`
+	// Total and Offset are set on a whole-file window (Window): the file's
+	// row count, and the index of Rows[0] in it.
+	Total  int   `json:"total,omitempty"`
+	Offset int   `json:"offset,omitempty"`
+	Rows   []Row `json:"rows"`
 }
 
 // Excerpt sides: which version's line numbers a request names.
@@ -48,6 +52,9 @@ const (
 
 // MaxExcerptRows caps the rows one excerpt returns.
 const MaxExcerptRows = 400
+
+// MaxFullFileRows caps the rows a whole-file request returns.
+const MaxFullFileRows = 5000
 
 // maxDiffBytes caps a file's diff output: both versions, each at most
 // MaxContentBytes, plus the per-line markers.
@@ -267,6 +274,39 @@ func (a *Annotated) Cut(line, end int, side string, ctx int) *Excerpt {
 		to, e.Truncated = from+MaxExcerptRows-1, true
 	}
 	e.Rows = append(e.Rows, a.Rows[from:to+1]...)
+	return e
+}
+
+// Window returns the whole file (all rows of both versions), for the
+// inspector's "Whole file" view. A file over MaxFullFileRows rows gets a
+// window of that size around line on side (the start when line isn't
+// there), with Truncated, Total and Offset telling which part it is.
+func (a *Annotated) Window(line int, side string) *Excerpt {
+	e := &Excerpt{Path: a.Path, Side: side, Binary: a.Binary, TooLarge: a.TooLarge, Rows: []Row{}}
+	n := len(a.Rows)
+	if n == 0 {
+		return e
+	}
+	e.Total = n
+	from, to := 0, n
+	if n > MaxFullFileRows {
+		at := 0
+		for i, r := range a.Rows {
+			x := r.Ln
+			if side == SideOld {
+				x = r.OldLn
+			}
+			if line > 0 && x == line {
+				at = i
+				break
+			}
+		}
+		from = min(max(at-MaxFullFileRows/2, 0), n-MaxFullFileRows)
+		to = from + MaxFullFileRows
+		e.Truncated = true
+	}
+	e.Offset = from
+	e.Rows = append(e.Rows, a.Rows[from:to]...)
 	return e
 }
 
