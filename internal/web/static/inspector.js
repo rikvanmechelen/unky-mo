@@ -130,11 +130,15 @@ function createInspector(host, overview) {
   }
 
   // lineEl is one excerpt row.
-  function lineEl(r, focus) {
+  // segs are the row's highlighted segments ([{text, cls}], diffview.js).
+  function lineEl(r, focus, segs) {
+    const text = el("span", { class: "insp-line__t" });
+    if (segs) text.replaceChildren(...segs.map((g) => (g.cls ? el("span", { class: g.cls, text: g.text }) : document.createTextNode(g.text))));
+    else text.textContent = r.text;
     return el("div", { class: "insp-line" + (r.sign === "+" ? " is-add" : r.sign === "-" ? " is-del" : "") + (focus ? " is-focus" : "") }, [
       el("span", { class: "insp-line__n", text: String(r.ln || r.oldLn || "") }),
       el("span", { class: "insp-line__s", text: r.sign === " " ? "" : r.sign === "-" ? "−" : "+" }),
-      el("span", { class: "insp-line__t", text: r.text }),
+      text,
     ]);
   }
 
@@ -169,14 +173,14 @@ function createInspector(host, overview) {
 
   // fullLines is a whole file: unchanged runs folded (a click opens one),
   // in a scroll box that starts at the focus row (or the first change).
-  function fullLines(rows, focusAt, st, redraw) {
+  function fullLines(rows, focusAt, st, redraw, segs) {
     const box = el("div", { class: "insp-code__lines is-full" });
     for (const it of ovFoldRows(rows, { focus: focusAt, open: st.runs, changesOnly: !st.all })) {
       if (it.fold) {
         const f = btn("insp-fold", `⋯ ${it.count} unchanged line${it.count === 1 ? "" : "s"}`, "Show these lines", () => { st.runs.add(it.from); redraw(); });
         f.removeAttribute("aria-label");
         box.append(f);
-      } else box.append(lineEl(it.row, it.i === focusAt));
+      } else box.append(lineEl(it.row, it.i === focusAt, segs?.[it.i]));
     }
     const wrap = el("div", { class: "insp-code__full" }, [box]);
     requestAnimationFrame(() => {
@@ -187,7 +191,7 @@ function createInspector(host, overview) {
   }
 
   // The icon of the preview's "open in the main panel" button: a square
-  // with an arrow leaving its top-left corner.
+  // with an arrow leaving its top-right corner.
   function openMainIcon() {
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
@@ -198,7 +202,7 @@ function createInspector(host, overview) {
     svg.setAttribute("fill", "none");
     svg.setAttribute("stroke", "currentColor");
     svg.setAttribute("stroke-width", "1.5");
-    for (const d of ["M9 3H13V13H3V9", "M8 8L3 3", "M7 3H3V7"]) {
+    for (const d of ["M7 3H3V13H13V9", "M8 8L13 3", "M9 3H13V7"]) {
       const e = document.createElementNS(ns, "path");
       e.setAttribute("d", d);
       svg.append(e);
@@ -234,9 +238,11 @@ function createInspector(host, overview) {
         focusAt = keep.findIndex((q) => q.i === focusAt);
         rows = keep.map((q) => ({ ...q.r, sign: " " }));
       } else if (focusAt < 0) focusAt = ovFirstChange(rows);
+      // Code colouring as the main window has it (null: unknown language).
+      const segs = typeof highlightHunk === "function" ? highlightHunk(rows.map((r) => r.sign + r.text), path) : null;
       return [
         ...(x.truncated ? [el("div", { class: "insp-code__note", text: `Showing lines ${x.offset + 1}–${x.offset + x.rows.length} of ${x.total}.` })] : []),
-        fullLines(rows, focusAt, how === "file" ? { ...st, all: true } : st, draw),
+        fullLines(rows, focusAt, how === "file" ? { ...st, all: true } : st, draw, segs),
       ];
     };
     draw();
