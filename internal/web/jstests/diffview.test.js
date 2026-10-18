@@ -157,3 +157,44 @@ test("bashChangeTotals sums a change", () => {
   assert.deepEqual(d.bashChangeTotals({ files: [{ added: 3, removed: 1 }, { binary: true }, { added: 2, removed: 0 }] }), { files: 3, added: 5, removed: 1 });
   assert.deepEqual(d.bashChangeTotals(null), { files: 0, added: 0, removed: 0 });
 });
+
+test("intraLineRanges marks the words that changed", () => {
+  const [o, n] = d.intraLineRanges("return foo(a, b)", "return foo(a, b, c)");
+  assert.deepEqual(o, []);
+  assert.deepEqual(n, [[15, 18]]);
+  const [o2, n2] = d.intraLineRanges("let x = 1;", "let y = 22;");
+  assert.deepEqual(o2, [[4, 5], [8, 9]]);
+  assert.deepEqual(n2, [[4, 5], [8, 10]]);
+  // nothing shared but spaces: the whole line differs, so nothing is marked
+  assert.deepEqual(d.intraLineRanges("alpha beta", "gamma delta"), [[], []]);
+  assert.deepEqual(d.intraLineRanges("same", "same"), [[], []]);
+  // very long lines still work (common start and end only)
+  const long = Array.from({ length: 400 }, (_, i) => "w" + i).join(" ");
+  const [, nl] = d.intraLineRanges(long, long.replace("w200", "X"));
+  assert.equal(nl.length, 1);
+});
+
+test("pairedChanges pairs a removed run with the added run after it", () => {
+  const rows = [
+    { sign: " ", text: "keep" },
+    { sign: "-", text: "a = 1" },
+    { sign: "-", text: "b = 2" },
+    { sign: "+", text: "a = 9" },
+    { sign: " ", text: "keep" },
+    { sign: "+", text: "lonely" },
+  ];
+  const r = d.pairedChanges(rows);
+  assert.deepEqual(r[1], [[4, 5]]);
+  assert.deepEqual(r[3], [[4, 5]]);
+  assert.equal(r[2], undefined); // no added row to pair with
+  assert.equal(r[5], undefined); // an added row after context has no partner
+  assert.equal(r[0], undefined);
+});
+
+test("markSegments cuts segments at the ranges", () => {
+  const segs = [{ text: "let ", cls: "syn-k" }, { text: "x = 1", cls: "" }];
+  const out = d.markSegments(segs, [[2, 6]]);
+  assert.deepEqual(out.map((s) => [s.text, s.cls, !!s.chg]), [["le", "syn-k", false], ["t ", "syn-k", true], ["x ", "", true], ["= 1", "", false]]);
+  assert.equal(out.map((s) => s.text).join(""), "let x = 1");
+  assert.deepEqual(d.markSegments(segs, []).map((s) => s.text), ["let ", "x = 1"]);
+});

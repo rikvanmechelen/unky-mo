@@ -133,7 +133,7 @@ function createInspector(host, overview) {
   // segs are the row's highlighted segments ([{text, cls}], diffview.js).
   function lineEl(r, focus, segs) {
     const text = el("span", { class: "insp-line__t" });
-    if (segs) text.replaceChildren(...segs.map((g) => (g.cls ? el("span", { class: g.cls, text: g.text }) : document.createTextNode(g.text))));
+    if (segs) text.replaceChildren(...segs.map((g) => (g.cls || g.chg ? el("span", { class: [g.cls, g.chg ? "is-chg" : ""].filter(Boolean).join(" "), text: g.text }) : document.createTextNode(g.text))));
     else text.textContent = r.text;
     return el("div", { class: "insp-line" + (r.sign === "+" ? " is-add" : r.sign === "-" ? " is-del" : "") + (focus ? " is-focus" : "") }, [
       el("span", { class: "insp-line__n", text: String(r.ln || r.oldLn || "") }),
@@ -239,7 +239,14 @@ function createInspector(host, overview) {
         rows = keep.map((q) => ({ ...q.r, sign: " " }));
       } else if (focusAt < 0) focusAt = ovFirstChange(rows);
       // Code colouring as the main window has it (null: unknown language).
-      const segs = typeof highlightHunk === "function" ? highlightHunk(rows.map((r) => r.sign + r.text), path) : null;
+      let segs = typeof highlightHunk === "function" ? highlightHunk(rows.map((r) => r.sign + r.text), path) : null;
+      // What changed within a line, darker than the line's own tint.
+      if (how === "diff" && typeof pairedChanges === "function") {
+        const chg = pairedChanges(rows);
+        if (chg.some(Boolean)) {
+          segs = rows.map((r, i) => (chg[i] ? markSegments(segs?.[i] || [{ text: r.text, cls: "" }], chg[i]) : segs?.[i]));
+        }
+      }
       return [
         ...(x.truncated ? [el("div", { class: "insp-code__note", text: `Showing lines ${x.offset + 1}–${x.offset + x.rows.length} of ${x.total}.` })] : []),
         fullLines(rows, focusAt, how === "file" ? { ...st, all: true } : st, draw, segs),

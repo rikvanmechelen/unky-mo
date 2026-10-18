@@ -254,6 +254,103 @@ function bashChangeTotals(change) {
   };
 }
 
+// ── Changes within a line ──────────────────────────────────────
+
+// Past this many tokens a line pair is compared by its common start and
+// end only (the table of a token diff grows with the product).
+const INTRA_MAX_TOKENS = 300;
+
+// intraLineRanges finds what changed between a removed line and the added
+// line that replaces it: [oldRanges, newRanges], each a list of [from, to)
+// offsets into that line's text. Tokens are words, runs of spaces and single
+// symbols, matched by a longest common subsequence. Lines that share no
+// token but spaces get no ranges (the whole line differs, which the line's
+// own colour already says).
+function intraLineRanges(oldText, newText) {
+  const tok = (t) => t.match(/\w+|\s+|[^\w\s]/g) || [];
+  const a = tok(oldText), b = tok(newText);
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+  const am = a.slice(pre, a.length - suf), bm = b.slice(pre, b.length - suf);
+  const keepA = new Array(am.length).fill(false), keepB = new Array(bm.length).fill(false);
+  if (am.length && bm.length && am.length <= INTRA_MAX_TOKENS && bm.length <= INTRA_MAX_TOKENS) {
+    const w = bm.length + 1;
+    const t = new Uint16Array((am.length + 1) * w);
+    for (let i = am.length - 1; i >= 0; i--) {
+      for (let j = bm.length - 1; j >= 0; j--) {
+        t[i * w + j] = am[i] === bm[j] ? t[(i + 1) * w + j + 1] + 1 : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
+      }
+    }
+    for (let i = 0, j = 0; i < am.length && j < bm.length;) {
+      if (am[i] === bm[j]) { keepA[i] = keepB[j] = true; i++; j++; }
+      else if (t[(i + 1) * w + j] >= t[i * w + j + 1]) i++;
+      else j++;
+    }
+  }
+  const ranges = (toks, keep) => {
+    const out = [];
+    let at = 0;
+    for (let k = 0; k < pre; k++) at += toks[k].length;
+    for (let k = 0; k < keep.length; k++) {
+      const len = toks[pre + k].length;
+      if (!keep[k]) {
+        if (out.length && out[out.length - 1][1] === at) out[out.length - 1][1] = at + len;
+        else out.push([at, at + len]);
+      }
+      at += len;
+    }
+    return out;
+  };
+  const ra = ranges(a, keepA), rb = ranges(b, keepB);
+  const shared = [...a.slice(0, pre), ...a.slice(a.length - suf), ...am.filter((_, k) => keepA[k])].some((x) => x.trim());
+  return shared ? [ra, rb] : [[], []];
+}
+
+// pairedChanges gives each row of a diff the ranges that changed within
+// it: a run of removed rows is paired, in order, with the run of added
+// rows right after it. Returns an array by row index (undefined where
+// there's nothing to mark).
+function pairedChanges(rows) {
+  const out = new Array(rows.length);
+  for (let i = 0; i < rows.length;) {
+    if (rows[i].sign !== "-") { i++; continue; }
+    let j = i;
+    while (j < rows.length && rows[j].sign === "-") j++;
+    let k = j;
+    while (k < rows.length && rows[k].sign === "+") k++;
+    for (let n = 0; n < Math.min(j - i, k - j); n++) {
+      const [ro, rn] = intraLineRanges(rows[i + n].text, rows[j + n].text);
+      if (ro.length) out[i + n] = ro;
+      if (rn.length) out[j + n] = rn;
+    }
+    i = k;
+  }
+  return out;
+}
+
+// markSegments cuts highlight segments ([{text, cls}]) at the edges of
+// ranges and flags the pieces inside them with chg: true.
+function markSegments(segs, ranges) {
+  const out = [];
+  let pos = 0;
+  for (const seg of segs) {
+    const end = pos + seg.text.length;
+    let at = pos;
+    const push = (from, to, chg) => { if (to > from) out.push({ text: seg.text.slice(from - pos, to - pos), cls: seg.cls, ...(chg ? { chg: true } : {}) }); };
+    for (const [from, to] of ranges) {
+      if (to <= at || from >= end) continue;
+      push(at, Math.max(from, at), false);
+      push(Math.max(from, at), Math.min(to, end), true);
+      at = Math.min(to, end);
+    }
+    push(at, end, false);
+    pos = end;
+  }
+  return out;
+}
+
 if (typeof module === "object" && module.exports) {
-  module.exports = { bashDiffFiles, bashChangeTotals, highlightText, highlightHunk, parseUnifiedDiff, splitCommand, heredocTarget, HIGHLIGHT_MAX_LINES };
+  module.exports = { bashDiffFiles, bashChangeTotals, highlightText, highlightHunk, parseUnifiedDiff, splitCommand, heredocTarget, HIGHLIGHT_MAX_LINES, intraLineRanges, pairedChanges, markSegments };
 }
