@@ -1687,7 +1687,9 @@ button.file-row.overview-file { padding: 3px 12px; }
 .ov-verdict__seg.is-link { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.16em; }
 .ov-verdict__seg.is-red { color: var(--red); }
 .ov-verdict__seg.is-warn { background: var(--yellow); color: var(--on-yellow); padding: 0 0.12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-.ov-verdict__seg.is-on { background: var(--warn-bg); outline: 2px solid var(--yellow); }
+.ov-verdict__seg.is-on { background: var(--ink); color: var(--paper); padding: 0 0.12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.ov-verdict__seg.is-warn.is-on { background: var(--yellow); color: var(--on-yellow); outline: 2px solid var(--ink); outline-offset: 1px; }
+.ov-verdict__seg.is-red.is-on { color: var(--paper); }
 .ov-verdict__seg.is-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .ov-verdict__sub { font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--ink-2); }
 .ov-chips { display: flex; flex-wrap: wrap; gap: 6px; }
