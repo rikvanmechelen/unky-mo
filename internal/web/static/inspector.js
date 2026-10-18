@@ -149,10 +149,25 @@ function createInspector(host, overview) {
     return !!line && n === line && r.sign !== (side === "old" ? "+" : "-");
   }
 
-  // codeLines renders excerpt rows, marking the row at line on side.
-  function codeLines(rows, line, side, cls = "") {
+  // rowSegs is every row's segments, as the main window colours code:
+  // syntax classes (highlightHunk reads the new and old sides apart) and
+  // the words that changed within a +/− pair flagged darker. Entries are
+  // undefined where there is nothing to add (an unknown language).
+  function rowSegs(rows, path) {
+    let segs = path && typeof highlightHunk === "function" ? highlightHunk(rows.map((r) => r.sign + r.text), path) : null;
+    if (typeof pairedChanges === "function" && typeof markSegments === "function") {
+      const chg = pairedChanges(rows);
+      if (chg.some(Boolean)) segs = rows.map((r, i) => (chg[i] ? markSegments(segs?.[i] || [{ text: r.text, cls: "" }], chg[i]) : segs?.[i]));
+    }
+    return segs;
+  }
+
+  // codeLines renders excerpt rows, marking the row at line on side, and
+  // coloured as path's code.
+  function codeLines(rows, line, side, cls = "", path = "") {
     const box = el("div", { class: "insp-code__lines" + (cls ? " " + cls : "") });
-    for (const r of rows) box.append(lineEl(r, isFocus(r, line, side)));
+    const segs = rowSegs(rows, path);
+    rows.forEach((r, i) => box.append(lineEl(r, isFocus(r, line, side), segs?.[i])));
     return box;
   }
 
@@ -238,15 +253,9 @@ function createInspector(host, overview) {
         focusAt = keep.findIndex((q) => q.i === focusAt);
         rows = keep.map((q) => q.r);
       } else if (focusAt < 0) focusAt = ovFirstChange(rows);
-      // Code colouring as the main window has it (null: unknown language).
-      let segs = typeof highlightHunk === "function" ? highlightHunk(rows.map((r) => r.sign + r.text), path) : null;
-      // What changed within a line, darker than the line's own tint.
-      if (typeof pairedChanges === "function" && how === "diff") {
-        const chg = pairedChanges(rows);
-        if (chg.some(Boolean)) {
-          segs = rows.map((r, i) => (chg[i] ? markSegments(segs?.[i] || [{ text: r.text, cls: "" }], chg[i]) : segs?.[i]));
-        }
-      }
+      // Code colouring as the main window has it; the words changed within a
+      // line only in a diff (a file has no removed rows to compare with).
+      const segs = rowSegs(rows, path);
       return [
         ...(x.truncated ? [el("div", { class: "insp-code__note", text: `Showing lines ${x.offset + 1}–${x.offset + x.rows.length} of ${x.total}.` })] : []),
         fullLines(rows, focusAt, how === "file" ? { ...st, all: true } : st, draw, segs),
@@ -289,7 +298,7 @@ function createInspector(host, overview) {
         rows = rows.slice(Math.max(0, i - 3), i + 4);
       }
       if (!rows.length) return [el("div", { class: "insp-code__note", text: "That line isn't in this version." })];
-      return [codeLines(rows, focus, side)];
+      return [codeLines(rows, focus, side, "", path)];
     };
     fill(lines, path, line || 1, first ? { side, end: 400, ctx: 0 } : { side, end, ctx }, make);
     return block;
@@ -352,7 +361,7 @@ function createInspector(host, overview) {
     if (it.site) {
       const { path, line, side } = it.site;
       const code = el("div", { class: "insp-rel__code" });
-      if (withCode) fill(code, path, line, { side, ctx: 0 }, (x) => (x?.rows?.length ? [codeLines(x.rows, line, side, "is-one")] : []));
+      if (withCode) fill(code, path, line, { side, ctx: 0 }, (x) => (x?.rows?.length ? [codeLines(x.rows, line, side, "is-one", path)] : []));
       const key = (sel.current() || "") + "|" + path + ":" + line;
       const open = peeks.has(key);
       const peek = btn("insp-rel__peek" + (open ? " is-open" : ""), open ? "Hide" : "Peek", "", () => { if (open) peeks.delete(key); else peeks.add(key); render(); });
@@ -360,7 +369,7 @@ function createInspector(host, overview) {
       main.push(code, el("div", { class: "insp-rel__links" }, [peek, ...openLinks(path, line, side)]));
       if (open) {
         const box = el("div", { class: "insp-rel__peekbox" });
-        fill(box, path, line, { side, ctx: 3 }, (x) => (x?.rows?.length ? [el("div", { class: "insp-rel__peekat", text: `${path}:${line}` }), codeLines(x.rows, line, side)] : [el("div", { class: "insp-code__note", text: "Not available." })]));
+        fill(box, path, line, { side, ctx: 3 }, (x) => (x?.rows?.length ? [el("div", { class: "insp-rel__peekat", text: `${path}:${line}` }), codeLines(x.rows, line, side, "", path)] : [el("div", { class: "insp-code__note", text: "Not available." })]));
         main.push(box);
       }
     }

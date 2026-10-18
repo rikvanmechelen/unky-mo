@@ -168,6 +168,8 @@ test("intraLineRanges marks the words that changed", () => {
   // nothing shared but spaces: the whole line differs, so nothing is marked
   assert.deepEqual(d.intraLineRanges("alpha beta", "gamma delta"), [[], []]);
   assert.deepEqual(d.intraLineRanges("same", "same"), [[], []]);
+  // a rewritten comment shares only its "//": not marked word by word
+  assert.deepEqual(d.intraLineRanges("// codeLines renders excerpt rows, marking the row", "// rowSegs is every row's segments, as the main window"), [[], []]);
   // very long lines still work (common start and end only)
   const long = Array.from({ length: 400 }, (_, i) => "w" + i).join(" ");
   const [, nl] = d.intraLineRanges(long, long.replace("w200", "X"));

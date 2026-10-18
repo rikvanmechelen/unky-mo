@@ -260,6 +260,9 @@ function bashChangeTotals(change) {
 // end only (the table of a token diff grows with the product).
 const INTRA_MAX_TOKENS = 300;
 
+// The least share of a line that must be unchanged for its words to be marked.
+const INTRA_MIN_SHARED = 0.4;
+
 // intraLineRanges finds what changed between a removed line and the added
 // line that replaces it: [oldRanges, newRanges], each a list of [from, to)
 // offsets into that line's text. Tokens are words, runs of spaces and single
@@ -304,8 +307,12 @@ function intraLineRanges(oldText, newText) {
     return out;
   };
   const ra = ranges(a, keepA), rb = ranges(b, keepB);
-  const shared = [...a.slice(0, pre), ...a.slice(a.length - suf), ...am.filter((_, k) => keepA[k])].some((x) => x.trim());
-  return shared ? [ra, rb] : [[], []];
+  // Mark words only when the lines are alike: a real share of the longer
+  // line's characters (not counting spaces) is unchanged. Otherwise the whole
+  // line differs, which the line's own colour already says.
+  const kept = [...a.slice(0, pre), ...a.slice(a.length - suf), ...am.filter((_, k) => keepA[k])].join("").replace(/\s/g, "").length;
+  const longest = Math.max(oldText.replace(/\s/g, "").length, newText.replace(/\s/g, "").length);
+  return longest && kept / longest >= INTRA_MIN_SHARED ? [ra, rb] : [[], []];
 }
 
 // pairedChanges gives each row of a diff the ranges that changed within
