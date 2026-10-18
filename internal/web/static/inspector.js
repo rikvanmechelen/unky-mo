@@ -127,18 +127,26 @@ function createInspector(host, overview) {
     return el("div", { class: "insp-h" }, [el("span", { text }), ...(count != null ? [el("span", { class: "insp-h__n", text: String(count) })] : [])]);
   }
 
+  // lineEl is one excerpt row.
+  function lineEl(r, focus) {
+    return el("div", { class: "insp-line" + (r.sign === "+" ? " is-add" : r.sign === "-" ? " is-del" : "") + (focus ? " is-focus" : "") }, [
+      el("span", { class: "insp-line__n", text: String(r.ln || r.oldLn || "") }),
+      el("span", { class: "insp-line__s", text: r.sign === " " ? "" : r.sign === "-" ? "−" : "+" }),
+      el("span", { class: "insp-line__t", text: r.text }),
+    ]);
+  }
+
+  // isFocus: is r the row at line on side (not the other version's row of
+  // a changed line)?
+  function isFocus(r, line, side) {
+    const n = side === "old" ? r.oldLn : r.ln;
+    return !!line && n === line && r.sign !== (side === "old" ? "+" : "-");
+  }
+
   // codeLines renders excerpt rows, marking the row at line on side.
   function codeLines(rows, line, side, cls = "") {
     const box = el("div", { class: "insp-code__lines" + (cls ? " " + cls : "") });
-    for (const r of rows) {
-      const n = side === "old" ? r.oldLn : r.ln;
-      const focus = line && n === line && (r.sign !== (side === "old" ? "+" : "-"));
-      box.append(el("div", { class: "insp-line" + (r.sign === "+" ? " is-add" : r.sign === "-" ? " is-del" : "") + (focus ? " is-focus" : "") }, [
-        el("span", { class: "insp-line__n", text: String(r.ln || r.oldLn || "") }),
-        el("span", { class: "insp-line__s", text: r.sign === " " ? "" : r.sign === "-" ? "−" : "+" }),
-        el("span", { class: "insp-line__t", text: r.text }),
-      ]));
-    }
+    for (const r of rows) box.append(lineEl(r, isFocus(r, line, side)));
     return box;
   }
 
@@ -152,18 +160,66 @@ function createInspector(host, overview) {
     overview.excerpt(path, line, opts).then(done, () => box.replaceChildren(el("div", { class: "insp-code__note", text: "Not available." })));
   }
 
-  // codeBlock is a titled excerpt of path around line, with Diff and File.
+  // fullState is a block's whole-file view: whether it's on, whether every
+  // line shows (else unchanged runs fold), and which folds are open. Kept
+  // per selection + file + side, so a re-render keeps what was opened.
+  const fulls = new Map();
+  function fullState(key) {
+    if (!fulls.has(key)) fulls.set(key, { on: false, all: false, runs: new Set() });
+    return fulls.get(key);
+  }
+
+  // fullLines is the whole file: unchanged runs folded (a click opens one),
+  // in a scroll box that starts at the focus row.
+  function fullLines(x, focusAt, st, redraw) {
+    const rows = x.rows || [];
+    const box = el("div", { class: "insp-code__lines is-full" });
+    for (const it of ovFoldRows(rows, { focus: focusAt, open: st.runs, changesOnly: !st.all })) {
+      if (it.fold) {
+        const f = btn("insp-fold", `⋯ ${it.count} unchanged line${it.count === 1 ? "" : "s"}`, "Show these lines", () => { st.runs.add(it.from); redraw(); });
+        f.removeAttribute("aria-label");
+        box.append(f);
+      } else box.append(lineEl(it.row, it.i === focusAt));
+    }
+    const wrap = el("div", { class: "insp-code__full" }, [box]);
+    requestAnimationFrame(() => {
+      const f = box.querySelector(".is-focus") || box.querySelector(".is-add, .is-del");
+      if (f) wrap.scrollTop = Math.max(0, f.offsetTop - wrap.clientHeight / 2);
+    });
+    return wrap;
+  }
+
+  // codeBlock is a titled excerpt of path around line, with Whole file,
+  // Diff and File.
   function codeBlock(title, path, line, { side = "new", end = 0, ctx = 3, first = false } = {}) {
     if (!path) return null;
     const at = el("span", { class: "insp-code__at", text: line && !first ? `${path}:${line}` : path });
     const lines = el("div", { class: "insp-code__body" });
+    const st = fullState((sel.current() || "") + "|" + path + "|" + side);
+    const links = el("span", { class: "insp-code__links" });
     const block = el("div", { class: "insp-code" }, [
       el("div", { class: "insp-h", text: title }),
       el("div", { class: "insp-code__box" }, [
-        el("div", { class: "insp-code__head" }, [at, ...openLinks(path, line, side)]),
+        el("div", { class: "insp-code__head" }, [at, links, ...openLinks(path, line, side)]),
         lines,
       ]),
     ]);
+    const draw = () => {
+      links.replaceChildren(
+        btn("insp-code__link", st.on ? "Collapse" : "Whole file", st.on ? "Back to the short excerpt" : "Show the whole file with its + and − lines", () => { st.on = !st.on; draw(); }),
+        ...(st.on ? [btn("insp-code__link", st.all ? "Changes only" : "All lines", st.all ? "Fold unchanged lines" : "Show every line", () => { st.all = !st.all; draw(); })] : []),
+      );
+      if (st.on) fill(lines, path, line || 1, { side, all: true }, makeFull);
+      else fill(lines, path, line || 1, first ? { side, end: 400, ctx: 0 } : { side, end, ctx }, make);
+    };
+    const makeFull = (x) => {
+      if (!x || x.binary || x.tooLarge) return [el("div", { class: "insp-code__note", text: x?.binary ? "A binary file." : x?.tooLarge ? "Too large to show." : "Not available." })];
+      if (!x.rows?.length) return [el("div", { class: "insp-code__note", text: "Empty." })];
+      return [
+        ...(x.truncated ? [el("div", { class: "insp-code__note", text: `Showing lines ${x.offset + 1}–${x.offset + x.rows.length} of ${x.total}.` })] : []),
+        fullLines(x, first ? ovFirstChange(x.rows) : x.rows.findIndex((r) => isFocus(r, line, side)), st, draw),
+      ];
+    };
     const make = (x) => {
       if (!x || x.binary || x.tooLarge) return [el("div", { class: "insp-code__note", text: x?.binary ? "A binary file." : x?.tooLarge ? "Too large to show." : "Not available." })];
       let rows = x.rows || [];
@@ -179,7 +235,7 @@ function createInspector(host, overview) {
       if (!rows.length) return [el("div", { class: "insp-code__note", text: "That line isn't in this version." })];
       return [codeLines(rows, focus, side)];
     };
-    fill(lines, path, line || 1, first ? { side, end: 400, ctx: 0 } : { side, end, ctx }, make);
+    draw();
     return block;
   }
 

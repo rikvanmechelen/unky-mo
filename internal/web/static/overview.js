@@ -1094,8 +1094,8 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
   // per overview version: a new /overview body starts afresh.
   const excerpts = new Map(); // key → {promise, value}
   let excerptsFor = "";
-  function excerptKey(path, line, { side = "new", end = 0, ctx = 3 } = {}) {
-    return [path, line, side, end, ctx].join("|");
+  function excerptKey(path, line, { side = "new", end = 0, ctx = 3, all = false } = {}) {
+    return [path, line, side, end, ctx, all ? "all" : ""].join("|");
   }
   function excerptCache() {
     const v = `${gen}|${etag}`;
@@ -1106,9 +1106,14 @@ function createOverview(panel, { onOpenDiff, onOpenFile, onVisible, reviewList, 
     const cache = excerptCache();
     const key = excerptKey(path, line, opts);
     if (cache.has(key)) return cache.get(key).promise;
-    const { side = "new", end = 0, ctx = 3 } = opts;
-    const q = new URLSearchParams({ path, line: String(Math.max(1, line || 1)), side, ctx: String(ctx) });
-    if (end) q.set("end", String(end));
+    const { side = "new", end = 0, ctx = 3, all = false } = opts;
+    // all: the whole file (the server centres a huge one on line).
+    const q = new URLSearchParams({ path, line: String(Math.max(1, line || 1)), side });
+    if (all) q.set("all", "1");
+    else {
+      q.set("ctx", String(ctx));
+      if (end) q.set("end", String(end));
+    }
     const entry = { value: undefined };
     entry.promise = fetch(`${api}/excerpt?${modeQuery()}&${q}`, { cache: "no-store" })
       .then(async (res) => {
