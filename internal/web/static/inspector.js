@@ -233,15 +233,15 @@ function createInspector(host, overview) {
       if (!rows.length) return [el("div", { class: "insp-code__note", text: "Empty." })];
       let focusAt = line ? rows.findIndex((r) => isFocus(r, line, side)) : -1;
       if (how === "file") {
-        // The new version as it is: no removed rows, no markers.
+        // The new version as it is: no removed rows, added rows still tinted.
         const keep = rows.map((r, i) => ({ r, i })).filter((q) => q.r.sign !== "-");
         focusAt = keep.findIndex((q) => q.i === focusAt);
-        rows = keep.map((q) => ({ ...q.r, sign: " " }));
+        rows = keep.map((q) => q.r);
       } else if (focusAt < 0) focusAt = ovFirstChange(rows);
       // Code colouring as the main window has it (null: unknown language).
       let segs = typeof highlightHunk === "function" ? highlightHunk(rows.map((r) => r.sign + r.text), path) : null;
       // What changed within a line, darker than the line's own tint.
-      if (how === "diff" && typeof pairedChanges === "function") {
+      if (typeof pairedChanges === "function" && how === "diff") {
         const chg = pairedChanges(rows);
         if (chg.some(Boolean)) {
           segs = rows.map((r, i) => (chg[i] ? markSegments(segs?.[i] || [{ text: r.text, cls: "" }], chg[i]) : segs?.[i]));
