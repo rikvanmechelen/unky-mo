@@ -18,7 +18,7 @@ func parseInputBox(screen string) (text string, ok bool) {
 	lines := strings.Split(screen, "\n")
 	bottom, top := -1, -1
 	for i := len(lines) - 1; i >= 0; i-- {
-		if !isRule(lines[i]) {
+		if !isBoxRule(lines[i]) {
 			continue
 		}
 		if bottom < 0 {
@@ -45,4 +45,14 @@ func parseInputBox(screen string) (text string, ok bool) {
 		}
 	}
 	return text, true
+}
+
+// isBoxRule is isRule for the message box's borders, which Claude Code can
+// label with the session name ("──────── app ─").
+func isBoxRule(line string) bool {
+	if isRule(line) {
+		return true
+	}
+	line = strings.TrimSpace(line)
+	return strings.HasPrefix(line, "───") && strings.HasSuffix(line, "─")
 }

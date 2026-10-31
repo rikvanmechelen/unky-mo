@@ -39,3 +39,11 @@ func TestParseInputBoxNoBox(t *testing.T) {
 		t.Error("want ok=false without two rules")
 	}
 }
+
+func TestParseInputBoxLabelledTopRule(t *testing.T) {
+	screen := "output\n──────────────────────────── app ─\n❯ hello\n────────────────────────────\n  ⏵⏵ auto mode on"
+	text, ok := parseInputBox(screen)
+	if !ok || text != "hello" {
+		t.Fatalf("got %q, %v", text, ok)
+	}
+}
