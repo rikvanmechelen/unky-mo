@@ -1,6 +1,7 @@
 package project
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -253,5 +254,22 @@ func TestListBranchesAnnotatesWorktrees(t *testing.T) {
 	}
 	if !strings.HasSuffix(wb.WorktreePath, "-wt") {
 		t.Errorf("WorktreePath should be set, got %q", wb.WorktreePath)
+	}
+}
+
+func TestListBranchesUnbornMain(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	branches, err := ListBranches(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 1 || branches[0].Name != "main" || !branches[0].IsMain {
+		t.Fatalf("want the unborn main checkout, got %+v", branches)
 	}
 }

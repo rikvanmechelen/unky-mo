@@ -67,10 +67,17 @@ func ListBranches(projectPath string) ([]Branch, error) {
 	}
 
 	mainBranch, _ := MainCheckoutBranch(projectPath)
+	foundMain := false
 	for i := range branches {
 		if branches[i].Name == mainBranch {
 			branches[i].IsMain = true
+			foundMain = true
 		}
+	}
+	// A repo with no commits yet has an unborn HEAD: its branch has no ref,
+	// so for-each-ref misses it, but the main checkout is still usable.
+	if mainBranch != "" && !foundMain {
+		branches = append(branches, Branch{Name: mainBranch, IsMain: true})
 	}
 
 	mergedSet := mergedBranchSet(projectPath, mainBranch)
