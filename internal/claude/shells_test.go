@@ -50,14 +50,10 @@ func TestExtractEvalCommand(t *testing.T) {
 	}
 }
 
-func TestExtractEvalCommandTruncates(t *testing.T) {
+func TestExtractEvalCommandKeepsLongCommands(t *testing.T) {
 	long := "very_long_command_that_exceeds_eighty_characters_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 	cmd := "/usr/bin/zsh -c snap && eval " + long + " < /dev/null && pwd -P >| /tmp/c"
-	got := extractEvalCommand(cmd)
-	if len(got) != 80 {
-		t.Errorf("expected truncated length 80, got %d (%q)", len(got), got)
-	}
-	if got[len(got)-3:] != "..." {
-		t.Errorf("expected truncated suffix '...', got %q", got)
+	if got := extractEvalCommand(cmd); got != long {
+		t.Errorf("long command was altered: got %q", got)
 	}
 }

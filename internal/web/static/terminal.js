@@ -562,8 +562,11 @@ function createTerminalDrawer(root) {
   async function refreshOutput() {
     if (!windowID || !available || !selected || !open || document.visibilityState !== "visible") return;
     const g = gen, pane = selected;
-    if (isShell(pane) && !(shells.find((sh) => "s" + sh.id === pane) || {}).output) {
-      outputEl.textContent = "This shell has no output file to show.";
+    const shell = isShell(pane) ? shells.find((sh) => "s" + sh.id === pane) : null;
+    // The tab label is cut short; the output starts with the whole command.
+    const header = shell ? `$ ${shell.command}\n\n` : "";
+    if (isShell(pane) && !(shell || {}).output) {
+      outputEl.textContent = header + "This shell has no output file to show.";
       lastOutput = null;
       return;
     }
@@ -579,7 +582,7 @@ function createTerminalDrawer(root) {
       if (data.text === lastOutput) return;
       const pinned = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 24;
       lastOutput = data.text;
-      outputEl.textContent = data.text;
+      outputEl.textContent = header + (data.text || "No output yet.");
       if (pinned) outputEl.scrollTop = outputEl.scrollHeight;
     } catch (err) {
       if (g === gen) refreshList(); // the pane probably went away

@@ -114,11 +114,6 @@ func extractEvalCommand(cmd string) string {
 
 	extracted = strings.TrimSpace(extracted)
 
-	// Truncate long commands
-	if len(extracted) > 80 {
-		extracted = extracted[:77] + "..."
-	}
-
 	// Skip trivial/one-shot commands (these would have exited already anyway)
 	lower := strings.ToLower(extracted)
 	if strings.HasPrefix(lower, "cd ") || extracted == "pwd" || extracted == "ls" {
