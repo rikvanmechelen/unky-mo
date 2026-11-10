@@ -2633,6 +2633,15 @@ func (m Model) refreshSessions() tea.Cmd {
 			views = append(views, v)
 		}
 
+		// Claude Code can run a window's actual conversation through a
+		// background-hosted process (observed on a session with auto mode
+		// on: a content-less "interactive" process in the pane, plus a
+		// same-cwd "background"-kind process doing the real work). Both
+		// resolve to the same window via the ancestry walk above, so the
+		// window would show two rows — and the web chat view would tail the
+		// empty one. Drop the transcript-less row where a sibling has one.
+		views = dedupeSameWindowSessions(views)
+
 		// Second pass: detect non-Claude agent windows by their @mo_agent
 		// tmux option. These sessions don't appear in claude.LiveSessions()
 		// so we must discover them from the window list directly.
@@ -2713,6 +2722,57 @@ func (m Model) refreshSessions() tea.Cmd {
 			externalSessions: externalSessions,
 		}
 	}
+}
+
+// dedupeSameWindowSessions drops transcript-less sessionViews that share a
+// tmux window with a session that does have a transcript.
+//
+// `claude agents --json` can report more than one live process for a single
+// pane: observed with a same-cwd "background"-kind session doing the real
+// work alongside an "interactive" one that never writes its own JSONL. Both
+// resolve to the same window via the PID-ancestry walk, so the window gets
+// two rows — and the web chat view, which tails the row's transcript, picks
+// the empty one and renders nothing.
+//
+// The rule is deliberately narrow: a row is only dropped when it has no
+// transcript AND a sibling on the same window has one. Several real
+// sessions legitimately share a window — an agent team's teammates run as
+// panes in the lead's window, each with its own session ID and transcript
+// (see enrichViewsWithTeamInfo) — and those must all survive.
+func dedupeSameWindowSessions(views []sessionView) []sessionView {
+	// Which windows have at least one transcript-bearing session?
+	hasReal := make(map[string]bool)
+	transcript := make([]bool, len(views))
+	for i, v := range views {
+		if v.Section != "projects" || v.WindowID == "" {
+			continue
+		}
+		transcript[i] = sessionHasTranscript(v)
+		if transcript[i] {
+			hasReal[v.WindowID] = true
+		}
+	}
+	if len(hasReal) == 0 {
+		return views
+	}
+	out := views[:0]
+	for i, v := range views {
+		if v.Section == "projects" && v.WindowID != "" && !transcript[i] && hasReal[v.WindowID] {
+			continue // a sibling on this window carries the real conversation
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// sessionHasTranscript reports whether v's session has written a non-empty
+// JSONL transcript.
+func sessionHasTranscript(v sessionView) bool {
+	if v.SessionID == "" || v.CWD == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(claude.ProjectsDirForPath(v.CWD), v.SessionID+".jsonl"))
+	return err == nil && info.Size() > 0
 }
 
 // knownProjectPath returns the ProjectItem name for cwd if cwd is a known

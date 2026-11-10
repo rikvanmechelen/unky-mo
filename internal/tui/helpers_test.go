@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/list"
+	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/ops"
@@ -890,5 +893,123 @@ func TestHookEventFromNotificationLegacy(t *testing.T) {
 	}
 	if _, ok := hookEventFromNotification(notify.Notification{Type: "other"}); ok {
 		t.Fatal("unknown legacy type should be dropped")
+	}
+}
+
+// TestDedupeSameWindowSessionsPrefersTranscript covers Claude Code's auto
+// mode, where the pane's "interactive" process never writes its own
+// transcript and the real conversation runs as a same-cwd "background"-kind
+// session instead — both resolve to the same window, so without this they'd
+// show as two rows for one pane.
+func TestDedupeSameWindowSessionsPrefersTranscript(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cwd := "/Users/rik/workspace/status_page"
+	dir := claude.ProjectsDirForPath(cwd)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(dir, "bg-session.jsonl")
+	if err := os.WriteFile(transcript, []byte(`{"type":"user"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	views := []sessionView{
+		{SessionID: "wrapper-session", CWD: cwd, WindowID: "@2", Section: "projects", Status: StatusIdle},
+		{SessionID: "bg-session", CWD: cwd, WindowID: "@2", Section: "projects", Status: StatusIdle},
+	}
+
+	got := dedupeSameWindowSessions(views)
+	if len(got) != 1 {
+		t.Fatalf("want 1 view after dedupe, got %d: %+v", len(got), got)
+	}
+	if got[0].SessionID != "bg-session" {
+		t.Errorf("want the transcript-bearing session to win, got %q", got[0].SessionID)
+	}
+}
+
+// With no transcript anywhere on the window there's nothing to prefer, so
+// the rows are left alone rather than guessing which is real.
+func TestDedupeSameWindowSessionsNeitherHasTranscriptKeepsBoth(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	views := []sessionView{
+		{SessionID: "first", CWD: "/x", WindowID: "@2", Section: "projects"},
+		{SessionID: "second", CWD: "/x", WindowID: "@2", Section: "projects"},
+	}
+	got := dedupeSameWindowSessions(views)
+	if len(got) != 2 {
+		t.Fatalf("want both rows kept when neither has a transcript, got %+v", got)
+	}
+}
+
+// TestDedupeSameWindowSessionsKeepsAgentTeammates is the guard that makes
+// this rule safe: an agent team's teammates run as panes in the lead's
+// window, so they legitimately share a WindowID and each has its own
+// session and transcript. Collapsing by window alone would hide them.
+func TestDedupeSameWindowSessionsKeepsAgentTeammates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cwd := "/Users/rik/workspace/proj"
+	dir := claude.ProjectsDirForPath(cwd)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"lead", "mate-a", "mate-b"} {
+		p := filepath.Join(dir, id+".jsonl")
+		if err := os.WriteFile(p, []byte(`{"type":"user"}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	views := []sessionView{
+		{SessionID: "lead", CWD: cwd, WindowID: "@7", Section: "projects"},
+		{SessionID: "mate-a", CWD: cwd, WindowID: "@7", Section: "projects"},
+		{SessionID: "mate-b", CWD: cwd, WindowID: "@7", Section: "projects"},
+	}
+	got := dedupeSameWindowSessions(views)
+	if len(got) != 3 {
+		t.Fatalf("all three transcript-bearing team sessions must survive, got %d: %+v", len(got), got)
+	}
+}
+
+// A transcript-less row on a window with no transcript-bearing sibling is
+// a session mid-launch, not a duplicate — it must not vanish.
+func TestDedupeSameWindowSessionsKeepsLoneTranscriptlessSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	views := []sessionView{
+		{SessionID: "starting-up", CWD: "/x", WindowID: "@4", Section: "projects"},
+	}
+	got := dedupeSameWindowSessions(views)
+	if len(got) != 1 {
+		t.Fatalf("a lone mid-launch session must be kept, got %+v", got)
+	}
+}
+
+func TestDedupeSameWindowSessionsLeavesDistinctWindowsAlone(t *testing.T) {
+	views := []sessionView{
+		{SessionID: "a", CWD: "/x", WindowID: "@2", Section: "projects"},
+		{SessionID: "b", CWD: "/y", WindowID: "@3", Section: "projects"},
+	}
+	got := dedupeSameWindowSessions(views)
+	if len(got) != 2 {
+		t.Fatalf("want 2 views for distinct windows, got %d: %+v", len(got), got)
+	}
+}
+
+func TestDedupeSameWindowSessionsIgnoresExternalAndUnresolved(t *testing.T) {
+	// External rows, and rows whose window never resolved (empty WindowID),
+	// must never collapse into each other just because they match by zero
+	// value.
+	views := []sessionView{
+		{SessionID: "a", CWD: "/x", WindowID: "", Section: "external"},
+		{SessionID: "b", CWD: "/y", WindowID: "", Section: "external"},
+		{SessionID: "c", CWD: "/z", WindowID: "", Section: "projects"},
+		{SessionID: "d", CWD: "/w", WindowID: "", Section: "projects"},
+	}
+	got := dedupeSameWindowSessions(views)
+	if len(got) != 4 {
+		t.Fatalf("want all 4 rows untouched, got %d: %+v", len(got), got)
 	}
 }
