@@ -2,13 +2,16 @@ package claude
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -97,33 +100,127 @@ func IsAlive(pid int) bool {
 	return err == nil
 }
 
-// parentPID returns the PPID of the given process, or 0 if it can't be read.
-// Reads /proc/<pid>/status (Linux-specific; returns 0 on other OSes).
-func parentPID(pid int) int {
-	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		line := s.Text()
-		if strings.HasPrefix(line, "PPid:") {
-			var ppid int
-			if _, err := fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid); err != nil {
-				return 0
-			}
-			return ppid
+// ppidTableTTL bounds how stale the ps(1) process table may be. A pid's
+// parent effectively never changes (barring reparenting to init when the
+// parent dies), and this only has to stay fresh relative to the TUI's 5s
+// session poll, so one ps call covers a whole poll's worth of lookups.
+const ppidTableTTL = 2 * time.Second
+
+// maxAncestorHops caps the ancestry walk. A real chain is a handful of
+// hops; the cap is insurance against a malformed table producing a cycle
+// and hanging the poll goroutine.
+const maxAncestorHops = 64
+
+// ppidMissTTL throttles the re-read triggered when a pid isn't in the
+// cached table. A miss usually means the table predates the process (a
+// session launched since the last read, which the 1s sidebar poll would
+// otherwise not see for a full ppidTableTTL), so it's worth a fresh look —
+// but a miss is also what a dead pid looks like, and those must not spawn
+// a ps per lookup.
+const ppidMissTTL = 250 * time.Millisecond
+
+var (
+	ppidMu    sync.Mutex
+	ppidCache map[int]int
+	ppidAt    time.Time
+)
+
+// ppidTable returns a pid→ppid snapshot of every process, read from ps(1)
+// at most once per ppidTableTTL. Used only on systems without /proc.
+//
+// Reading the whole table at once is deliberate: IsDescendantOf walks a
+// chain per call and is itself called once per (window × session) on every
+// poll, so a per-pid `ps -p` would spawn dozens of processes every 5s.
+func ppidTable() map[int]int { return ppidTableFor(0) }
+
+// ppidTableFor returns the cached table, re-reading it when stale — or,
+// when want is a pid the cached table doesn't know and the table is at
+// least ppidMissTTL old, to pick up a process created since the last read.
+func ppidTableFor(want int) map[int]int {
+	ppidMu.Lock()
+	defer ppidMu.Unlock()
+	if ppidCache != nil && time.Since(ppidAt) < ppidTableTTL {
+		if _, known := ppidCache[want]; known || want == 0 || time.Since(ppidAt) < ppidMissTTL {
+			return ppidCache
 		}
 	}
-	return 0
+	// -A (all processes) is spelled the same on macOS and Linux, and
+	// includes the detached daemons Claude Code's background agents run
+	// under. Empty headers (`pid=`) keep the output to bare columns.
+	out, _, err := sessionsCommander.Output(context.Background(), "", "ps", "-Ao", "pid=,ppid=")
+	if err != nil {
+		return ppidCache // keep the previous snapshot rather than losing the table
+	}
+	table := make(map[int]int, 512)
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		pidStr, ppidStr, ok := strings.Cut(strings.TrimSpace(s.Text()), " ")
+		if !ok {
+			continue
+		}
+		pid, err1 := strconv.Atoi(strings.TrimSpace(pidStr))
+		ppid, err2 := strconv.Atoi(strings.TrimSpace(ppidStr))
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		table[pid] = ppid
+	}
+	ppidCache, ppidAt = table, time.Now()
+	return table
+}
+
+// resetPPIDTable drops the cached process table. Tests only.
+func resetPPIDTable() {
+	ppidMu.Lock()
+	ppidCache, ppidAt = nil, time.Time{}
+	ppidMu.Unlock()
+}
+
+// seedPPIDTable installs a process table as though it had been read age ago,
+// so cache-staleness paths are testable without sleeping. Tests only.
+func seedPPIDTable(table map[int]int, age time.Duration) {
+	ppidMu.Lock()
+	ppidCache, ppidAt = table, time.Now().Add(-age)
+	ppidMu.Unlock()
+}
+
+// parentPID returns the PPID of the given process, or 0 if it can't be
+// determined. Reads /proc/<pid>/status on Linux; falls back to a cached
+// ps(1) process table (via the same sessionsCommander seam ReadSessions
+// and LiveSessions use) on OSes with no /proc, macOS included.
+//
+// IsDescendantOf's ancestry walk depends on this working everywhere mo
+// runs: a Claude process more than one fork removed from its tmux pane PID
+// (e.g. Claude Code's background-agent chain, pane -> daemon run ->
+// bg-pty-host -> session) was wrongly classified as StatusExternal while
+// this silently returned 0 past the first hop on macOS.
+func parentPID(pid int) int {
+	if f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
+		defer f.Close()
+		s := bufio.NewScanner(f)
+		for s.Scan() {
+			line := s.Text()
+			if strings.HasPrefix(line, "PPid:") {
+				var ppid int
+				if _, err := fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid); err == nil {
+					return ppid
+				}
+				return 0
+			}
+		}
+		return 0
+	}
+	return ppidTableFor(pid)[pid]
 }
 
 // IsDescendantOf reports whether pid has any ancestor in the given set,
 // walking up the PPID chain. Returns false if pid == 0 or the chain ends
 // before hitting a host (e.g. an orphaned process reparented to init).
 func IsDescendantOf(pid int, hostPIDs map[int]bool) bool {
-	for p := pid; p > 1; p = parentPID(p) {
+	if len(hostPIDs) == 0 {
+		return false
+	}
+	for p, hops := pid, 0; p > 1 && hops < maxAncestorHops; p, hops = parentPID(p), hops+1 {
 		if hostPIDs[p] {
 			return true
 		}
