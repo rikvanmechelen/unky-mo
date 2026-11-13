@@ -1177,8 +1177,22 @@ function main() {
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
   const modeChipRoot = document.getElementById("mode-chip");
+  // A dialog Claude Code draws over its prompt box (the trust prompt, "Teach
+  // auto mode about your environment?", /config…) has the keyboard, so a
+  // prompt typed here is refused by the server rather than sent blind. The
+  // status can still read idle, so without this the composer looks ready and
+  // sending appears to do nothing. The permission and question states have
+  // their own banners, which say the same thing better.
+  const dialogBanner = document.getElementById("dialog-banner");
+  let dialogBlocked = false;
+  let bannerStatus = "none";
+  function renderDialogBanner() {
+    const own = bannerStatus === "permission" || bannerStatus === "question";
+    dialogBanner.style.display = dialogBlocked && !own ? "flex" : "none";
+  }
   const modeChip = createModeChip(modeChipRoot, composer,
-    (msg) => { sendError.textContent = msg; });
+    (msg) => { sendError.textContent = msg; },
+    (blocked) => { dialogBlocked = blocked; renderDialogBanner(); });
   const bashChanges = createBashChanges();
   bashChanges.subscribe(() => overview.setBashChanges(bashChanges.all()));
   const onOpenDiff = (path) => editor.open(path, "diff");
@@ -1419,6 +1433,9 @@ function main() {
     stopStartup();
     questionBanner.style.display = "none";
     questionKey = null;
+    dialogBlocked = false;
+    bannerStatus = "none";
+    renderDialogBanner();
   }
 
   // The permission banner polls /permission once a second while the
@@ -1790,6 +1807,8 @@ function main() {
 
       spinner.setActive(status === "active");
       modeChip.setStatus(status);
+      bannerStatus = status;
+      renderDialogBanner();
 
       if (heldUntilStart && status === "idle") {
         const text = heldUntilStart;

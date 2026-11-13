@@ -38,8 +38,11 @@ function modeInfo(m) {
 }
 
 // createModeChip renders into root and tints tintEl via data-mode.
-// onError gets a message to show (or "" to clear).
-function createModeChip(root, tintEl, onError) {
+// onError gets a message to show (or "" to clear). onBlocked gets true
+// while the footer is missing from a screen we did read — a dialog has the
+// keyboard, so nothing can be typed into this session (see cropSidePanel's
+// note on how the screen is read).
+function createModeChip(root, tintEl, onError, onBlocked = () => {}) {
   const chip = el("button", { class: "mode-chip", type: "button", "aria-haspopup": "menu", "aria-expanded": "false" });
   const menu = el("div", { class: "mode-menu", role: "menu" });
   menu.hidden = true;
@@ -50,6 +53,8 @@ function createModeChip(root, tintEl, onError) {
   let status = "none";
   let mode = null; // last modeView seen, kept while the footer is hidden by a dialog
   let live = false; // the last poll found the footer, so shift+tab reaches the cycle
+  let seen = false; // a poll has answered, so `live` says something
+  let blocked = false; // what onBlocked was last told
   let busy = false;
   let gen = 0;
   let timer = null;
@@ -57,6 +62,11 @@ function createModeChip(root, tintEl, onError) {
   function settable() { return live && !busy && !!mode; }
 
   function render() {
+    const now = !!windowID && MODE_LIVE.has(status) && seen && !live;
+    if (now !== blocked) {
+      blocked = now;
+      onBlocked(now);
+    }
     const info = modeInfo(mode);
     root.hidden = !windowID || !MODE_LIVE.has(status) || !info;
     tintEl.dataset.mode = info && MODE_LIVE.has(status) ? info.key : "";
@@ -138,6 +148,7 @@ function createModeChip(root, tintEl, onError) {
           // A null mode means a dialog is covering the footer: keep showing
           // the last one, but shift+tab would answer the dialog instead.
           live = !!data.mode;
+          seen = true;
           if (data.mode) mode = data.mode;
           render();
         }
@@ -155,6 +166,7 @@ function createModeChip(root, tintEl, onError) {
     timer = null;
     busy = false;
     live = false;
+    seen = false;
   }
 
   return {
