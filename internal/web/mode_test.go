@@ -160,14 +160,46 @@ func TestSetModeFooterNeverChangesIs409(t *testing.T) {
 	}
 }
 
+// TestSetModeFollowsTheScreenNotTheStatus: the state file's status can lag
+// behind Claude's screen (a "permission" left over from a prompt that's
+// already answered), which used to lock the mode mid-turn. The prompt box
+// being up is what decides.
+func TestSetModeFollowsTheScreenNotTheStatus(t *testing.T) {
+	for _, status := range []string{"idle", "active", "question", "permission"} {
+		t.Run("footer up while "+status, func(t *testing.T) {
+			srv, pane := modeServer(t, status)
+			presses := fakeCycle(pane, probedCycle...)
+			rec := postMode(srv, `{"mode":"plan"}`)
+			if m := modeFrom(t, rec); rec.Code != http.StatusOK || m.Mode != "plan" || *presses != 3 {
+				t.Fatalf("got %d %+v after %d presses, want 200 plan after 3", rec.Code, m, *presses)
+			}
+		})
+	}
+}
+
+// TestSetModeDialogIsRefused: a dialog replaces the prompt box, so there's
+// no mode line — and shift+tab there is one of the dialog's own answers
+// ("Yes, and switch to accept edits"). Nothing may be pressed.
+func TestSetModeDialogIsRefused(t *testing.T) {
+	for _, status := range []string{"active", "permission"} {
+		t.Run("dialog while "+status, func(t *testing.T) {
+			srv, pane := modeServer(t, status)
+			// No CycleMode expectation: pressing a key fails the test.
+			pane.EXPECT().Capture("mo:@4.0").
+				Return("Do you want to proceed?\n❯ 1. Yes\n  2. No", nil).AnyTimes()
+			if rec := postMode(srv, `{"mode":"plan"}`); rec.Code != http.StatusConflict {
+				t.Fatalf("status: want 409, got %d: %s", rec.Code, rec.Body)
+			}
+		})
+	}
+}
+
 func TestSetModeRejectsWithoutPressing(t *testing.T) {
 	// No CycleMode (or Capture) expectations: any tmux call fails the test.
 	cases := []struct {
 		name, status, body string
 		want               int
 	}{
-		{"question has the keyboard", "question", `{"mode":"plan"}`, http.StatusConflict},
-		{"permission has the keyboard", "permission", `{"mode":"plan"}`, http.StatusConflict},
 		{"unknown mode", "idle", `{"mode":"yolo"}`, http.StatusBadRequest},
 		{"empty body", "idle", `{}`, http.StatusBadRequest},
 	}

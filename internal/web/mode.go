@@ -64,7 +64,7 @@ func parseMode(screen string) *modeView {
 // redraw after each shift+tab (tries × Server.modeSettle).
 const modeSettleTries = 40
 
-var errModeUnseen = errors.New("can't see the mode in Claude's footer")
+var errModeUnseen = errors.New("Claude's footer isn't showing the mode — a dialog may have the keyboard")
 
 func (s *Server) claudeTarget(windowID string) string {
 	return s.tmuxSession + ":" + windowID + ".0"
@@ -102,8 +102,12 @@ func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
 // hard-coded: each press is checked against the footer, and a mode that
 // isn't reached before the cycle repeats is a 409.
 //
-// Only while idle or active: in "question" or "permission" a dialog has
-// the keyboard, and shift+tab would act on it instead.
+// The gate is Claude's own screen, not the session's status: a dialog
+// replaces the prompt box, so the footer's mode line is only there when
+// shift+tab reaches the mode cycle. Reading it right before each press is
+// both stricter and fresher than the state file, whose status can lag (a
+// stale "permission" would otherwise lock the mode mid-turn, when it's
+// most wanted).
 func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 	var body struct {
@@ -118,13 +122,8 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown mode %q", body.Mode))
 		return
 	}
-	_, _, status, ok := s.resolveSession(windowID)
-	if !ok {
+	if _, _, _, ok := s.resolveSession(windowID); !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
-		return
-	}
-	if status != "idle" && status != "active" {
-		writeError(w, http.StatusConflict, fmt.Errorf("session is %s; answer it before changing mode", status))
 		return
 	}
 
@@ -139,6 +138,9 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
+	// No footer: a dialog has the prompt box (and shift+tab is one of its
+	// own answers, e.g. "Yes, and switch to accept edits"). Refuse before
+	// pressing anything.
 	if cur == nil {
 		writeError(w, http.StatusConflict, errModeUnseen)
 		return

@@ -21,9 +21,14 @@ const MODES = [
 ];
 const BYPASS_MODE = { key: "bypassPermissions", glyph: "⏵⏵", label: "Bypass permissions", hint: "Run everything without asking" };
 
-// Statuses where the footer is up and shift+tab reaches the mode cycle. In
-// question/permission a dialog has the keyboard.
-const MODE_SETTABLE = new Set(["idle", "active"]);
+// Shown when the footer isn't up: Claude is showing a dialog, where
+// shift+tab is one of its own answers rather than the mode cycle.
+const DIALOG_HINT = "Claude is showing a dialog — answer it before changing mode";
+
+// Statuses worth polling the footer for. Whether the mode can be changed
+// isn't one of them: that's decided by the footer itself (see `live`
+// below), since a dialog replaces the prompt box and the state file's
+// status can lag behind the screen.
 const MODE_LIVE = new Set(["idle", "active", "question", "permission"]);
 
 function modeInfo(m) {
@@ -44,11 +49,12 @@ function createModeChip(root, tintEl, onError) {
   let windowID = null;
   let status = "none";
   let mode = null; // last modeView seen, kept while the footer is hidden by a dialog
+  let live = false; // the last poll found the footer, so shift+tab reaches the cycle
   let busy = false;
   let gen = 0;
   let timer = null;
 
-  function settable() { return MODE_SETTABLE.has(status) && !busy && !!mode; }
+  function settable() { return live && !busy && !!mode; }
 
   function render() {
     const info = modeInfo(mode);
@@ -62,8 +68,7 @@ function createModeChip(root, tintEl, onError) {
       el("span", { class: "mode-chip__hint", text: "· shift+tab to cycle" })
     );
     chip.disabled = !settable();
-    chip.title = MODE_SETTABLE.has(status) ? "Change permission mode (shift+tab in the message box cycles)"
-      : "Answer Claude's prompt before changing mode";
+    chip.title = live ? "Change permission mode (shift+tab cycles)" : DIALOG_HINT;
     if (!settable()) closeMenu();
   }
 
@@ -129,10 +134,16 @@ function createModeChip(root, tintEl, onError) {
       try {
         const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/mode`);
         const data = res.ok ? await res.json() : null;
-        // A null mode (a dialog is covering the footer) keeps the last one.
-        if (g === gen && !busy && data && data.mode) { mode = data.mode; render(); }
+        if (g === gen && !busy && data) {
+          // A null mode means a dialog is covering the footer: keep showing
+          // the last one, but shift+tab would answer the dialog instead.
+          live = !!data.mode;
+          if (data.mode) mode = data.mode;
+          render();
+        }
       } catch (err) {
-        // transient — keep the last mode showing
+        // transient — keep the last mode showing, and keep it settable:
+        // only Claude's own screen says a dialog has the keyboard.
       }
     }
     if (g === gen) timer = setTimeout(poll, MODE_POLL_MS);
@@ -143,6 +154,7 @@ function createModeChip(root, tintEl, onError) {
     clearTimeout(timer);
     timer = null;
     busy = false;
+    live = false;
   }
 
   return {
@@ -163,7 +175,13 @@ function createModeChip(root, tintEl, onError) {
       else if (!MODE_LIVE.has(s) && wasLive) stop();
       render();
     },
-    // cycle steps one mode forward, like shift+tab in Claude Code.
-    cycle() { setMode({ next: true }); },
+    // cycle steps one mode forward, like shift+tab in Claude Code. The key
+    // works anywhere in the chat view, so when it can't act it says why
+    // rather than doing nothing.
+    cycle() {
+      if (!windowID || !mode || busy) return;
+      if (!live) { onError(DIALOG_HINT); return; }
+      setMode({ next: true });
+    },
   };
 }

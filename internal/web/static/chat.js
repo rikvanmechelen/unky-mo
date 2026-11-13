@@ -1176,7 +1176,8 @@ function main() {
   });
   const drawer = createTerminalDrawer(document.getElementById("term-drawer"));
   const spinner = createSpinner(document.getElementById("spinner"));
-  const modeChip = createModeChip(document.getElementById("mode-chip"), composer,
+  const modeChipRoot = document.getElementById("mode-chip");
+  const modeChip = createModeChip(modeChipRoot, composer,
     (msg) => { sendError.textContent = msg; });
   const bashChanges = createBashChanges();
   bashChanges.subscribe(() => overview.setBashChanges(bashChanges.all()));
@@ -1329,6 +1330,23 @@ function main() {
       e.preventDefault();
       if (!sendBtn.disabled) composer.requestSubmit();
     }
+  });
+
+  // shift+tab also cycles the mode from anywhere in the chat view, as the
+  // terminal does: while Claude is working you're usually reading the
+  // transcript, not typing, and the key would otherwise just move focus.
+  // Text fields keep it (the message box has its own handler above, the
+  // live terminal sends it to the shell), as does an open dialog.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab" || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.defaultPrevented) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+    if (document.querySelector("dialog[open]")) return;
+    // Only where the chip is: the composer is the view's mode indicator.
+    if (modeChipRoot.hidden || !modeChipRoot.offsetParent) return;
+    e.preventDefault();
+    modeChip.cycle();
   });
 
   // sendNow: ask Claude to take the message at once (it's still queued if
