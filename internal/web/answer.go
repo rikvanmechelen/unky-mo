@@ -84,7 +84,7 @@ type dialogView struct {
 // parseDialog reads the AskUserQuestion dialog from the bottom of screen,
 // starting at its tab line.
 func parseDialog(screen string) dialogView {
-	lines := strings.Split(screen, "\n")
+	lines := strings.Split(cropSidePanel(screen), "\n")
 	start := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		if dialogTabs.MatchString(lines[i]) {

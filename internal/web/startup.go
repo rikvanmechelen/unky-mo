@@ -75,7 +75,7 @@ func (v startupView) sig() string {
 // safety check" text and at least two numbered rows, one with the cursor.
 func parseStartupDialog(screen string) startupView {
 	var v startupView
-	lines := strings.Split(screen, "\n")
+	lines := strings.Split(cropSidePanel(screen), "\n")
 	hdr := -1
 	for i, l := range lines {
 		if strings.TrimSpace(l) == "Accessing workspace:" {

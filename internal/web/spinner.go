@@ -40,10 +40,11 @@ const spinnerScanLines = 40
 // It sits above the prompt box, so it scans upward from the box's top
 // border (or the bottom, if no box is found), which keeps text typed into
 // the prompt from ever matching. On a wide terminal Claude Code draws a side
-// panel to the right of the transcript, past a "│", so each line is cut
-// there first. Returns nil when Claude isn't showing one.
+// panel to the right of the transcript, past a bar column (cropSidePanel),
+// and a single line can carry one too, so both are cut away first. Returns
+// nil when Claude isn't showing one.
 func parseSpinner(screen string) *spinnerView {
-	lines := strings.Split(screen, "\n")
+	lines := strings.Split(cropSidePanel(screen), "\n")
 	end := len(lines)
 	for i := len(lines) - 1; i > 0; i-- {
 		if strings.HasPrefix(strings.TrimSpace(lines[i]), "❯") && isRule(lines[i-1]) {

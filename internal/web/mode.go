@@ -40,7 +40,7 @@ var modeLabels = map[string]string{
 // parseMode finds the mode indicator below the prompt box's bottom border.
 // Returns nil when there's none (e.g. a dialog is replacing the prompt box).
 func parseMode(screen string) *modeView {
-	lines := strings.Split(screen, "\n")
+	lines := strings.Split(cropSidePanel(screen), "\n")
 	start := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		if isRule(lines[i]) {

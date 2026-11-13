@@ -134,7 +134,7 @@ func indentOf(line string) int {
 // screen: the question and rows after its last full-width rule.
 func parsePermissionDialog(screen string) permView {
 	var v permView
-	lines := strings.Split(screen, "\n")
+	lines := strings.Split(cropSidePanel(screen), "\n")
 	var rules []int
 	for i, l := range lines {
 		if isFullRule(l) {

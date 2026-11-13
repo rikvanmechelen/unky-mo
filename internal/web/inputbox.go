@@ -15,7 +15,7 @@ var inputPlaceholders = []string{
 // when the screen has no such box (e.g. a dialog replaced it). A
 // placeholder hint counts as empty.
 func parseInputBox(screen string) (text string, ok bool) {
-	lines := strings.Split(screen, "\n")
+	lines := strings.Split(cropSidePanel(screen), "\n")
 	bottom, top := -1, -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		if !isBoxRule(lines[i]) {
