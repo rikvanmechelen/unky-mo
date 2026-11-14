@@ -20,9 +20,11 @@ function openImageViewer(src, alt) {
 // createAttachments wires the attach button, paste and drop targets and
 // renders the chips into strip. getWindowID returns the current session's
 // window; onChange fires whenever the set or its upload state changes;
-// onError reports an upload failure.
+// onError reports an upload failure. Each image belongs to the window it was
+// added in: detach and restore move a set between the strip and a session's
+// draft, uploads still running included.
 function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID, onChange, onError }) {
-  // Each item: {file, url, id, state: "uploading" | "ready" | "error", ctrl, chip}.
+  // Each item: {file, url, windowID, id, state: "uploading" | "ready" | "error", ctrl}.
   let items = [];
 
   const picker = el("input", { type: "file", accept: ATTACHABLE_TYPES.join(","), multiple: "", hidden: "" });
@@ -67,17 +69,18 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     const rejected = files.filter((f) => !ATTACHABLE_TYPES.includes(f.type));
     if (rejected.length) onError(`Can't attach ${rejected.map((f) => f.name || f.type).join(", ")}: only PNG, JPEG, GIF and WebP images`);
     for (const file of files) {
-      if (ATTACHABLE_TYPES.includes(file.type)) upload({ file, url: URL.createObjectURL(file), id: null, state: "uploading" });
+      if (ATTACHABLE_TYPES.includes(file.type)) {
+        upload({ file, url: URL.createObjectURL(file), windowID: getWindowID(), id: null, state: "uploading" });
+      }
     }
   }
 
   async function upload(item) {
-    const windowID = getWindowID();
     items.push(item);
     item.ctrl = new AbortController();
     render();
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/attachments`, {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(item.windowID)}/attachments`, {
         method: "POST",
         headers: { "Content-Type": item.file.type },
         body: item.file,
@@ -91,7 +94,9 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
       if (err.name === "AbortError") return;
       item.state = "error";
       item.error = err.message;
-      onError(`${item.file.name || "image"}: ${err.message}`);
+      // An image detached into another session's draft shows its error
+      // when that session's strip comes back.
+      if (items.includes(item)) onError(`${item.file.name || "image"}: ${err.message}`);
     }
     if (items.includes(item)) render();
   }
@@ -107,7 +112,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     item.ctrl?.abort();
     URL.revokeObjectURL(item.url);
     if (deleteOnServer && item.id) {
-      fetch(`/api/sessions/${encodeURIComponent(getWindowID())}/attachments/${encodeURIComponent(item.id)}`, { method: "DELETE" })
+      fetch(`/api/sessions/${encodeURIComponent(item.windowID)}/attachments/${encodeURIComponent(item.id)}`, { method: "DELETE" })
         .catch(() => {});
     }
   }
@@ -138,6 +143,22 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
       for (const item of items) drop(item, false);
       items = [];
       render();
+    },
+    // detach empties the strip but keeps the images (and their uploads)
+    // alive, for restore when their session is shown again.
+    detach() {
+      const out = items;
+      items = [];
+      render();
+      return out;
+    },
+    restore(list) {
+      items = list.slice();
+      render();
+    },
+    // discard forgets detached images whose prompt was sent elsewhere.
+    discard(list) {
+      for (const item of list) drop(item, false);
     },
   };
 }

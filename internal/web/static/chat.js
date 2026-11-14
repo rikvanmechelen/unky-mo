@@ -1264,6 +1264,39 @@ function main() {
   // held, then sent the first time the session reads idle (pollStatus).
   let heldUntilStart = null;
 
+  // What was in the message box and image strip of the sessions switched
+  // away from: windowID -> {text, items}. The items are the strip's own,
+  // uploads still running included, so switching back loses nothing.
+  const drafts = new Map();
+
+  function stashDraft(id) {
+    const text = [heldUntilStart, promptInput.value].filter((t) => t && t.trim()).join("\n");
+    const items = attachments.detach();
+    if (text || items.length) drafts.set(id, { text, items });
+    else drafts.delete(id);
+  }
+
+  function restoreDraft(id) {
+    const d = drafts.get(id);
+    if (!d) return;
+    drafts.delete(id);
+    setPrompt(d.text);
+    attachments.restore(d.items);
+  }
+
+  // afterSend empties the box a prompt was sent from: the one shown, or
+  // the draft it became if the view moved to another session meanwhile.
+  function afterSend(id) {
+    if (id === windowID) {
+      setPrompt("");
+      attachments.clear();
+      return;
+    }
+    const d = drafts.get(id);
+    if (d) attachments.discard(d.items);
+    drafts.delete(id);
+  }
+
   // Lifecycle around launches from the dashboard (?new=1): the window exists
   // before the main TUI has attributed a Claude session to it, so for a few
   // seconds there's no state row yet. Once one has been seen, its
@@ -1446,10 +1479,8 @@ function main() {
       pollStatus();
       return;
     }
-    if (await sendPrompt(text, ids, sendNow)) {
-      setPrompt("");
-      attachments.clear();
-    }
+    const id = windowID;
+    if (await sendPrompt(text, ids, sendNow)) afterSend(id);
   }
 
   composer.addEventListener("submit", (e) => {
@@ -1686,6 +1717,7 @@ function main() {
   // resetSession points the view at another window (initial load, a nav
   // click, or back/forward) — everything per-session starts over.
   function resetSession(id, isStarting) {
+    if (windowID) stashDraft(windowID);
     windowID = id;
     clearTranscript();
     heldUntilStart = null;
@@ -1695,7 +1727,7 @@ function main() {
     ended = false;
     startupGaveUp = false;
     setPrompt("");
-    attachments.clear();
+    restoreDraft(id);
     sendError.textContent = "";
     setNotice(id ? "" : "Pick a session on the left.");
     hideBanners();
@@ -1875,9 +1907,11 @@ function main() {
 
       if (heldUntilStart && status === "idle") {
         const text = heldUntilStart;
+        const id = windowID;
         heldUntilStart = null;
-        if (await sendPrompt(text, attachments.ids())) attachments.clear();
-        else setPrompt(text); // give it back to retry
+        if (await sendPrompt(text, attachments.ids())) afterSend(id);
+        else if (id === windowID) setPrompt(text); // give it back to retry
+        else drafts.set(id, { text, items: drafts.get(id)?.items || [] });
       }
       if (heldUntilStart) setNotice(`Starting session… your message will be sent when it's ready: “${heldUntilStart}”`);
 
