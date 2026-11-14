@@ -1,0 +1,50 @@
+
+[38;5;174m ▐[48;5;16m▛███▛█[39m[49m   [1mClaude Code[0m [38;5;246mv2.1.325[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mFable 5 · Claude Enterprise[39m
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m~/workspace/unky-mo[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m● high · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mPermissions[0m  Recently blocked  [1m[38;5;16m[48;5;153m Allow [0m  Ask   Deny   Auto mode   Workspace
+
+   Claude Code won't ask before using allowed tools.
+   [2m╭───────────────────────────────────────────────╮[0m
+   [2m│[0m [38;5;246m⌕ Search…[39m                                     [2m│[0m
+   [2m╰───────────────────────────────────────────────╯[0m
+
+     [38;5;246m1.   [39mAdd a new rule…
+     [38;5;246m2.   [39mBash(./bin/rails data:migrate*)
+     [38;5;246m3.   [39mBash(./bin/rails db:migrate*)
+     [38;5;246m4.   [39mBash(./bin/rails generate*)
+     [38;5;246m5.   [39mBash(./bin/rails test*)
+     [38;5;246m6.   [39mBash(./bin/rake*)
+     [38;5;246m7.   [39mBash(./mo --help)
+     [38;5;246m8.   [39mBash(./mo attach:*)
+     [38;5;246m9.   [39mBash(./mo debug:*)
+   [38;5;246m↓[39m [38;5;246m10.  [39mBash(./mo hooks:*)
+
+   [38;5;246m←/→ to switch · ↓ to select · Esc to cancel[39m

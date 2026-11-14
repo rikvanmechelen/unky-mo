@@ -182,3 +182,35 @@ Per the repo habit, each step gets a "Step N in detail" section here
 - Are there menus worth native treatment beyond the generic one
   (`/permissions` rules editor, `/mcp` status, `/skills` toggles)? Decide
   after step 4 with the generic version in hand.
+
+## Step 1 in detail (built)
+
+`internal/web/menu.go` — `parseMenu(screen) *menuView`, pure; tests in
+`menu_test.go` over `testdata/menus/` (`.txt` plain, `.ansi` with SGR).
+
+What the fixtures taught beyond the survey:
+
+- A tab strip's **first label is the dialog's title** (`Settings  Status
+  Config …`, `Permissions  Allow  Ask …`), the rest are the tabs. Which one
+  is active is only in the colours: reverse video (`ESC[7m`) or a
+  background (`ESC[48;5;…m`), so `parseMenu` takes the `capture-pane -e`
+  text and strips SGR itself; a plain capture just marks no tab.
+- The `▔` edge is menu-only (no permission, trust or queue fixture has
+  one), which is what keeps `parseMenu` and the dedicated parsers apart.
+- Rows exist only when the block has a cursor, a scroll marker (`↓ 9 more`,
+  or `↓ 10.  Bash(…)` where the marker replaces the cursor gutter) or a
+  numbered row; otherwise everything is `extra` (slider, status panel,
+  help text). Lines at the base indent before the first row/box are the
+  subtitle, after the list ends they are `extra` (`/model`'s effort line,
+  `/theme`'s preview).
+- The legend isn't always the last line (`/skills` ends on a note and keeps
+  its hints in the subtitle, comma-separated), so it's the last line
+  containing `Esc to`. `Type to …` has no key (`typing: true`).
+- Unmarked description lines under marked rows (`/plugin`) can't be told
+  from unmarked rows (`/theme`), so they are rows; clicking will be a
+  closed loop on the cursor row's text (step 3), not a key count.
+- `config.ansi` is the search-focused state; Esc there clears the search
+  instead of closing, so a probe loop must close menus until the `▔` edge
+  is gone.
+- `Raw` (the block, dedented, plain) is always returned so the browser can
+  fall back to it.

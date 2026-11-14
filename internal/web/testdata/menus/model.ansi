@@ -1,0 +1,50 @@
+
+[38;5;174m ▐[48;5;16m▛███▛█[39m[49m   [1mClaude Code[0m [38;5;246mv2.1.325[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mFable 5 · Claude Enterprise[39m
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m~/workspace/unky-mo[39m
+
+
+[38;5;246m[48;5;237m❯[39m [38;5;231m/config[39m
+[38;5;246m[49m  ⎿  [39mDisabled auto-compact
+
+[38;5;246m[48;5;237m❯[39m [38;5;231m/config[39m
+[38;5;246m[49m  ⎿  [39mEnabled auto-compact
+
+[38;5;246m[48;5;237m❯[39m [38;5;231m/plugin[39m
+[49m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m● high · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mSelect model[0m
+   [38;5;246mSwitch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.[39m
+
+     [38;5;246m1.  [39mDefault (recommended)  [38;5;246mFable 5.1[39m
+     [38;5;246m2.  [39mOpus 5.5               [38;5;246mFor complex work and everyday tasks[39m
+     [38;5;246m3.  [39mOpus 5                 [38;5;246mFor complex tasks[39m
+     [38;5;246m4.  [39mSonnet 5.5             [38;5;246mMost efficient for simpler tasks[39m
+     [38;5;246m5.  [39mSonnet 5               [38;5;246mMost efficient for everyday tasks[39m
+     [38;5;246m6.  [39mFable 5.1              [38;5;246mFor your toughest challenges[39m
+     [38;5;246m7.  [39mHaiku 5.5              [38;5;246mFastest for quick answers[39m
+     [38;5;246m8.  [39mHaiku 4.5              [38;5;246mFastest for quick answers[39m
+   [38;5;153m❯[39m [38;5;246m9.  [38;5;114mFable 5[39m [38;5;114m✔[39m              [38;5;246mMost capable for your hardest and longest-running tasks[39m
+     [38;5;246m▸   [39mMore models            [38;5;246m [39m
+
+   [38;5;174m●[38;5;246m High effort (default) ←/→ to adjust[39m
+
+   [38;5;246mEnter to set as default · s to use this session only · Esc to cancel[39m

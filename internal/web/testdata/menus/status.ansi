@@ -1,0 +1,50 @@
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m~/workspace/unky-mo[39m
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m● high · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mSettings[0m [1m[38;5;16m[48;5;153m Status [0m  Config   Usage   Stats
+
+   [1mVersion:[0m           2.1.325
+   [1mSession name:[0m      [38;5;246m/rename to add a name[39m
+   [1mSession ID:[0m        00000000-0000-0000-0000-000000000000
+   [1mSession kind:[0m      interactive
+   [1mPeer address:[0m      uds:/run/user/1000/cc-socks/760401.sock
+   [1mcwd:[0m               /home/user/workspace/unky-mo
+   [1mLogin method:[0m      Claude Enterprise account
+   [1mOrganization:[0m      Example
+   [1mEmail:[0m             user@example.org
+   [1m [0m
+   [1mModel:[0m             claude-fable-5
+   [1mMCP servers:[0m       [38;5;114m19 connected[39m, [38;5;220m36 need auth[39m, [38;5;211m8 failed[39m [38;5;246m· /mcp[39m
+   [1mSetting sources:[0m   User settings, Shared project settings, Project local settings, Enterprise managed settings (remote)
+                      Your organization may apply global configuration to Claude Code. These settings are centrally managed by your IT
+                      administrator.
+   [1mAuto mode server:[0m  Enabled
+
+   [38;5;246mEsc to cancel[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,50 @@
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m~/workspace/unky-mo[39m
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m● high · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mSettings[0m  Status   Config  [1m[38;5;16m[48;5;153m Usage [0m  Stats
+
+   [1mSession[0m
+
+   [38;5;246mTotal cost:            $0.0000[39m
+   [38;5;246mTotal duration (API):  0s[39m
+   [38;5;246mTotal duration (wall): 7s[39m
+   [38;5;246mTotal code changes:    0 lines added, 0 lines removed[39m
+   [38;5;246mUsage:                 0 input, 0 output, 0 cache read, 0 cache write[39m
+
+
+   [1mPlugin skill-listing footprint[0m
+   [38;5;246mWhat each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP tools not yet [39m
+   [38;5;246mcounted.[39m
+
+   [38;5;246mcommit-commands[39m             [38;5;246m3 skills · ~99 tok/turn[39m
+   [38;5;246mproduct-management[39m          [38;5;246m1 skill · ~42 tok/turn[39m
+   [38;5;246mfeature-dev[39m                 [38;5;246m1 skill · ~35 tok/turn[39m
+
+   Total                       ~176 tok/turn
+
+   [1mCurrent session[0m
+   [38;5;153m[48;5;102m█████▌                                            [39m[49m 11% used
+   [38;5;246mResets 12:39pm (America/New_York)[39m
+
+   [1mCurrent week (all models)[0m
+   [38;5;153m[48;5;102m█                                                 [39m[49m 2% used
+   [38;5;246mResets Nov 21, 4:59am (America/New_York)[39m
+
+   [1mCurrent week (Fable)[0m
+   [38;5;153m[48;5;102m██                                                [39m[49m 4% used
+   [38;5;246mResets Nov 21, 4:59am (America/New_York)[39m
+
+   [1mWhat's contributing to your usage?[0m
+   [38;5;246mApproximate · sessions on this machine only[39m
+
+   [38;5;246mLast 24h · shares overlap[39m
+
+   72%  Start fresh when you switch tasks[38;5;246m · run /clear[39m
+   35%  Turn off MCP servers you don't use[38;5;246m · 28k tokens per request[39m
+   18%  Compact before you step away[38;5;246m · run /compact[39m
+
+   [1mSkills, subagents, plugins, and MCP servers[0m
+   [38;5;246mNo attribution data yet · accumulates as you use Claude[39m
+
+   [38;5;246mf to fix 1 of 3 · d to day · w to week[39m
+                                                                                                                                          [38;5;246m↓[39m
