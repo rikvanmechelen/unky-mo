@@ -1287,6 +1287,21 @@ func (mr *MockClaudePaneMockRecorder) Capture(target any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Capture", reflect.TypeOf((*MockClaudePane)(nil).Capture), target)
 }
 
+// CaptureStyled mocks base method.
+func (m *MockClaudePane) CaptureStyled(target string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CaptureStyled", target)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CaptureStyled indicates an expected call of CaptureStyled.
+func (mr *MockClaudePaneMockRecorder) CaptureStyled(target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CaptureStyled", reflect.TypeOf((*MockClaudePane)(nil).CaptureStyled), target)
+}
+
 // CycleMode mocks base method.
 func (m *MockClaudePane) CycleMode(target string) error {
 	m.ctrl.T.Helper()

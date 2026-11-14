@@ -141,6 +141,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/answer", s.handleAnswer)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/permission", s.handlePermission)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/permission", s.handleAnswerPermission)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/menu", s.handleMenu)
 	s.mux.HandleFunc("GET /api/windows/{windowID}/startup", s.handleStartup)
 	s.mux.HandleFunc("POST /api/windows/{windowID}/startup", s.handleAnswerStartup)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells", s.handleShells)

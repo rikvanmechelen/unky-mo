@@ -96,6 +96,16 @@ func (c *Client) CapturePane(paneID string, lines int) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+// CapturePaneStyled is CapturePane with the pane's colours as SGR escapes
+// (capture-pane -e): the only way to see which tab a menu has active.
+func (c *Client) CapturePaneStyled(paneID string, lines int) (string, error) {
+	out, err := c.tmuxCmd("capture-pane", "-p", "-e", "-J", "-t", paneID, "-S", fmt.Sprintf("-%d", lines)).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane: %s", strings.TrimSpace(string(out)))
+	}
+	return strings.TrimRight(string(out), "\n"), nil
+}
+
 // ResizeParkedPane sizes the window of a pane parked in a mo-terms session
 // to cols x rows, for mo web's terminal view to match its browser. Only for
 // parked panes: nothing is attached to them, so no one's layout moves. The

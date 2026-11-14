@@ -219,6 +219,9 @@ type Shells interface {
 // the state file, never from the request.
 type ClaudePane interface {
 	Capture(target string) (string, error)
+	// CaptureStyled is Capture with SGR colours, for the slash-command
+	// menus' active tab (see parseMenu).
+	CaptureStyled(target string) (string, error)
 	CycleMode(target string) error
 	SendKeys(target string, keys []tmux.Key) error
 }
@@ -737,6 +740,11 @@ func NewClaudePane(client *tmux.Client) ClaudePane { return realClaudePane{clien
 // always drawn there, right above the prompt box.
 func (r realClaudePane) Capture(target string) (string, error) {
 	return r.client.CapturePane(target, 0)
+}
+
+// CaptureStyled returns the visible screen with its colours.
+func (r realClaudePane) CaptureStyled(target string) (string, error) {
+	return r.client.CapturePaneStyled(target, 0)
 }
 
 // CycleMode presses shift+tab, Claude Code's permission-mode cycle key.
