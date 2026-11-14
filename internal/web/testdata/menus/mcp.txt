@@ -1,0 +1,50 @@
+
+  ⎿  Resume cancelled
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Manage MCP servers
+   63 servers
+
+     Local MCPs (/home/user/.claude.json [project: /home/user/workspace/unky-mo])
+   ❯ ✘ claude_design
+
+     User MCPs (/home/user/.claude.json)
+     ✔ chrome-devtools                                  33 tools
+
+     claude.ai
+     ✔ claude.ai Asana                                  41 tools
+     ✔ claude.ai Atlassian Rovo                         41 tools
+     ✔ claude.ai Claude Docs                            8 tools
+     ✔ claude.ai claude_security                        13 tools
+     ✔ claude.ai GitHub MCP                             47 tools
+     ✔ claude.ai Google Cloud BigQuery                  9 tools
+     ✔ claude.ai Google Docs                            2 tools
+     ✔ claude.ai Google Sheets                          9 tools
+     ✔ claude.ai Google Slides                          4 tools
+     ✔ claude.ai Klaviyo                                138 tools
+     ✔ claude.ai Shopify                                65 tools
+     ✔ claude.ai Slack                                  27 tools
+     ⚠ claude.ai Spotify                                needs authentication
+     ⚠ claude.ai Sprouts Data Intelligence              needs authentication
+     → Show unused connectors                           9 hidden
+     claude.ai Google Calendar · ◯ hidden — same URL as your server 'plugin:claude-for-nonprofits:google-calendar'
+       To use this connector instead, disable the plugin server in /plugins
+     claude.ai Google Drive · ◯ hidden — same URL as your server 'plugin:claude-for-nonprofits:google-drive'
+       To use this connector instead, disable the plugin server in /plugins
+     claude.ai Gmail · ◯ hidden — same URL as your server 'plugin:claude-for-nonprofits:gmail'
+       To use this connector instead, disable the plugin server in /plugins
+
+     Built-in MCPs (always available)
+     ⚠ plugin:atlassian:atlassian                       needs authentication
+     ⚠ plugin:claude-for-nonprofits:airtable            needs authentication
+     ⚠ plugin:claude-for-nonprofits:benevity            needs authentication
+     ⚠ plugin:claude-for-nonprofits:candid              needs authentication
+     ⚠ plugin:claude-for-nonprofits:canva               needs authentication
+     ⚠ plugin:claude-for-nonprofits:givebutter          needs authentication
+     ✔ plugin:claude-for-nonprofits:gmail               23 tools
+     ✔ plugin:claude-for-nonprofits:google-calendar     9 tools
+     ✔ plugin:claude-for-nonprofits:google-drive        8 tools
+     ⚠ plugin:claude-for-nonprofits:granola             tools fetch failed · connected
+     ↓ 28 more
+   ※ Run claude --debug to see error logs
+   https://code.claude.com/docs/en/mcp for help
+   ↑/↓ to navigate · Enter to confirm · Esc to cancel

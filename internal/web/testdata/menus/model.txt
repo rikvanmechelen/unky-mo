@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5.1 with high effort · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+  Updated to latest. Got 31 features, 270 bugfixes, and 112 other changes.
+  code.claude.com/docs/en/changelog for details
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.
+
+   ❯ 1.  Default (recommended) ✔  Fable 5.1
+     2.  Opus 5.5                 For complex work and everyday tasks
+     3.  Opus 5                   For complex tasks
+     4.  Sonnet 5.5               Most efficient for simpler tasks
+     5.  Sonnet 5                 Most efficient for everyday tasks
+     6.  Fable 5.1                For your toughest challenges
+     7.  Haiku 5.5                Fastest for quick answers
+     8.  Haiku 4.5                Fastest for quick answers
+     ▸   More models
+
+   ● High effort (default) ←/→ to adjust
+
+   Enter to set as default · s to use this session only · Esc to cancel

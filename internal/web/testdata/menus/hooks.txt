@@ -1,0 +1,50 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5.1 with high effort · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+  Updated to latest. Got 31 features, 270 bugfixes, and 112 other changes.
+  code.claude.com/docs/en/changelog for details
+
+
+❯ /model
+  ⎿  Kept model as Fable 5.1 (default)
+
+❯ /effort
+  ⎿  Cancelled
+
+❯ /resume
+  ⎿  Resume cancelled
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Hooks
+   9 hooks on 8 events
+
+   This menu is read-only. To add or change a hook, edit settings.json or ask Claude. Learn more
+
+     PreToolUse  before tool execution
+   ❯ [User] HOOK_EVENT_NAME=PreToolUse /home/user/.config…   command
+     [User] '/home/user/workspace/unky-mo/mo' snapshot pr…   Bash · command
+
+     PostToolUse  after tool execution
+     [User] '/home/user/workspace/unky-mo/mo' snapshot po…   Bash · command
+
+     Notification  when notifications are sent
+     [User] HOOK_EVENT_NAME=Notification /home/user/.conf…   idle_prompt|permission_prompt · command
+
+     UserPromptSubmit  when the user submits a prompt
+     [User] HOOK_EVENT_NAME=UserPromptSubmit /home/user/.…   command
+
+     SessionStart  when a new session is started
+     [User] HOOK_EVENT_NAME=SessionStart /home/user/.conf…   command
+
+     Stop  right before Claude concludes its response
+     [User] HOOK_EVENT_NAME=Stop /home/user/.config/unky-…   command
+
+     SessionEnd  when a session is ending
+     [User] HOOK_EVENT_NAME=SessionEnd /home/user/.config…   command
+
+     PermissionRequest  when a permission dialog is displayed
+     [User] HOOK_EVENT_NAME=PermissionRequest /home/user/…   command
+
+     All events
+
+   Enter to view · Esc to close

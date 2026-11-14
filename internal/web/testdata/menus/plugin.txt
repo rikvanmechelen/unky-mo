@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5.1 with high effort · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+  Updated to latest. Got 31 features, 270 bugfixes, and 112 other changes.
+  code.claude.com/docs/en/changelog for details
+
+
+❯ /model
+  ⎿  Kept model as Fable 5.1 (default)
+
+❯ /effort
+  ⎿  Cancelled
+
+❯ /resume
+  ⎿  Resume cancelled
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Plugins  Discover   Installed   Marketplaces   Errors   Stats
+
+   Discover plugins (1/3820)
+   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+   │ ⌕ Search…                                                                                                                          │
+   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+    All 3820 · Anthropic Directory 3726 · claude-plugins-official 310  (ctrl+s to filter by marketplace)
+
+   ❯ ◯ frontend-design · Anthropic Directory · 1.3M installs
+       Frontend design skill for UI/UX implementation
+
+     ◯ Superpowers · Anthropic Directory · 1.1M installs
+       Core skills library for Claude Code: TDD, debugging, collab…
+
+     ◯ code-review · Anthropic Directory · 477.6K installs
+       Automated code review for pull requests using multiple spec…
+
+     ◯ context7 · Anthropic Directory · 441.5K installs
+       Upstash Context7 MCP server for up-to-date documentation lo…
+
+     ◯ skill-creator · Anthropic Directory · 429K installs
+       Create new skills, improve existing skills, and measure ski…
+     ↓ 3815 more
+
+   Type to search · Space to toggle · Enter to view · Esc to go back

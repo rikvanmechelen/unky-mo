@@ -1,0 +1,50 @@
+▝▜██████▀  Fable 5 · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+
+❯ /memory
+  ⎿  Cancelled memory editing
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Skills
+   72 skills · enter/space to cycle, / to search, t to sort, Esc to close
+
+   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+   │ ⌕ Search skills…                                                                                                                   │
+   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+   ❯ ✔ docs                                                claude.ai sync · ~340 tok
+     ✔ docx                                                claude.ai sync · ~320 tok
+     ✔ google-workspace                                    claude.ai sync · ~330 tok
+     ✔ import-memory                                       claude.ai sync · ~60 tok
+     ✔ mcp-builder                                         claude.ai sync · ~100 tok
+     ✔ morning                                             claude.ai sync · ~120 tok
+     ✔ pdf                                                 claude.ai sync · ~150 tok
+     ✔ pptx                                                claude.ai sync · ~330 tok
+     ✔ skill-creator                                       claude.ai sync · ~120 tok
+     ✔ xlsx                                                claude.ai sync · ~320 tok
+     ✔ atlassian:capture-tasks-from-meeting-notes          locked by plugin · plugin · ~150 tok
+     ✔ atlassian:generate-status-report                    locked by plugin · plugin · ~160 tok
+     ✔ atlassian:jira-sprint-dashboard                     locked by plugin · plugin · ~180 tok
+     ✔ atlassian:search-company-knowledge                  locked by plugin · plugin · ~200 tok
+     ✔ atlassian:spec-to-backlog                           locked by plugin · plugin · ~180 tok
+     ✔ atlassian:triage-issue                              locked by plugin · plugin · ~180 tok
+     ✔ claude-for-nonprofits:ai-use-policy-lookup          locked by plugin · plugin · ~310 tok
+     ✔ claude-for-nonprofits:board-recruitment             locked by plugin · plugin · ~180 tok
+     ✔ claude-for-nonprofits:campaign-planning             locked by plugin · plugin · ~310 tok
+     ✔ claude-for-nonprofits:content-review                locked by plugin · plugin · ~240 tok
+     ✔ claude-for-nonprofits:deck-planning                 locked by plugin · plugin · ~240 tok
+     ✔ claude-for-nonprofits:donor-and-funder-relations    locked by plugin · plugin · ~340 tok
+     ✔ claude-for-nonprofits:funder-and-grant-research     locked by plugin · plugin · ~300 tok
+     ✔ claude-for-nonprofits:grant-proposal-writing        locked by plugin · plugin · ~330 tok
+     ✔ claude-for-nonprofits:grant-reporting               locked by plugin · plugin · ~310 tok
+     ✔ claude-for-nonprofits:hr-policy-lookup              locked by plugin · plugin · ~300 tok
+     ✔ claude-for-nonprofits:job-post-builder              locked by plugin · plugin · ~350 tok
+     ✔ claude-for-nonprofits:new-hire-onboarding           locked by plugin · plugin · ~350 tok
+     ✔ claude-for-nonprofits:org-voice-guide               locked by plugin · plugin · ~350 tok
+     ✔ claude-for-nonprofits:where-things-live             locked by plugin · plugin · ~280 tok
+     ✔ cowork-plugin-management:cowork-plugin-customizer   locked by plugin · plugin · ~110 tok
+     ✔ cowork-plugin-management:create-cowork-plugin       locked by plugin · plugin · ~130 tok
+     ✔ data:analyze                                        locked by plugin · plugin · ~80 tok
+     ✔ data:build-dashboard                                locked by plugin · plugin · ~110 tok
+     ↓ 38 more
+
+   Plugin skills are managed via /plugin

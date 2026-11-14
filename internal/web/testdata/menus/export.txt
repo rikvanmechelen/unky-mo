@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5 · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+
+❯ /memory
+  ⎿  Cancelled memory editing
+
+❯ /skills
+  ⎿  No changes
+
+❯ /color
+  ⎿  Session color set to: red
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /add-dir
+  ⎿  Did not add a working directory.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Export conversation
+   Select export method
+
+   ❯ 1. Copy to clipboard  Copy the conversation to your system clipboard
+     2. Save to file       Save the conversation to a file in the current directory
+
+   Esc to cancel

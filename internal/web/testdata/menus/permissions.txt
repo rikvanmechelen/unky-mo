@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5.1 with high effort · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+  Updated to latest. Got 31 features, 270 bugfixes, and 112 other changes.
+  code.claude.com/docs/en/changelog for details
+
+
+❯ /model
+  ⎿  Kept model as Fable 5.1 (default)
+
+❯ /effort
+  ⎿  Cancelled
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace
+
+   Claude Code won't ask before using allowed tools.
+   ╭───────────────────────────────────────────────╮
+   │ ⌕ Search…                                     │
+   ╰───────────────────────────────────────────────╯
+
+     1.   Add a new rule…
+     2.   Bash(./bin/rails data:migrate*)
+     3.   Bash(./bin/rails db:migrate*)
+     4.   Bash(./bin/rails generate*)
+     5.   Bash(./bin/rails test*)
+     6.   Bash(./bin/rake*)
+     7.   Bash(./mo --help)
+     8.   Bash(./mo attach:*)
+     9.   Bash(./mo debug:*)
+   ↓ 10.  Bash(./mo hooks:*)
+
+   ←/→ to switch · ↓ to select · Esc to cancel

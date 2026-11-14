@@ -1,0 +1,23 @@
+
+❯ /plugin
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Settings  Status   Config   Usage   Stats
+
+   Version:           2.1.325
+   Session name:      /rename to add a name
+   Session ID:        00000000-0000-0000-0000-000000000000
+   Session kind:      interactive
+   Peer address:      uds:/run/user/1000/cc-socks/787341.sock
+   cwd:               /home/user/workspace/unky-mo
+   Login method:      Claude Enterprise account
+   Organization:      Example
+   Email:             user@example.org
+
+   Model:             Default (Fable 5.1)
+   MCP servers:       19 connected, 36 need auth, 8 failed · /mcp
+   Setting sources:   User settings, Shared project settings, Project local settings, Enterprise managed settings (remote)
+                      Your organization may apply global configuration to Claude Code. These settings are centrally managed by your IT
+                      administrator.
+   Auto mode server:  Enabled
+
+   Esc to cancel

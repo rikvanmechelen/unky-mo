@@ -1,0 +1,50 @@
+
+❯ /plugin
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Settings  Status   Config   Usage   Stats
+
+   Session
+
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 2m 39s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+
+   Plugin skill-listing footprint
+   What each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP tools not yet
+   counted.
+
+   commit-commands             3 skills · ~74 tok/turn
+   product-management          1 skill · ~32 tok/turn
+   feature-dev                 1 skill · ~26 tok/turn
+
+   Total                       ~132 tok/turn
+
+   Current session
+   ███                                                6% used
+   Resets 4:59am (America/New_York)
+
+   Current week (all models)
+   ███████████████                                    30% used
+   Resets Nov 14, 4:59am (America/New_York)
+
+   Current week (Fable)
+   ████                                               8% used
+   Resets Nov 14, 4:59am (America/New_York)
+
+   What's contributing to your usage?
+   Approximate · sessions on this machine only
+
+   Last 24h · shares overlap
+
+   71%  Start fresh when you switch tasks · run /clear
+   56%  Compact before you step away · run /compact
+   40%  Turn off MCP servers you don't use · 29k tokens per request
+
+   Skills, subagents, plugins, and MCP servers
+   No attribution data yet · accumulates as you use Claude
+
+   f to fix 1 of 3 · d to day · w to week
+                                                                                                                                          ↓

@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5 · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+
+❯ /memory
+  ⎿  Cancelled memory editing
+
+❯ /skills
+  ⎿  No changes
+
+❯ /color
+  ⎿  Session color set to: red
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Add directory to workspace
+
+   Claude Code will be able to read files in this directory and make edits when auto-accept edits is on.
+
+   Enter the path to the directory:
+
+   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+   │ Directory path…                                                                                                                    │
+   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+   Tab to complete · Enter to add · Esc to cancel
