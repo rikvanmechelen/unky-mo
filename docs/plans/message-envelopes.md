@@ -1,6 +1,6 @@
 # Rendering Claude Code's tagged messages (no raw XML in the web)
 
-**Status:** in progress 2026-11-14.
+**Status:** steps 1–6 built on main 2026-11-14; tests pass, not yet checked in a browser, not pushed.
 
 ## Problem
 
