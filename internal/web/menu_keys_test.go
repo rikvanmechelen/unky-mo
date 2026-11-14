@@ -26,6 +26,7 @@ type fakeMenuPane struct {
 	view   int
 	open   bool
 	stuck  bool // ignores ↑/↓, like a menu whose list can't move
+	slow   bool // hasn't redrawn after Esc yet (the menu still shows)
 	sent   [][]tmux.Key
 	picked string
 	typed  string
@@ -80,8 +81,10 @@ func (f *fakeMenuPane) send(_ string, keys []tmux.Key) error {
 		case k.Name == "Enter":
 			f.picked, f.open = f.rows[f.cursor], false
 		case k.Name == "Escape":
-			f.open = false
 			f.closed++
+			if !f.slow {
+				f.open = false
+			}
 		}
 		if f.cursor < f.top {
 			f.top = f.cursor
@@ -361,3 +364,28 @@ func TestMenuGotoAlreadyThereSendsNothing(t *testing.T) {
 }
 
 var _ = mock_web.NewMockClaudePane
+
+func TestMenuKeysSecondEscOnAnUnchangedScreenIsRefused(t *testing.T) {
+	// Claude hasn't redrawn after the first Esc: the screen (and sig) look
+	// the same, but another Esc could land on the empty prompt and open
+	// /rewind once the first one is processed.
+	f := newFakeMenuPane("Alpha", "Beta")
+	f.slow = true
+	srv := menuKeysServer(t, f)
+	sig := currentSig(t, f)
+	if rec := postMenuKeys(srv, map[string]any{"sig": sig, "keys": keyList("esc")}); rec.Code != http.StatusOK {
+		t.Fatalf("first esc: %d %s", rec.Code, rec.Body)
+	}
+	rec := postMenuKeys(srv, map[string]any{"sig": sig, "keys": keyList("esc")})
+	if rec.Code != http.StatusConflict || f.closed != 1 {
+		t.Fatalf("second esc: status %d, escapes pressed %d", rec.Code, f.closed)
+	}
+	// Other keys are fine on that screen...
+	if rec := postMenuKeys(srv, map[string]any{"sig": sig, "keys": keyList("down")}); rec.Code != http.StatusOK {
+		t.Fatalf("down: %d %s", rec.Code, rec.Body)
+	}
+	// ...and once the screen has changed, Esc is too.
+	if rec := postMenuKeys(srv, map[string]any{"sig": currentSig(t, f), "keys": keyList("esc")}); rec.Code != http.StatusOK || f.closed != 2 {
+		t.Fatalf("esc on a new screen: status %d, escapes %d", rec.Code, f.closed)
+	}
+}

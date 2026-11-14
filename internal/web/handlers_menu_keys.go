@@ -175,13 +175,31 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 			writeMenuConflict(w, "the menu closed", nil)
 			return
 		}
+		// An Esc Claude hasn't acted on yet leaves the screen (and sig) as
+		// it was, so the browser can't tell it went through. A second one
+		// would land on the empty prompt once the first closes the menu,
+		// and open /rewind: refuse it until the screen changes.
+		esc := keys[len(keys)-1].Name == "Escape"
+		if esc && s.menuEscOn[windowID] == cur.Sig {
+			writeMenuConflict(w, "Esc was already sent and Claude hasn't redrawn yet", cur)
+			return
+		}
+		pre := cur.Sig
 		if err := s.deps.ClaudePane.SendKeys(target, keys); err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		if cur, err = s.menuSettle(windowID, cur.Sig); err != nil {
+		if cur, err = s.menuSettle(windowID, pre); err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
+		}
+		if esc && cur != nil && cur.Sig == pre {
+			if s.menuEscOn == nil {
+				s.menuEscOn = map[string]string{}
+			}
+			s.menuEscOn[windowID] = pre
+		} else {
+			delete(s.menuEscOn, windowID)
 		}
 	}
 	writeJSON(w, map[string]*menuView{"menu": cur})

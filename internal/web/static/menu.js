@@ -125,8 +125,15 @@ function createMenuDialog({ send, onClose = () => {} }) {
   let typeTimer = null;
 
   dialog.addEventListener("close", () => onClose());
-  // Esc is the menu's, not the dialog's.
-  dialog.addEventListener("cancel", (e) => { e.preventDefault(); send({ keys: [{ key: "esc" }] }); });
+  // Esc is the menu's, not the dialog's. The keydown handler below sends
+  // it; the cancel event that can follow the same key press must not send
+  // a second one (two Escapes reach /rewind). A cancel without a keydown
+  // (Android's back gesture) sends it here.
+  let escAt = 0;
+  dialog.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    if (Date.now() - escAt > 500) send({ keys: [{ key: "esc" }] });
+  });
   // Buttons and rows never take focus, so the dialog keeps the keyboard.
   dialog.addEventListener("mousedown", (e) => {
     if (e.target.closest("button, .menu-row, .menu-tab") && e.target !== inputEl) e.preventDefault();
@@ -146,6 +153,7 @@ function createMenuDialog({ send, onClose = () => {} }) {
       return;
     }
     e.preventDefault();
+    if (key === "esc") escAt = Date.now();
     send({ keys: [{ key }] });
   });
 

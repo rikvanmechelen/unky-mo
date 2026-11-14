@@ -56,10 +56,13 @@ type Server struct {
 
 	// modeMu serializes permission-mode changes; modeSettle is the wait
 	// between footer re-reads after each shift+tab (zero in tests).
-	modeMu sync.Mutex
-	// menuMu serializes key presses into slash-command menus.
-	menuMu     sync.Mutex
+	modeMu     sync.Mutex
 	modeSettle time.Duration
+	// menuMu serializes key presses into slash-command menus and guards
+	// menuEscOn: per window, the sig of a menu an Esc was pressed on that
+	// Claude hasn't redrawn since (see handleMenuKeys).
+	menuMu    sync.Mutex
+	menuEscOn map[string]string
 
 	// bootID identifies this process, so a browser that asked for a
 	// restart can tell when the new server is up (GET /api/boot).
