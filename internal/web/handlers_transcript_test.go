@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"compress/gzip"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -105,5 +106,89 @@ func TestHandleTranscriptEmitsBacklogThenLiveMessage(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected the live-appended message to arrive over SSE")
+	}
+}
+
+// transcriptFixture serves a session whose JSONL holds one user line, and
+// returns the server and the file (see the note in the test above on where it
+// has to live).
+func transcriptFixture(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+	projectPath := t.TempDir()
+	realDir := claude.ProjectsDirForPath(projectPath)
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(realDir) })
+	jsonlPath := writeFile(t, realDir, "sessGZ.jsonl", `{"type":"user","uuid":"u1","message":{"content":"hi"}}`+"\n")
+
+	ctrl := gomock.NewController(t)
+	mockState := mock_web.NewMockStateReader(ctrl)
+	mockState.EXPECT().Read().Return(&state.StateFile{
+		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "sessGZ", Path: projectPath, Status: "idle"}},
+	}, nil).AnyTimes()
+	ts := httptest.NewServer(NewServer(Deps{State: mockState}, 0, "test"))
+	t.Cleanup(ts.Close)
+	return ts, jsonlPath
+}
+
+// readUntil scans SSE lines until one contains want, or 2s pass.
+func readUntil(scanner *bufio.Scanner, want string) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && scanner.Scan() {
+		if strings.Contains(scanner.Text(), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// A client that accepts gzip gets the stream compressed, and a live line is
+// flushed through the compressor rather than held in it.
+func TestHandleTranscriptGzip(t *testing.T) {
+	ts, jsonlPath := transcriptFixture(t)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/transcript/@1", nil)
+	req.Header.Set("Accept-Encoding", "gzip") // set by hand, so the transport doesn't decode it
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding: want gzip, got %q", got)
+	}
+	zr, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	scanner := bufio.NewScanner(zr)
+	if !readUntil(scanner, `"uuid":"u1"`) || !readUntil(scanner, "event: caught-up") {
+		t.Fatal("backlog and caught-up didn't arrive through the gzip stream")
+	}
+
+	f, err := os.OpenFile(jsonlPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	f.WriteString(`{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hey"}]}}` + "\n")
+	f.Close()
+	if !readUntil(scanner, `"uuid":"a1"`) {
+		t.Fatal("live line wasn't flushed through the gzip stream")
+	}
+}
+
+func TestHandleTranscriptPlainWithoutGzip(t *testing.T) {
+	ts, _ := transcriptFixture(t)
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	resp, err := client.Get(ts.URL + "/api/transcript/@1")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Content-Encoding"); got != "" {
+		t.Fatalf("Content-Encoding: want none, got %q", got)
+	}
+	if !readUntil(bufio.NewScanner(resp.Body), `"uuid":"u1"`) {
+		t.Fatal("backlog didn't arrive as plain text")
 	}
 }

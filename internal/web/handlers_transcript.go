@@ -1,7 +1,9 @@
 package web
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -34,15 +36,33 @@ func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, key, p
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Vary", "Accept-Encoding")
 	rc := http.NewResponseController(w)
 
+	// The backlog is the whole session, megabytes of JSON that compress
+	// 3-4x, and on a phone it's what a session switch waits for. Level 1:
+	// the stream is made per request, and higher levels save little more.
+	// The compressor is flushed with every write the browser should see.
+	var out io.Writer = w
+	flush := func() { _ = rc.Flush() }
+	if acceptsGzip(r) {
+		w.Header().Set("Content-Encoding", "gzip")
+		zw, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
+		defer zw.Close()
+		out = zw
+		flush = func() {
+			_ = zw.Flush()
+			_ = rc.Flush()
+		}
+	}
+
 	for _, msg := range backlog {
-		fmt.Fprintf(w, "event: transcript\ndata: %s\n\n", msg)
+		fmt.Fprintf(out, "event: transcript\ndata: %s\n\n", msg)
 	}
 	// Tells the browser the stored history is complete, so it can render it
 	// in one go instead of line by line.
-	fmt.Fprint(w, "event: caught-up\ndata: {}\n\n")
-	_ = rc.Flush()
+	fmt.Fprint(out, "event: caught-up\ndata: {}\n\n")
+	flush()
 
 	for {
 		select {
@@ -52,8 +72,8 @@ func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, key, p
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "event: transcript\ndata: %s\n\n", msg)
-			_ = rc.Flush()
+			fmt.Fprintf(out, "event: transcript\ndata: %s\n\n", msg)
+			flush()
 		}
 	}
 }

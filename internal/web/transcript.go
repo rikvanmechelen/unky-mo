@@ -121,10 +121,9 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 			continue
 		}
 		switch {
-		case envelope.Type == "user":
-			out = append(out, dropToolImages(line))
+		case envelope.Type == "user" || envelope.Type == "assistant":
+			out = append(out, slimLine(line))
 			continue
-		case envelope.Type == "assistant":
 		case envelope.Type == "system" && forwardedSystemSubtypes[envelope.Subtype]:
 		case envelope.Type == "queue-operation":
 			// Not part of the conversation (no uuid), but it's how the
@@ -147,76 +146,34 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 	return out, nil
 }
 
-// dropToolImages returns a copy of a user line without the images a tool
-// result carries. A Read of an image keeps it twice, base64 in the
-// tool_result's content and again in toolUseResult.file, and the chat view
-// shows neither (it names the image instead). At ~600 KB a screenshot they
-// were most of what a session switch sent: 53 of 59 MB in one session. A
-// tool_result's image block keeps its media type, with source.type
-// "omitted". Images pasted into a prompt (top-level content blocks) stay, and
-// a line with nothing to drop comes back byte for byte.
-func dropToolImages(line []byte) json.RawMessage {
+// slimLine returns a copy of a user or assistant line without the bulk the
+// chat view never shows, which on a phone is most of what a session switch
+// waits for (plan: docs/plans/transcript-load.md):
+//   - A tool result's images. A Read of an image keeps it twice, base64 in
+//     the tool_result's content and again in toolUseResult.file, ~600 KB
+//     each: 53 of 59 MB of one session's replay. The tool_result's image
+//     block keeps its media type, with source.type "omitted"; the browser
+//     fetches the image itself from /tool-image when its card opens. Images
+//     pasted into a prompt (top-level content blocks) stay.
+//   - A thinking block's signature and a redacted thinking block's data:
+//     opaque base64 that doesn't compress, 1.5 MB of another session's 10 MB.
+//     The chat skips thinking blocks.
+//
+// A line with nothing to drop comes back byte for byte.
+func slimLine(line []byte) json.RawMessage {
 	keep := json.RawMessage(append([]byte(nil), line...))
-	if !bytes.Contains(line, []byte(`"base64"`)) {
+	if !bytes.Contains(line, []byte(`"base64"`)) && !bytes.Contains(line, []byte(`"signature"`)) &&
+		!bytes.Contains(line, []byte(`"redacted_thinking"`)) {
 		return keep
 	}
 	var msg map[string]json.RawMessage
 	if json.Unmarshal(line, &msg) != nil {
 		return keep
 	}
-	changed := false
-
-	var result map[string]json.RawMessage
-	if json.Unmarshal(msg["toolUseResult"], &result) == nil {
-		var file map[string]json.RawMessage
-		if json.Unmarshal(result["file"], &file) == nil && file["base64"] != nil {
-			delete(file, "base64")
-			result["file"], _ = json.Marshal(file)
-			msg["toolUseResult"], _ = json.Marshal(result)
-			changed = true
-		}
+	changed := dropFileCopy(msg)
+	if slimContent(msg) {
+		changed = true
 	}
-
-	var message map[string]json.RawMessage
-	var content []map[string]json.RawMessage
-	if json.Unmarshal(msg["message"], &message) == nil && json.Unmarshal(message["content"], &content) == nil {
-		contentChanged := false
-		for _, block := range content {
-			if string(block["type"]) != `"tool_result"` {
-				continue
-			}
-			var inner []map[string]json.RawMessage
-			if json.Unmarshal(block["content"], &inner) != nil {
-				continue
-			}
-			innerChanged := false
-			for _, b := range inner {
-				var src struct {
-					Type      string          `json:"type"`
-					MediaType json.RawMessage `json:"media_type"`
-				}
-				if string(b["type"]) != `"image"` || json.Unmarshal(b["source"], &src) != nil || src.Type != "base64" {
-					continue
-				}
-				omitted := map[string]json.RawMessage{"type": json.RawMessage(`"omitted"`)}
-				if src.MediaType != nil {
-					omitted["media_type"] = src.MediaType
-				}
-				b["source"], _ = json.Marshal(omitted)
-				innerChanged = true
-			}
-			if innerChanged {
-				block["content"], _ = json.Marshal(inner)
-				contentChanged = true
-			}
-		}
-		if contentChanged {
-			message["content"], _ = json.Marshal(content)
-			msg["message"], _ = json.Marshal(message)
-			changed = true
-		}
-	}
-
 	if !changed {
 		return keep
 	}
@@ -225,6 +182,86 @@ func dropToolImages(line []byte) json.RawMessage {
 		return keep
 	}
 	return out
+}
+
+// dropFileCopy removes toolUseResult.file.base64 from a parsed line.
+func dropFileCopy(msg map[string]json.RawMessage) bool {
+	var result map[string]json.RawMessage
+	if json.Unmarshal(msg["toolUseResult"], &result) != nil {
+		return false
+	}
+	var file map[string]json.RawMessage
+	if json.Unmarshal(result["file"], &file) != nil || file["base64"] == nil {
+		return false
+	}
+	delete(file, "base64")
+	result["file"], _ = json.Marshal(file)
+	msg["toolUseResult"], _ = json.Marshal(result)
+	return true
+}
+
+// slimContent drops tool results' image data and thinking signatures from a
+// parsed line's message.content.
+func slimContent(msg map[string]json.RawMessage) bool {
+	var message map[string]json.RawMessage
+	var content []map[string]json.RawMessage
+	if json.Unmarshal(msg["message"], &message) != nil || json.Unmarshal(message["content"], &content) != nil {
+		return false
+	}
+	changed := false
+	for _, block := range content {
+		switch string(block["type"]) {
+		case `"thinking"`:
+			if block["signature"] != nil {
+				delete(block, "signature")
+				changed = true
+			}
+		case `"redacted_thinking"`:
+			if block["data"] != nil {
+				delete(block, "data")
+				changed = true
+			}
+		case `"tool_result"`:
+			if omitImages(block) {
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return false
+	}
+	message["content"], _ = json.Marshal(content)
+	msg["message"], _ = json.Marshal(message)
+	return true
+}
+
+// omitImages replaces the data of a tool_result block's base64 images with
+// {type: "omitted", media_type}.
+func omitImages(block map[string]json.RawMessage) bool {
+	var inner []map[string]json.RawMessage
+	if json.Unmarshal(block["content"], &inner) != nil {
+		return false
+	}
+	changed := false
+	for _, b := range inner {
+		var src struct {
+			Type      string          `json:"type"`
+			MediaType json.RawMessage `json:"media_type"`
+		}
+		if string(b["type"]) != `"image"` || json.Unmarshal(b["source"], &src) != nil || src.Type != "base64" {
+			continue
+		}
+		omitted := map[string]json.RawMessage{"type": json.RawMessage(`"omitted"`)}
+		if src.MediaType != nil {
+			omitted["media_type"] = src.MediaType
+		}
+		b["source"], _ = json.Marshal(omitted)
+		changed = true
+	}
+	if changed {
+		block["content"], _ = json.Marshal(inner)
+	}
+	return changed
 }
 
 // attachmentType is an attachment line's attachment.type, or "" when the

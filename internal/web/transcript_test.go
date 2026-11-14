@@ -116,6 +116,27 @@ func TestTranscriptCursorDropsToolResultImages(t *testing.T) {
 	}
 }
 
+// A thinking block's signature and a redacted thinking block's data are
+// dropped; the thinking text and the other blocks are kept. An assistant line
+// without either comes back byte for byte.
+func TestTranscriptCursorDropsThinkingSignatures(t *testing.T) {
+	thinking := `{"type":"assistant","uuid":"a1","message":{"role":"assistant","model":"claude-opus-5-5","content":[{"type":"thinking","thinking":"hmm","signature":"EpcCCkYIBxgC"},{"type":"redacted_thinking","data":"EmwKAhgB"},{"type":"text","text":"the \"signature\" field"}],"stop_reason":"end_turn"}}`
+	plain := `{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"a \"signature\" in text"}]}}`
+	path := writeFile(t, t.TempDir(), "session.jsonl", thinking+"\n"+plain+"\n")
+
+	msgs, err := newTranscriptCursor(path).readNew()
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("readNew: %d messages, err %v", len(msgs), err)
+	}
+	want := `{"message":{"content":[{"thinking":"hmm","type":"thinking"},{"type":"redacted_thinking"},{"text":"the \"signature\" field","type":"text"}],"model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn"},"type":"assistant","uuid":"a1"}`
+	if string(msgs[0]) != want {
+		t.Errorf("thinking line:\n got %s\nwant %s", msgs[0], want)
+	}
+	if string(msgs[1]) != plain {
+		t.Errorf("plain line changed: %s", msgs[1])
+	}
+}
+
 func TestTranscriptCursorBuffersPartialTrailingLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
