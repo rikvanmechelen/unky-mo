@@ -1,0 +1,1 @@
+{"type": "attachment", "uuid": "a-user", "parentUuid": "p2", "attachment": {"type": "queued_command", "prompt": "also, same thing where i got the 0x09 error on the phone", "source_uuid": "x2", "delivery_id": "d2", "commandMode": "prompt", "origin": {"kind": "human"}, "humanTurn": true, "timestamp": "2026-10-31T14:57:28Z"}}
