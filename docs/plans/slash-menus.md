@@ -262,3 +262,38 @@ typed yet.
   `goto` (+ Enter for a numbered/pick-one list), legend items are buttons
   (a `←/→` pair is two), "Type to search" focuses the dialog's input,
   Close sends Esc (once, and only while a menu is still up).
+
+## Step 3 notes (built)
+
+As specified; `Server.modeSettle` is the poll interval and `menuMu` guards
+the endpoint. Row clicks carry the sig of the screen they were made on
+(`payload.sig`), so a click queued behind other keys 409s instead of
+moving to whatever row now has that index. Input: a persistent `<input>`
+(survives re-renders, keeps focus) whose edits go out as
+`menuTextDelta` (backspaces to the common prefix, then the tail). Esc is
+the menu's: the dialog's native `cancel` is cancelled and sent as `esc`;
+"Hide" just hides it.
+
+## Step 4 notes (built)
+
+Much of pattern C was already covered by step 3 (legend buttons for
+Space/`s`/`t`/ctrl keys, ‹ › for tabs, the typed input for search, row click
+= move, click again = Enter). What probing for this step found:
+
+- **PageUp/PageDown do nothing** in Claude's lists (`/plugin`, 3820 rows):
+  a cut list scrolls only by moving the cursor. So there is no paging;
+  "↓ N more" and a ▲/▼ pair step the cursor, and search is how you get
+  to row 3000.
+- **Detail pages** (Enter on a plugin or MCP server) are the same shape:
+  prose, then actions with a cursor (`❯ Install for you…`, `❯ 1.
+  Reconnect`). Prose above the first row can't always be told from rows
+  (`/rewind` and `/theme` put short unmarked rows above the cursor), so
+  only unmarked lines that hang deep (≥ base+8) or run past 60 characters
+  count as prose, and a line directly above a marked row stays a group
+  heading.
+- Fixtures added: `plugin-detail`, `mcp-detail`, `config-search`.
+- **Probe hazard**: in `/config` Enter toggles the row under the cursor and
+  `/` is the only way into the search box, so typing a command's name into
+  it and pressing Enter changes real settings (it flipped auto-compact and
+  idle compaction in the probe session, put back by hand). Probe `/config`
+  with a throwaway `$HOME`/`CLAUDE_CONFIG_DIR`, or not at all.

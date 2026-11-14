@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5 · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+
+❯ /plugin
+
+❯ /plugin
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ● high · /effort ▔
+   Claude_design MCP Server
+
+   Status:           ✘ failed
+   Issue:            api.anthropic.com rejected your claude.ai login for Claude Design (HTTP 403), most likely because a /login token
+                     carries no Claude Design access. Run /design-login and retry, or check that your account has access to Claude
+                     Design.
+   Auth:             ✘ not authenticated
+   URL:              https://api.anthropic.com/v1/design/mcp
+   Config location:  /home/user/.claude.json [project: /home/user/workspace/unky-mo]
+
+   ❯ 1. Reconnect
+     2. Disable
+
+   ↑/↓ to navigate · Enter to select · Esc to back

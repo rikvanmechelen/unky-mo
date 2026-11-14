@@ -166,6 +166,14 @@ function createMenuDialog({ send, onClose = () => {} }) {
   }
   const press = (key) => () => send({ keys: [{ key }] });
 
+  // PageUp/PageDown do nothing in Claude's lists (probed), so a cut list
+  // scrolls by moving the cursor: clicking "↓ N more" steps it down.
+  function moreNode(text, key) {
+    const node = el("div", { class: "menu-more", role: "button", title: `Move the cursor ${key}`, text });
+    node.addEventListener("click", () => send({ keys: [{ key }] }));
+    return node;
+  }
+
   function renderRow(row, index) {
     const cls = "menu-row" + (row.cursor ? " is-cursor" : "") + (row.marker ? " has-marker" : "");
     const cells = [];
@@ -215,12 +223,17 @@ function createMenuDialog({ send, onClose = () => {} }) {
     } else {
       if (view.rows && view.rows.length) {
         const list = el("div", { class: "menu-rows", role: "listbox" });
-        if (view.above) list.appendChild(el("div", { class: "menu-more", text: `↑ ${view.above} more` }));
+        if (view.above) list.appendChild(moreNode(`↑ ${view.above} more`, "up"));
         for (const sec of menuSections(view)) {
           if (sec.group) list.appendChild(el("div", { class: "menu-group", text: sec.group }));
           for (const { row, index } of sec.items) list.appendChild(renderRow(row, index));
         }
-        if (view.below) list.appendChild(el("div", { class: "menu-more", text: `↓ ${view.below} more` }));
+        if (view.below) list.appendChild(moreNode(`↓ ${view.below} more`, "down"));
+        body.appendChild(el("div", { class: "menu-listbar" }, [
+          el("span", { class: "menu-listbar__count", text: view.below || view.above ? "scrolls — ↑/↓ move through the rest" : `${view.rows.length} items` }),
+          button("▲", "Cursor up (↑)", press("up")),
+          button("▼", "Cursor down (↓)", press("down")),
+        ]));
         body.appendChild(list);
         list.scrollTop = keep;
         const cur = list.querySelector(".is-cursor");

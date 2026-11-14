@@ -146,6 +146,7 @@ func parseMenu(screen string) *menuView {
 	// either are the subtitle, and a block with neither is plain content.
 	hasList := false
 	stop := len(block)
+	listStart := len(block)
 	for i, l := range block {
 		if skip[i] {
 			continue
@@ -153,6 +154,7 @@ func parseMenu(screen string) *menuView {
 		t := strings.TrimSpace(l)
 		if isCursorLine(l, base) || isScrollLine(t) || (indentOf(l) >= base+2 && rowNumberRe.MatchString(t)) {
 			hasList = true
+			listStart = i
 			if i < stop {
 				stop = i
 			}
@@ -230,7 +232,14 @@ func parseMenu(screen string) *menuView {
 			}
 		}
 
-		inList := hasList && !listEnded && (cursorLine || scrollLine || ind >= base+2)
+		// Above the first row, unmarked text that hangs deep or runs long is
+		// a paragraph's continuation (a detail page's "Issue:" line), not a
+		// row; shorter lines there are rows (/rewind and /theme list some
+		// above the cursor).
+		prose := hasList && i < listStart && !cursorLine && !scrollLine && !startsWithMarker(t) &&
+			!rowNumberRe.MatchString(t) && (ind >= base+8 || len([]rune(t)) > 60) &&
+			!(ind == base+2 && nextLineIsMarked(block, skip, i))
+		inList := hasList && !listEnded && !prose && (cursorLine || scrollLine || ind >= base+2)
 		switch {
 		case inList:
 			body := t
@@ -258,7 +267,7 @@ func parseMenu(screen string) *menuView {
 			rowIndent = append(rowIndent, ind)
 		case ind == base && v.Title == "":
 			v.Title = t
-		case ind <= base+1 && i < stop && stop < len(block):
+		case (ind <= base+1 && i < stop && stop < len(block)) || prose:
 			subtitle = append(subtitle, t)
 		default:
 			if hasList && len(rows) > 0 {
@@ -301,6 +310,26 @@ func parseMenu(screen string) *menuView {
 	}
 	v.Sig = menuSig(v)
 	return v
+}
+
+// nextLineIsMarked reports whether the next line after block[i] starts a
+// row with a glyph or a number: what makes an unmarked line above it a
+// group heading.
+func nextLineIsMarked(block []string, skip map[int]bool, i int) bool {
+	for j := i + 1; j < len(block); j++ {
+		if skip[j] || strings.TrimSpace(block[j]) == "" {
+			continue
+		}
+		t := strings.TrimSpace(block[j])
+		t = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "❯"), "↓"))
+		return startsWithMarker(t) || rowNumberRe.MatchString(t)
+	}
+	return false
+}
+
+func startsWithMarker(t string) bool {
+	r, size := firstRune(t)
+	return strings.ContainsRune(menuMarkers, r) && strings.HasPrefix(t[size:], " ")
 }
 
 func nextRowIsMarked(rows []menuRow, i int) bool {

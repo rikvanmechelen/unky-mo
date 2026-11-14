@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5 · Claude Enterprise
+ ▝▝   ▝▝   ~/workspace/unky-mo
+
+
+❯ /plugin
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Plugins  Discover   Installed   Marketplaces   Errors   Stats
+
+   Plugin details
+
+   Superpowers
+   from Anthropic Directory
+   Also listed in claude-plugins-official
+   Repository: obra/superpowers
+   Installs exactly commit 22f0b46, the commit the Anthropic Directory lists
+   Version: 7.0.2
+
+   Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques
+
+   Will install:
+   · Component summary not available for remote plugin
+
+   ⚠ Plugins can run code on your computer, with access to your files and shell. Make sure you trust a plugin before installing,
+     updating, or using it. Anthropic does not control what MCP servers, files, or other software are included in plugins and cannot
+     verify that they will work as intended or that they won't change. See each plugin's homepage for more information.
+
+   ❯ Install for you (user scope)
+     Install for all collaborators on this repository (project scope)
+     Install for you, in this repo only (local scope)
+     Open homepage
+     View repository
+     Back to plugin list
+
+   Enter to select · Esc to go back

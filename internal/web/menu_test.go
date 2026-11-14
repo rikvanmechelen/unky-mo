@@ -373,3 +373,49 @@ func TestParseMenuReadsEveryFixture(t *testing.T) {
 		}
 	}
 }
+
+func TestParseMenuDetailScreen(t *testing.T) {
+	// Enter on a plugin opens a detail page: prose above, actions below.
+	v := mustParseMenu(t, "plugin-detail.txt")
+	if v.Title != "Plugins" || len(v.Tabs) != 5 {
+		t.Fatalf("title %q tabs %+v", v.Title, v.Tabs)
+	}
+	if !strings.Contains(v.Subtitle, "Plugin details") || !strings.Contains(v.Subtitle, "Version: 7.0.2") {
+		t.Errorf("subtitle = %q", v.Subtitle)
+	}
+	want := []string{
+		"Install for you (user scope)",
+		"Install for all collaborators on this repository (project scope)",
+		"Install for you, in this repo only (local scope)",
+		"Open homepage", "View repository", "Back to plugin list",
+	}
+	if got := menuRowTexts(v); !reflect.DeepEqual(got, want) {
+		t.Errorf("rows = %q", got)
+	}
+	if v.Cursor != 0 || v.Legend[0].Label != "select" || v.Legend[1].Label != "go back" {
+		t.Errorf("cursor %d legend %+v", v.Cursor, v.Legend)
+	}
+}
+
+func TestParseMenuNumberedActions(t *testing.T) {
+	v := mustParseMenu(t, "mcp-detail.txt")
+	if v.Title != "Claude_design MCP Server" {
+		t.Errorf("title = %q", v.Title)
+	}
+	if len(v.Rows) != 2 || v.Rows[0].Number != 1 || v.Rows[0].Text != "Reconnect" || v.Rows[1].Text != "Disable" || !v.Rows[0].Cursor {
+		t.Fatalf("rows = %+v", v.Rows)
+	}
+	if !strings.Contains(v.Subtitle, "Status:") || !strings.Contains(v.Subtitle, "URL:") {
+		t.Errorf("subtitle = %q", v.Subtitle)
+	}
+}
+
+func TestParseMenuFilteredSearch(t *testing.T) {
+	v := mustParseMenu(t, "config-search.txt")
+	if v.Input == nil || v.Input.Text != "think" || v.Input.Placeholder != "" {
+		t.Fatalf("input = %+v", v.Input)
+	}
+	if len(v.Rows) != 2 || v.Rows[0].Cols[0] != "Thinking mode" || !v.Rows[0].Cursor {
+		t.Errorf("rows = %q", menuRowTexts(v))
+	}
+}

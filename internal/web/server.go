@@ -56,9 +56,9 @@ type Server struct {
 
 	// modeMu serializes permission-mode changes; modeSettle is the wait
 	// between footer re-reads after each shift+tab (zero in tests).
-	modeMu     sync.Mutex
+	modeMu sync.Mutex
 	// menuMu serializes key presses into slash-command menus.
-	menuMu sync.Mutex
+	menuMu     sync.Mutex
 	modeSettle time.Duration
 
 	// bootID identifies this process, so a browser that asked for a
