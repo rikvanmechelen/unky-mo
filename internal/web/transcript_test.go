@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,6 +67,52 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 		if string(msgs[i]) != w {
 			t.Errorf("message %d: want %q, got %q", i, w, string(msgs[i]))
 		}
+	}
+}
+
+// A Read of an image (shape from a Claude Code 2.1.325 transcript) carries
+// the image twice; both copies are dropped, the tool_result's block keeping
+// its media type, and every other field is kept. A prompt's pasted image and
+// a line with no tool image come back byte for byte.
+func TestTranscriptCursorDropsToolResultImages(t *testing.T) {
+	readLine := `{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"image","source":{"type":"base64","data":"iVBORw0K","media_type":"image/png"}}]}]},"toolUseResult":{"type":"image","file":{"base64":"iVBORw0K","type":"image/png","originalSize":148362,"dimensions":{"originalWidth":1080}}}}`
+	pasteLine := `{"type":"user","uuid":"u2","message":{"role":"user","content":[{"type":"text","text":"look"},{"type":"image","source":{"type":"base64","data":"iVBORw0K","media_type":"image/png"}}]}}`
+	textRead := `{"type":"user","uuid":"u3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"\"base64\""}]},"toolUseResult":{"type":"text","file":{"filePath":"/x/a.md","content":"\"base64\""}}}`
+	path := writeFile(t, t.TempDir(), "session.jsonl", readLine+"\n"+pasteLine+"\n"+textRead+"\n")
+
+	msgs, err := newTranscriptCursor(path).readNew()
+	if err != nil || len(msgs) != 3 {
+		t.Fatalf("readNew: %d messages, err %v", len(msgs), err)
+	}
+	var got struct {
+		UUID          string          `json:"uuid"`
+		Message       json.RawMessage `json:"message"`
+		ToolUseResult struct {
+			Type string                     `json:"type"`
+			File map[string]json.RawMessage `json:"file"`
+		} `json:"toolUseResult"`
+	}
+	if err := json.Unmarshal(msgs[0], &got); err != nil {
+		t.Fatalf("forwarded line isn't JSON: %v", err)
+	}
+	if _, ok := got.ToolUseResult.File["base64"]; ok {
+		t.Errorf("toolUseResult.file.base64 still forwarded: %s", msgs[0])
+	}
+	if got.UUID != "u1" || got.ToolUseResult.Type != "image" || string(got.ToolUseResult.File["originalSize"]) != "148362" {
+		t.Errorf("other fields changed: %s", msgs[0])
+	}
+	wantMsg := `{"content":[{"content":[{"source":{"media_type":"image/png","type":"omitted"},"type":"image"}],"tool_use_id":"t1","type":"tool_result"}],"role":"user"}`
+	if string(got.Message) != wantMsg {
+		t.Errorf("message:\n got %s\nwant %s", got.Message, wantMsg)
+	}
+	if strings.Contains(string(msgs[0]), "iVBORw0K") {
+		t.Errorf("image data still forwarded: %s", msgs[0])
+	}
+	if string(msgs[1]) != pasteLine {
+		t.Errorf("pasted image changed: %s", msgs[1])
+	}
+	if string(msgs[2]) != textRead {
+		t.Errorf("text read changed: %s", msgs[2])
 	}
 }
 

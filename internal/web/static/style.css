@@ -836,6 +836,12 @@ html[data-focus-source="keyboard"] .cm-mo-composer__input:focus-visible { outlin
 /* ── Transcript ─────────────────────────────────────────────── */
 .chat-transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 32px 16px; }
 .chat-transcript__inner { display: flex; flex-direction: column; gap: 18px; }
+/* chat.js transcriptGhost: shown in place of the transcript while its
+   backlog loads, bottom-aligned like the transcript it stands in for. */
+.transcript-ghost { min-height: 100%; justify-content: flex-end; }
+.transcript-ghost .msg-user { align-items: center; }
+.transcript-ghost .msg-assistant { gap: 8px; }
+.ghost-tool { display: flex; align-items: center; gap: 10px; margin-left: 4px; padding: 8px 12px; border: 1px solid var(--line); }
 
 .msg-system { display: flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.25; color: var(--ink-4); }
 .msg-system__text { white-space: pre-wrap; overflow-wrap: anywhere; }

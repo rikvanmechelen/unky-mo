@@ -601,6 +601,24 @@ function isAgentTool(name) {
 // button that calls it; opts.onOpenDiff(path) opens a repo-relative path
 // from a diff a command printed or made. opts.bashChanges (createBashChanges)
 // gives Bash cards the change their command made to the checkout.
+// transcriptGhost is the loading skeleton for a transcript: a prompt, the
+// reply's lines, a tool card, another prompt and reply, sitting at the bottom
+// as the real transcript will. Like the Overview's, it fades in after 150ms,
+// so a quick switch never flashes it.
+function transcriptGhost() {
+  const prompt = (w) => el("div", { class: "msg-user ghost-user" }, [el("span"), bone(w, 14)]);
+  const reply = (ws) => el("div", { class: "msg-assistant" }, ws.map((w) => bone(w, 14)));
+  const tool = () => el("div", { class: "ghost-tool" }, [bone("54px", 12), bone("min(260px, 50%)", 12)]);
+  return skelWrap("chat-transcript__inner transcript-ghost", "Loading the conversation…", [
+    prompt("min(380px, 60%)"),
+    reply(["92%", "86%", "58%"]),
+    tool(),
+    reply(["74%"]),
+    prompt("min(220px, 40%)"),
+    reply(["88%", "95%", "80%", "42%"]),
+  ]);
+}
+
 function createTranscriptView(container, scrollEl, opts = {}) {
   const transcript = container;
   const transcriptScroll = scrollEl;
@@ -640,17 +658,25 @@ function createTranscriptView(container, scrollEl, opts = {}) {
   // visibly "scroll down" on switch, so the replay is built with the
   // transcript out of layout and shown, already at the bottom, once the
   // server says it has caught up.
+  // While the backlog streams in (seconds for a long session), a ghost of a
+  // conversation stands in for the hidden transcript.
   let batching = false;
   let batchDirty = false; // a branch switch inside the batch: re-render once at the end
+  let ghost = null;
   function beginBatch() {
     batching = true;
     batchDirty = false;
     transcript.style.display = "none";
+    ghost?.remove();
+    ghost = transcriptGhost();
+    transcript.after(ghost);
   }
   function endBatch() {
     if (!batching) return;
     if (batchDirty) rerenderActiveBranch();
     batching = false;
+    ghost?.remove();
+    ghost = null;
     transcript.style.display = "";
     transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
     scrollToBottom(); // again after layout settles (images, late highlights)
@@ -974,7 +1000,10 @@ function createTranscriptView(container, scrollEl, opts = {}) {
           ? block.content
           : isAgentTool(entry.name) && Array.isArray(block.content)
             ? block.content.filter((b) => b.type === "text").map((b) => b.text).join("\n\n")
-            : JSON.stringify(block.content);
+            // A Read of an image: transcript.go drops the image data, so name it.
+            : Array.isArray(block.content) && block.content.some((b) => b.type === "image")
+              ? block.content.map((b) => b.type === "image" ? `Image (${b.source?.media_type || "unknown type"})` : b.text || "").filter(Boolean).join("\n\n")
+              : JSON.stringify(block.content);
 
     // A command whose output is a diff (git diff, git show) shows it as one.
     const diffs = entry.name === "Bash" ? parseUnifiedDiff(text) : null;
@@ -1101,6 +1130,8 @@ function createTranscriptView(container, scrollEl, opts = {}) {
 
   function clear() {
     batching = false;
+    ghost?.remove();
+    ghost = null;
     transcript.style.display = "";
     nodes.clear();
     messages = [];
