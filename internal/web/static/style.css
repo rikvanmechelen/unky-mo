@@ -848,6 +848,28 @@ html[data-focus-source="keyboard"] .cm-mo-composer__input:focus-visible { outlin
 }
 .msg-user__label { font-size: 12px; line-height: 20px; color: var(--ink-3); padding-left: 12px; }
 .msg-user__text { font-size: 16px; line-height: 20px; font-weight: 700; letter-spacing: var(--tracking-bold); white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-user__tag { grid-column: 2; justify-self: start; margin-top: 6px; font-size: 11px; line-height: 1; color: var(--ink-3); border: 1px solid var(--line); padding: 3px 6px; }
+.msg-paste { display: block; margin: 4px 0; font-weight: 400; letter-spacing: normal; }
+.msg-paste > summary { cursor: pointer; font-size: 13px; color: var(--ink-3); width: max-content; border-bottom: 1px solid var(--line); }
+.msg-paste > summary:hover { color: var(--ink); }
+.msg-paste__body {
+  margin: 6px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; font-weight: 400;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); color: var(--ink-2);
+  border-left: 1px solid var(--line);
+}
+
+.msg-peer { border-left: 4px solid var(--blue); background: var(--surface); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.msg-peer__head { font-size: 12px; line-height: 1.25; color: var(--ink-3); display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.msg-peer__head strong { color: var(--ink); }
+.msg-peer__head .msg-user__tag { margin: 0 0 0 6px; }
+.msg-peer__body { padding-left: 0; }
+.msg-peer.is-folded .msg-peer__body { max-height: 16em; overflow: hidden; mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.msg-peer__more { all: unset; cursor: pointer; align-self: start; font-size: 13px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.msg-peer__more:hover { color: var(--ink); }
+.msg-peer__more:focus-visible, .msg-paste > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.msg-envelope__attrs { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--ink-2); margin-bottom: 6px; overflow-wrap: anywhere; }
+.msg-envelope__key { color: var(--ink-4); }
 
 .msg-assistant { font-size: 16px; line-height: 1.4; text-wrap: pretty; overflow-wrap: anywhere; padding-left: 4px; display: flex; flex-direction: column; gap: 10px; }
 .msg-assistant p, .msg-assistant ul, .msg-assistant ol, .msg-assistant blockquote, .msg-assistant pre, .msg-assistant .md-h, .msg-assistant hr { margin: 0; }

@@ -659,7 +659,9 @@ function createTranscriptView(container, scrollEl, opts = {}) {
   // appendBubble adds one transcript row. images (user rows only) are data:
   // URLs shown as thumbnails under the text.
   // uuid (a prompt's transcript line) lets reveal() find the bubble.
-  function appendBubble(kind, text, images = [], uuid = "") {
+  // segments (user rows) are the prompt with its pastes (envelopes.js);
+  // queued marks a message Claude read in the middle of a turn.
+  function appendBubble(kind, text, images = [], uuid = "", { segments = null, queued = false } = {}) {
     if (kind === "meta") {
       transcript.appendChild(el("div", { class: "msg-system" }, [
         el("span", { class: "msg-system__text", text }),
@@ -673,10 +675,12 @@ function createTranscriptView(container, scrollEl, opts = {}) {
         btn.addEventListener("click", () => openImageViewer(src));
         return btn;
       });
+      const parts = segments ? userSegments(segments) : text ? [document.createTextNode(text)] : [];
       transcript.appendChild(el("div", { class: "msg-user", ...(uuid ? { "data-uuid": uuid } : {}) }, [
         el("span", { class: "msg-user__label", text: userLabel }),
-        ...(text ? [el("span", { class: "msg-user__text", text })] : []),
+        ...(parts.length ? [el("div", { class: "msg-user__text" }, parts)] : []),
         ...(thumbs.length ? [el("div", { class: "msg-user__images" }, thumbs)] : []),
+        ...(queued ? [el("span", { class: "msg-user__tag", text: "read mid-turn" })] : []),
       ]));
       return;
     }
@@ -689,6 +693,54 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     purple: "#753BBD", orange: "#FF8F1C", pink: "#E93CAC", cyan: "#00AFD7",
   };
 
+  // userSegments turns a prompt's segments into nodes: typed text as is,
+  // each paste folded under "Pasted text · N lines".
+  function userSegments(segments) {
+    // A paste is a block of its own, so the line breaks around it (and at
+    // either end of the prompt) would only add blank lines.
+    const trimmed = segments.map((seg, i) => {
+      if (seg.kind !== "text") return seg;
+      let t = seg.text || "";
+      if (i === 0) t = t.trimStart();
+      else if (segments[i - 1].kind === "pasted") t = t.replace(/^[ \t]*\n/, "");
+      if (i === segments.length - 1) t = t.trimEnd();
+      else if (segments[i + 1].kind === "pasted") t = t.replace(/\n[ \t]*$/, "");
+      return { kind: "text", text: t };
+    }).filter((seg) => seg.kind !== "text" || seg.text);
+    return trimmed.map((seg) => {
+      if (seg.kind !== "pasted") return document.createTextNode(seg.text);
+      const n = seg.body ? seg.body.split("\n").length : 0;
+      return el("details", { class: "msg-paste" }, [
+        el("summary", { text: `Pasted text · ${n} line${n === 1 ? "" : "s"}` }),
+        el("pre", { class: "msg-paste__body", text: seg.body }),
+      ]);
+    });
+  }
+
+  // appendFoldRow adds a collapsible row: a coloured square, a name, a one
+  // line detail, and a body built by fill on first open.
+  function appendFoldRow({ name, detail = "", color = "var(--ink-4)", extraClass = "", fill }) {
+    const body = el("div", { class: "msg-teammate__body" });
+    body.hidden = true;
+    const action = el("span", { class: "tool-card__action", text: "Show" });
+    const sq = el("span", { class: "tool-card__sq" });
+    sq.style.background = color;
+    const toggle = el("button", { class: "tool-card__toggle", type: "button" }, [
+      sq,
+      el("span", { class: "tool-card__name", text: name }),
+      ...(detail ? [el("span", { class: "tool-card__detail", text: detail })] : []),
+      action,
+    ]);
+    toggle.addEventListener("click", () => withPin(() => {
+      if (body.hidden && !body.childNodes.length) fill(body);
+      body.hidden = !body.hidden;
+      action.textContent = body.hidden ? "Show" : "Hide";
+    }));
+    transcript.appendChild(el("div", { class: `tool-card msg-teammate ${extraClass}`.trim() }, [toggle, body]));
+  }
+
+  const firstLine = (s) => (s || "").split("\n").map((l) => l.trim()).find(Boolean) || "";
+
   // appendTeammates renders each teammate message as a collapsible row —
   // the teammate, its summary, and the report as markdown on demand. An
   // idle notification is just a meta line.
@@ -700,23 +752,80 @@ function createTranscriptView(container, scrollEl, opts = {}) {
         appendBubble("meta", `${t.id} is idle`);
         continue;
       }
-      const body = el("div", { class: "msg-teammate__body msg-assistant" });
-      body.hidden = true;
-      const action = el("span", { class: "tool-card__action", text: "Show" });
-      const sq = el("span", { class: "tool-card__sq" });
-      sq.style.background = TEAMMATE_COLORS[t.color] || "var(--ink-4)";
-      const toggle = el("button", { class: "tool-card__toggle", type: "button" }, [
-        sq,
-        el("span", { class: "tool-card__name", text: t.id }),
-        ...(t.summary ? [el("span", { class: "tool-card__detail", text: t.summary })] : []),
-        action,
-      ]);
-      toggle.addEventListener("click", () => withPin(() => {
-        if (body.hidden && !body.childNodes.length) body.appendChild(renderMarkdown(t.body));
-        body.hidden = !body.hidden;
-        action.textContent = body.hidden ? "Show" : "Hide";
+      appendFoldRow({
+        name: t.id, detail: t.summary, color: TEAMMATE_COLORS[t.color] || "var(--ink-4)",
+        fill: (body) => { body.classList.add("msg-assistant"); body.appendChild(renderMarkdown(t.body)); },
+      });
+    }
+  }
+
+  // A message another Claude session sent this one (SendMessage between
+  // sessions): who from, then the message, folded when long.
+  const PEER_FOLD_LINES = 12;
+  function appendPeer(d) {
+    const body = el("div", { class: "msg-peer__body msg-assistant" }, [renderMarkdown(d.body || "")]);
+    const card = el("div", { class: "msg-peer" }, [
+      el("div", { class: "msg-peer__head" }, [
+        el("span", { text: "From " }),
+        el("strong", { text: d.name }),
+        ...(d.mode ? [el("span", { text: ` · ${d.mode}` })] : []),
+        ...(d.queued ? [el("span", { class: "msg-user__tag", text: "read mid-turn" })] : []),
+      ]),
+      body,
+    ]);
+    if ((d.body || "").split("\n").length > PEER_FOLD_LINES) {
+      card.classList.add("is-folded");
+      const more = el("button", { type: "button", class: "msg-peer__more", text: "Show all" });
+      more.addEventListener("click", () => withPin(() => {
+        const folded = card.classList.toggle("is-folded");
+        more.textContent = folded ? "Show all" : "Show less";
       }));
-      transcript.appendChild(el("div", { class: "tool-card msg-teammate" }, [toggle, body]));
+      card.appendChild(more);
+    }
+    transcript.appendChild(card);
+  }
+
+  const humanizeTag = (tag) => {
+    const words = tag.replace(/[-_]+/g, " ").trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  };
+
+  // appendDescribed renders one describeUserString / describeQueuedCommand
+  // result.
+  function appendDescribed(d, images = [], uuid = "") {
+    switch (d.kind) {
+      case "user":
+        appendBubble("user", d.text, images, uuid, { segments: d.segments, queued: d.queued });
+        return;
+      case "meta":
+        appendBubble("meta", d.text);
+        return;
+      case "teammates":
+        appendTeammates(d.items);
+        return;
+      case "peer":
+        appendPeer(d);
+        return;
+      case "agent":
+        appendFoldRow({
+          name: "Subagent report", detail: firstLine(d.body), color: "var(--blue)",
+          fill: (body) => { body.classList.add("msg-assistant"); body.appendChild(renderMarkdown(d.body)); },
+        });
+        return;
+      case "envelope":
+        appendFoldRow({
+          name: humanizeTag(d.tag), detail: firstLine(d.body),
+          fill: (body) => {
+            const attrs = Object.entries(d.attrs || {});
+            if (attrs.length) {
+              body.appendChild(el("div", { class: "msg-envelope__attrs" },
+                attrs.map(([k, v]) => el("div", {}, [el("span", { class: "msg-envelope__key", text: `${k}: ` }), document.createTextNode(v)]))));
+            }
+            body.appendChild(el("pre", { class: "msg-paste__body", text: d.body }));
+          },
+        });
+        return;
+      default: // skip
     }
   }
 
@@ -908,9 +1017,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     if (msg.type === "user") {
       const content = msg.message?.content;
       if (typeof content === "string") {
-        const d = describeUserString(msg, content);
-        if (d.kind === "teammates") appendTeammates(d.items);
-        else if (d.kind === "user" || d.kind === "meta") appendBubble(d.kind, d.text, [], msg.uuid);
+        appendDescribed(describeUserString(msg, content), [], msg.uuid);
         return;
       }
       for (const block of content || []) {
@@ -922,9 +1029,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       const text = (content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
       const images = (content || []).map(imageSrc).filter(Boolean);
       if (!text && !images.length) return;
-      const d = describeUserString(msg, text);
-      if (d.kind === "user") appendBubble("user", d.text, images, msg.uuid);
-      else if (d.kind === "meta") appendBubble("meta", d.text);
+      appendDescribed(describeUserString(msg, text), images, msg.uuid);
     }
   }
 

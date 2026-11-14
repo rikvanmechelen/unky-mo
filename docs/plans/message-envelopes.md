@@ -84,3 +84,14 @@ Scanned every local transcript on 2026-11-14 and checked the plan's assumptions.
   - `user` gains `segments` (text + pastes); `text` stays the full prompt, which the Overview's intent trace uses.
 - `describeQueuedCommand(attachment)`: an attachment's `queued_command`, described the same way with `queued: true`.
 - Tests (`jstests/envelopes.test.js`) read the step 1 fixtures. They also check the refusals: HTML and log tags in a human prompt stay text, an envelope pasted by a human isn't parsed, unclosed tags stay text, and a paste holding an envelope is one paste. There are no visible changes in this step except that a peer message's line is no longer skipped (it renders as a user bubble until step 3).
+
+## Step 3 in detail: transcript cards
+
+All in `createTranscriptView` (`chat.js`), so the subagent dialog gets the same. `renderMessage` passes every description through one `appendDescribed(d, images, uuid)`:
+- `user`: the bubble as before, but its text is built from `segments`: typed text as text, each paste a `<details class="msg-paste">` whose summary reads "Pasted text · N lines" and whose body is the paste in monospace (pre-wrap, height-capped with its own scroll). `queued: true` adds a small "read mid-turn" tag (used from step 4).
+- `peer`: `.msg-peer`, a block with a `--blue` left rule over `--surface`: "From **app** · prompting" (plus "read mid-turn" when queued), then the body through `renderMarkdown`. A body over 12 lines is folded (capped height, fade) with a "Show all" / "Show less" button.
+- `agent`: a folding tool-card-style row ("Subagent report", its first line as the detail) like the teammate rows; the body renders as markdown on first open. The teammate rows move onto the same helper (`appendFoldRow`).
+- `envelope` (unknown): the same row, named from the tag ("relay-note" → "Relay note"), with its attributes as `key: value` lines and the body as plain pre-wrap text.
+- `meta`, `teammates`, `skip`: as before.
+
+CSS uses the tokens only (both themes). No Node test: this is DOM wiring over step 2's tested descriptions.
