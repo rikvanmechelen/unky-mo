@@ -68,3 +68,19 @@ Scanned every local transcript on 2026-11-14 and checked the plan's assumptions.
 - **A peer message read as a new turn** is a `user` line with `isMeta: true` and `origin: {kind: "peer", from, name, fromMode, body, msg_id, verifiedPeerPid}`. Its text is `Another Claude session sent a message:\n<cross-session-message from= hop-chain= from-name= from-mode=>…</cross-session-message>`. `origin.body` is the message without the envelope (`peer-user`). Queue lines carry the bare envelope (`peer-enqueue`, `peer-remove`).
 - **Subagent hand-backs** arrive only as `queued_command` attachments in these transcripts. Their body is a fixed frame (`[Subagent hand-back] … The report follows:`) followed by the report with every line indented by two spaces.
 - **`pasted_content`:** the open tag is `<pasted_content>` or `<pasted_content id="e26c">`, and the close tag repeats the id: `</pasted_content id="e26c">`. The paste can contain anything, envelopes included (the user pasted a `<cross-session-message>`), so a paste ends only at the close tag with its own id. It sits in a `user` line with `origin.kind: "human"`, as a text block next to the typed text (`pasted-user`).
+
+## Step 2 in detail: one parser
+
+- New `static/envelopes.js`, loaded before `chat.js` on both pages that render transcripts, and exported for Node. The helpers in `chat.js` that read Claude Code's markup (`isMetaContent`, `tagText`, `stripAnsi`, `parseTeammateMessages`, `describeUserString`) move there unchanged in behavior, so they're Node-testable for the first time.
+- `parseEnvelopes(text, {only})`: walks the text for open tags on the allowlist (`cross-session-message` → `peer`, `agent-message` → `agent`, `task-notification` → `task`, `teammate-message` → `teammate`, `pasted_content` → `pasted`, `system-reminder` / `local-command-caveat` → `hidden`). It returns `text` segments and envelope segments in order. An envelope closes at the first matching close tag; a paste closes only at its own id's close tag (or a bare `</pasted_content>` when it had no id). Without a close tag, the open tag stays text. `only` limits the tags: a human prompt only ever parses `pasted`.
+  - Attributes: `name="value"`, entity-unescaped.
+  - Peer: `{name, from, mode, body}`. The `Another Claude session sent a message:` lead-in right before one is dropped.
+  - Agent: `{from, body}`, the hand-back frame cut off and the report's two-space indent removed (if the frame isn't there, the body is kept as is).
+  - Task: `{summary, status, taskId, outputFile}`.
+- `envelopeSummary(text, max)`: one plain line (peer `app: …`, a paste `[Pasted N lines]`, agent `Subagent report: …`, task its summary), whitespace collapsed and cut with `…`.
+- `describeUserString(msg, text)` keeps its kinds and adds:
+  - `peer` `{name, mode, body}`, from `origin` when `origin.kind === "peer"` (even though the line is `isMeta`), else from the text.
+  - `agent` `{from, body}` and `envelope` `{tag, attrs, body}` (an unknown tag), only when the line isn't human (`origin.kind !== "human"`) and the whole text is one envelope.
+  - `user` gains `segments` (text + pastes); `text` stays the full prompt, which the Overview's intent trace uses.
+- `describeQueuedCommand(attachment)`: an attachment's `queued_command`, described the same way with `queued: true`.
+- Tests (`jstests/envelopes.test.js`) read the step 1 fixtures. They also check the refusals: HTML and log tags in a human prompt stay text, an envelope pasted by a human isn't parsed, unclosed tags stay text, and a paste holding an envelope is one paste. There are no visible changes in this step except that a peer message's line is no longer skipped (it renders as a user bubble until step 3).

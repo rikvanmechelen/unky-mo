@@ -1,70 +1,12 @@
 // Chat-style live transcript + prompt input. No build step, no framework —
 // same convention as app.js. Each SSE "transcript" event is the *exact*
 // original JSONL line (see internal/web/transcript.go) — this file owns all
-// interpretation of that schema; the backend stays schema-agnostic.
+// interpretation of that schema (with envelopes.js, which reads Claude
+// Code's tagged messages); the backend stays schema-agnostic.
 // STATUS, el, statusSquare and renderUsage come from common.js.
 
 function windowIDFromURL() {
   return new URLSearchParams(location.search).get("window"); // e.g. "@5"
-}
-
-function isMetaContent(text) {
-  return text.startsWith("<local-command") || text.startsWith("<command");
-}
-
-// tagText returns the trimmed inner text of the first <tag>…</tag> in text,
-// or null when the tag is absent.
-function tagText(text, tag) {
-  const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-  return m ? m[1].trim() : null;
-}
-
-function stripAnsi(text) {
-  return text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
-}
-
-// describeUserString classifies a user line's string content: what a human
-// typed ({kind: "user"}), a meta row ({kind: "meta"}), or noise to hide
-// ({kind: "skip"}). Slash commands, their output and background-task
-// notifications all arrive as "user" lines in the JSONL but aren't yours.
-// parseTeammateMessages extracts the <teammate-message …>…</teammate-message>
-// blocks agent-team teammates send their lead (as plain user lines with no
-// other marker). Returns [] when text has none.
-function parseTeammateMessages(text) {
-  const items = [];
-  const re = /<teammate-message\s+([^>]*)>([\s\S]*?)<\/teammate-message>/g;
-  let m;
-  while ((m = re.exec(text))) {
-    const attrs = {};
-    for (const a of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
-    items.push({ id: attrs.teammate_id || "teammate", color: attrs.color || "", summary: attrs.summary || "", body: m[2].trim() });
-  }
-  return items;
-}
-
-function describeUserString(msg, text) {
-  if (msg.isCompactSummary) return { kind: "meta", text: "Conversation compacted" };
-  if (text.includes("<teammate-message")) {
-    const items = parseTeammateMessages(text);
-    if (items.length) return { kind: "teammates", items };
-  }
-  if (msg.isMeta) return { kind: "skip" }; // command caveat, system nudges
-  if (msg.origin?.kind === "task-notification" || text.startsWith("<task-notification>")) {
-    return { kind: "meta", text: tagText(text, "summary") || "Background task finished" };
-  }
-  const name = tagText(text, "command-name");
-  if (name !== null) {
-    const args = tagText(text, "command-args");
-    return { kind: "meta", text: args ? `${name} ${args}` : name };
-  }
-  const out = tagText(text, "local-command-stdout") ?? tagText(text, "local-command-stderr");
-  if (out !== null) {
-    const clean = stripAnsi(out).trim();
-    return clean ? { kind: "meta", text: clean } : { kind: "skip" };
-  }
-  if (isMetaContent(text)) return { kind: "meta", text };
-  if (/^\[Request interrupted[^\]]*\]$/.test(text.trim())) return { kind: "meta", text: text.trim().slice(1, -1) };
-  return { kind: "user", text };
 }
 
 // Claude Code shows a random past-tense verb when a turn ends but never
@@ -968,7 +910,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       if (typeof content === "string") {
         const d = describeUserString(msg, content);
         if (d.kind === "teammates") appendTeammates(d.items);
-        else if (d.kind !== "skip") appendBubble(d.kind, d.text, [], msg.uuid);
+        else if (d.kind === "user" || d.kind === "meta") appendBubble(d.kind, d.text, [], msg.uuid);
         return;
       }
       for (const block of content || []) {
