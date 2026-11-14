@@ -129,7 +129,7 @@ function parseTeammateMessages(text) {
     .map(({ id, color, summary, body }) => ({ id, color, summary, body }));
 }
 
-const oneLine = (s) => s.replace(/\s+/g, " ").trim();
+const envOneLine = (s) => s.replace(/\s+/g, " ").trim();
 
 function lineCount(s) {
   return s ? s.split("\n").length : 0;
@@ -140,16 +140,16 @@ function lineCount(s) {
 function envelopeSummary(text, max = 160) {
   const parts = parseEnvelopes(text).map((s) => {
     switch (s.kind) {
-      case "text": return oneLine(s.text);
-      case "peer": return `${s.name}: ${oneLine(s.body)}`;
-      case "agent": return `Subagent report: ${oneLine(s.body)}`;
+      case "text": return envOneLine(s.text);
+      case "peer": return `${s.name}: ${envOneLine(s.body)}`;
+      case "agent": return `Subagent report: ${envOneLine(s.body)}`;
       case "task": return s.summary || "Background task";
-      case "teammate": return `${s.id}: ${s.summary || oneLine(s.body)}`;
+      case "teammate": return `${s.id}: ${s.summary || envOneLine(s.body)}`;
       case "pasted": return `[Pasted ${lineCount(s.body)} line${lineCount(s.body) === 1 ? "" : "s"}]`;
       default: return "";
     }
   }).filter(Boolean);
-  const line = oneLine(parts.join(" "));
+  const line = envOneLine(parts.join(" "));
   return line.length > max ? line.slice(0, max - 1).trimEnd() + "…" : line;
 }
 
