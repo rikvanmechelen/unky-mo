@@ -1008,6 +1008,14 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       return;
     }
 
+    // A message Claude read in the middle of a turn (transcript.go forwards
+    // only queued_command attachments).
+    if (msg.type === "attachment") {
+      const d = describeQueuedCommand(msg.attachment);
+      if (d) appendDescribed(d, [], msg.uuid);
+      return;
+    }
+
     if (msg.type === "system") {
       const text = describeSystem(msg);
       if (text) appendBubble("meta", text);

@@ -55,7 +55,8 @@ type linkStub struct {
 // readNew reads any bytes appended to the file since the last call (or
 // since construction, for a fresh cursor), splits them into complete lines,
 // and returns the ones forwarded to the browser: user and assistant lines,
-// plus system lines whose subtype is in forwardedSystemSubtypes and queue-operation lines, verbatim;
+// plus system lines whose subtype is in forwardedSystemSubtypes, queue-operation lines
+// and queued_command attachments, verbatim;
 // any other line with a uuid becomes a linkStub. An
 // incomplete trailing line (the
 // file was read mid-write) is held and prefixed onto the next call's data
@@ -109,11 +110,12 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 			continue
 		}
 		var envelope struct {
-			Type       string  `json:"type"`
-			Subtype    string  `json:"subtype"`
-			UUID       string  `json:"uuid"`
-			ParentUUID *string `json:"parentUuid"`
-			Logical    string  `json:"logicalParentUuid"`
+			Type       string          `json:"type"`
+			Subtype    string          `json:"subtype"`
+			UUID       string          `json:"uuid"`
+			ParentUUID *string         `json:"parentUuid"`
+			Logical    string          `json:"logicalParentUuid"`
+			Attachment json.RawMessage `json:"attachment"`
 		}
 		if json.Unmarshal(line, &envelope) != nil {
 			continue
@@ -124,6 +126,9 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 		case envelope.Type == "queue-operation":
 			// Not part of the conversation (no uuid), but it's how the
 			// chat view knows what Claude has queued (queue-model.js).
+		case envelope.Type == "attachment" && attachmentType(envelope.Attachment) == "queued_command":
+			// A message Claude read in the middle of a turn: the user's,
+			// another session's, a subagent's. This line is its only record.
 		case envelope.UUID != "":
 			// Not shown, but part of the conversation tree (attachments,
 			// hook summaries…): forward just its link so the browser can
@@ -137,6 +142,18 @@ func (c *transcriptCursor) readNew() ([]json.RawMessage, error) {
 		out = append(out, json.RawMessage(append([]byte(nil), line...)))
 	}
 	return out, nil
+}
+
+// attachmentType is an attachment line's attachment.type, or "" when the
+// field isn't an object with one.
+func attachmentType(raw json.RawMessage) string {
+	var a struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &a) != nil {
+		return ""
+	}
+	return a.Type
 }
 
 // transcriptHub fans out live-tailed JSONL messages to any number of SSE

@@ -24,6 +24,8 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 	// Lines that aren't shown but sit in the conversation tree come back as
 	// link stubs (uuid + parentUuid only); lines without a uuid are dropped.
 	queueLine := `{"type":"queue-operation","operation":"enqueue","content":"next, please"}`
+	// A message read mid-turn is recorded only as a queued_command attachment.
+	queuedLine := `{"type":"attachment","uuid":"q1","parentUuid":"a1","attachment":{"type":"queued_command","prompt":"also this","origin":{"kind":"human"}}}`
 	dropped := []string{
 		`{"type":"mode","mode":"default"}`,
 		`{"type":"last-prompt","lastPrompt":"hi"}`,
@@ -32,9 +34,11 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 		`{"type":"attachment","uuid":"t1","parentUuid":"u1","attachment":{"type":"hook"}}`,
 		`{"type":"system","subtype":"stop_hook_summary","uuid":"s3","parentUuid":"a1","hookCount":1}`,
 		`{"type":"system","subtype":"compact_boundary","uuid":"s4","parentUuid":null,"logicalParentUuid":"a1"}`,
+		`{"type":"attachment","uuid":"t2","parentUuid":"q1","attachment":"odd"}`,
 	}
 	content := userLine + "\n" + dropped[0] + "\n" + stubbed[0] + "\n" + assistantLine + "\n" + stubbed[1] + "\n" +
-		turnLine + "\n" + queueLine + "\n" + dropped[1] + "\n" + stubbed[2] + "\n" + commandLine + "\n"
+		turnLine + "\n" + queueLine + "\n" + dropped[1] + "\n" + stubbed[2] + "\n" + commandLine + "\n" +
+		queuedLine + "\n" + stubbed[3] + "\n"
 	path := writeFile(t, dir, "session.jsonl", content)
 
 	c := newTranscriptCursor(path)
@@ -51,6 +55,8 @@ func TestTranscriptCursorFiltersForwardedTypes(t *testing.T) {
 		queueLine,
 		`{"type":"link","uuid":"s4","parentUuid":null,"logicalParentUuid":"a1"}`,
 		commandLine,
+		queuedLine,
+		`{"type":"link","uuid":"t2","parentUuid":"q1"}`,
 	}
 	if len(msgs) != len(want) {
 		t.Fatalf("expected %d messages, got %d: %s", len(want), len(msgs), msgs)

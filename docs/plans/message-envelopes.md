@@ -95,3 +95,10 @@ All in `createTranscriptView` (`chat.js`), so the subagent dialog gets the same.
 - `meta`, `teammates`, `skip`: as before.
 
 CSS uses the tokens only (both themes). No Node test: this is DOM wiring over step 2's tested descriptions.
+
+## Step 4 in detail: mid-turn messages
+
+- `transcript.go` (`readNew`): an `attachment` line whose `attachment.type` is `queued_command` is forwarded verbatim instead of as a link stub. The attachment's type is read from a `json.RawMessage`, so an attachment field of any other shape still becomes a stub instead of dropping the line. Every other attachment stays a stub. The line keeps its `uuid`/`parentUuid`, so it sits in the conversation tree exactly where the stub did, and branch switching is unchanged.
+- `chat.js` `renderMessage`: `type: "attachment"` → `describeQueuedCommand(msg.attachment)` → `appendDescribed`. The user's own message becomes a user bubble tagged "read mid-turn", a peer's a peer card with the same tag, a subagent's a "Subagent report" row, and a task notification a meta row.
+- Not part of the Overview's intent trace: it reads only `user` lines, and a mid-turn message doesn't start a turn.
+- Go test: `TestTranscriptCursorFiltersForwardedTypes` gains a `queued_command` attachment (forwarded) next to the existing `hook` attachment (still a stub) and one whose `attachment` is a string (a stub, not dropped).
