@@ -340,3 +340,28 @@ Fixtures were probed on Claude Code 2.1.325; on an upgrade run
 Verified by hand: nothing — the browser half was only syntax-checked
 (`node --check`) and unit-tested for its pure parts; it needs a look in a
 real browser after `make install` and `./mo restart`.
+
+## Fixes after the first real use (2026-11-14)
+
+Found by trying it in the browser and re-reviewing the code:
+
+- The closed dialog stayed on the page, under the chat: `.dialog` sets
+  `display: flex`, which beats the browser's hiding of a closed
+  `<dialog>`. `.menu-dialog:not([open])` hides it (the other dialogs
+  remove themselves instead).
+- The watcher's poll loop died when an answer arrived during a key press
+  (an early `return` skipped scheduling the next poll), leaving a stale
+  menu and banner. `jstests/menu_watcher.test.js` drives the watcher with
+  fake fetch and timers.
+- Esc could go out twice: the dialog's keydown sent it and its `cancel`
+  event sent it again. If Claude hadn't redrawn, the second had the same
+  sig and was pressed, which can open `/rewind`. Now the cancel only sends
+  when no keydown did, and the server refuses an Esc on a screen it
+  already pressed Esc on (`menuEscOn`).
+- `parseMenu` took any `▔` line on the screen. A tool's output in the
+  transcript can contain one, and keys for that "menu" would have gone
+  into the prompt. Now the edge must start at column 0 and no prompt-box
+  rule may follow it.
+- A subtitle the terminal had word-wrapped came out as two lines; lines
+  are joined when the first one ended only because the next word didn't
+  fit the pane's width (the edge's length).
