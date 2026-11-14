@@ -23,7 +23,7 @@ test("menuSections starts a new section when a group comes back", () => {
   assert.deepEqual(got.map((s) => s.group), ["X", "Y", "X"]);
 });
 
-const { menuLegendButtons, menuKeyFromEvent, menuTextDelta, menuClickPlan, menuHasKey } = require("../static/menu-model.js");
+const { menuLegendButtons, menuKeyFromEvent, menuClickPlan, menuHasKey, menuEnterLabel } = require("../static/menu-model.js");
 
 test("menuLegendButtons: single keys, alternatives, pairs and typing", () => {
   const legend = [
@@ -91,28 +91,25 @@ test("menuKeyFromEvent sends printable characters and ignores the rest", () => {
   assert.equal(menuKeyFromEvent(ev("c", { ctrlKey: true }), { legend: [{ keys: ["C-c"] }] }), null);
 });
 
-test("menuTextDelta turns an edited input into key presses", () => {
-  assert.deepEqual(menuTextDelta("", "abc"), [{ text: "abc" }]);
-  assert.deepEqual(menuTextDelta("abc", "abcd"), [{ text: "d" }]);
-  assert.deepEqual(menuTextDelta("abc", "ab"), [{ key: "backspace" }]);
-  assert.deepEqual(menuTextDelta("abc", "axy"), [{ key: "backspace" }, { key: "backspace" }, { text: "xy" }]);
-  assert.deepEqual(menuTextDelta("abc", ""), [{ key: "backspace" }, { key: "backspace" }, { key: "backspace" }]);
-  assert.deepEqual(menuTextDelta("same", "same"), []);
-  // astral characters count as one key
-  assert.deepEqual(menuTextDelta("a😀", "a"), [{ key: "backspace" }]);
-});
-
-test("menuClickPlan selects first, activates on the cursor row", () => {
+test("menuClickPlan only ever moves the cursor", () => {
   const view = {
     sig: "s1",
     legend: [{ keys: ["enter"], label: "select" }, { keys: ["esc"], label: "cancel" }],
     rows: [{ text: "a", cursor: true }, { text: "b" }],
   };
   assert.deepEqual(menuClickPlan(view, 1), { goto: { row: 1 } });
-  assert.deepEqual(menuClickPlan(view, 0), { keys: [{ key: "enter" }] });
-  const noEnter = { ...view, legend: [{ keys: ["esc"], label: "close" }] };
-  assert.equal(menuClickPlan(noEnter, 0), null);
-  assert.deepEqual(menuClickPlan(noEnter, 1), { goto: { row: 1 } });
+  // A second tap on the same row must not press Enter: that changes a
+  // /config setting with one tap. The row's action button does.
+  assert.equal(menuClickPlan(view, 0), null);
+  assert.equal(menuClickPlan(view, 5), null);
+});
+
+test("menuEnterLabel names what Enter does, from the legend", () => {
+  assert.equal(menuEnterLabel({ legend: [{ keys: ["enter"], label: "set as default" }] }), "Set as default");
+  assert.equal(menuEnterLabel({ legend: [{ keys: ["enter", "space"], label: "change" }] }), "Change");
+  assert.equal(menuEnterLabel({ legend: [{ keys: ["enter", "down"], label: "select" }] }), "Select");
+  assert.equal(menuEnterLabel({ legend: [{ keys: ["esc"], label: "close" }] }), null);
+  assert.equal(menuEnterLabel(null), null);
 });
 
 const { commandMenuTag, isBareSlashCommand } = require("../static/menu-model.js");

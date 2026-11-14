@@ -64,7 +64,7 @@ function createMenuWatcher(onChange, onNote = () => {}, deps = {}) {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/menu/keys`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         // A row click is relative to the screen it was made on.
-        body: JSON.stringify({ sig: p.sig || menu.sig, keys: p.keys, goto: p.goto }),
+        body: JSON.stringify({ sig: p.sig || menu.sig, keys: p.keys, goto: p.goto, setText: p.setText }),
       });
       const data = await res.json().catch(() => ({}));
       if (g !== gen) return;
@@ -120,7 +120,7 @@ function createMenuDialog({ send, onClose = () => {} }) {
   const note = el("div", { class: "menu-note", role: "status" });
   let view = null;
   let showRaw = false;
-  let shownText = ""; // what the menu's input holds, as far as we know
+  let shownText = ""; // the text last sent to, or read from, the menu's box
   let typing = 0; // text sends in flight, during which the screen's text isn't authoritative
   let typeTimer = null;
 
@@ -157,14 +157,16 @@ function createMenuDialog({ send, onClose = () => {} }) {
     send({ keys: [{ key }] });
   });
 
+  // The box's text goes out whole: the server types the difference from
+  // what Claude's box holds right then, so an edit made in the terminal
+  // meanwhile isn't counted wrong.
   function flushTyping() {
     clearTimeout(typeTimer);
     typeTimer = null;
-    const keys = menuTextDelta(shownText, inputEl.value);
-    if (!keys.length) return;
+    if (inputEl.value === shownText) return;
     shownText = inputEl.value;
     typing++;
-    send({ keys }).finally(() => { typing--; });
+    send({ setText: inputEl.value }).finally(() => { typing--; });
   }
   inputEl.addEventListener("input", () => {
     clearTimeout(typeTimer);
@@ -193,6 +195,13 @@ function createMenuDialog({ send, onClose = () => {} }) {
     if (row.marker) cells.push(el("span", { class: "menu-row__marker", "aria-hidden": "true", text: row.marker }));
     (row.cols && row.cols.length ? row.cols : [row.text]).forEach((c, i) =>
       cells.push(el("span", { class: "menu-row__col" + (i ? " is-secondary" : ""), text: c })));
+    // Activating is a deliberate press of a labelled button on the cursor
+    // row, not a second tap on the row (see menuClickPlan).
+    const enter = row.cursor ? menuEnterLabel(view) : null;
+    if (enter) {
+      const act = button(enter + " ⏎", "Press Enter", (e) => { e.stopPropagation(); send({ keys: [{ key: "enter" }], sig: view.sig }); }, "menu-row__act");
+      cells.push(act);
+    }
     const node = el("div", { class: cls, role: "option", "aria-selected": String(!!row.cursor), "data-index": String(index) }, cells);
     node.addEventListener("click", () => {
       // Relative to the screen the click was made on.

@@ -27,6 +27,7 @@ type fakeMenuPane struct {
 	open   bool
 	stuck  bool // ignores ↑/↓, like a menu whose list can't move
 	slow   bool // hasn't redrawn after Esc yet (the menu still shows)
+	search bool // draws a search box holding typed
 	sent   [][]tmux.Key
 	picked string
 	typed  string
@@ -43,6 +44,13 @@ func (f *fakeMenuPane) screen() string {
 	}
 	var b strings.Builder
 	b.WriteString("❯ /model\n\n" + strings.Repeat("▔", 40) + "\n   Pick one\n   Choose carefully\n")
+	if f.search {
+		shown := f.typed
+		if shown == "" {
+			shown = "Search…"
+		}
+		b.WriteString("   ╭──────────────╮\n   │ ⌕ " + shown + " │\n   ╰──────────────╯\n")
+	}
 	if f.top > 0 {
 		fmt.Fprintf(&b, "     ↑ %d more\n", f.top)
 	}
@@ -70,6 +78,10 @@ func (f *fakeMenuPane) send(_ string, keys []tmux.Key) error {
 		switch {
 		case k.Text != "":
 			f.typed += k.Text
+		case k.Name == "BSpace":
+			if r := []rune(f.typed); len(r) > 0 {
+				f.typed = string(r[:len(r)-1])
+			}
 		case k.Name == "Down" && !f.stuck:
 			if f.cursor < len(f.rows)-1 {
 				f.cursor++
@@ -387,5 +399,97 @@ func TestMenuKeysSecondEscOnAnUnchangedScreenIsRefused(t *testing.T) {
 	// ...and once the screen has changed, Esc is too.
 	if rec := postMenuKeys(srv, map[string]any{"sig": currentSig(t, f), "keys": keyList("esc")}); rec.Code != http.StatusOK || f.closed != 2 {
 		t.Fatalf("esc on a new screen: status %d, escapes %d", rec.Code, f.closed)
+	}
+}
+
+func TestMenuSetTextTypesTheDifferenceFromTheScreen(t *testing.T) {
+	f := newFakeMenuPane("Alpha", "Beta")
+	f.search = true
+	srv := menuKeysServer(t, f)
+	rec := postMenuKeys(srv, map[string]any{"sig": currentSig(t, f), "setText": "think"})
+	if rec.Code != http.StatusOK || f.typed != "think" {
+		t.Fatalf("status %d typed %q: %s", rec.Code, f.typed, rec.Body)
+	}
+	if r := decodeMenuReply(t, rec); r.Menu == nil || r.Menu.Input == nil || r.Menu.Input.Text != "think" {
+		t.Errorf("menu = %+v", r.Menu)
+	}
+	// The terminal user changed it to "thx": the browser's edit is worked
+	// out against what the box holds now, not what the browser last saw.
+	f.typed, f.sent = "thx", nil
+	rec = postMenuKeys(srv, map[string]any{"sig": currentSig(t, f), "setText": "think"})
+	if rec.Code != http.StatusOK || f.typed != "think" {
+		t.Fatalf("status %d typed %q", rec.Code, f.typed)
+	}
+	if got := f.pressed(); !reflect.DeepEqual(got, []string{"BSpace", "text:ink"}) {
+		t.Errorf("pressed %v", got)
+	}
+	// Clearing it.
+	f.sent = nil
+	if rec := postMenuKeys(srv, map[string]any{"sig": currentSig(t, f), "setText": ""}); rec.Code != http.StatusOK || f.typed != "" {
+		t.Fatalf("status %d typed %q", rec.Code, f.typed)
+	}
+	if n := len(f.pressed()); n != 5 {
+		t.Errorf("pressed %d keys to clear 5 characters", n)
+	}
+}
+
+func TestMenuSetTextThenKeys(t *testing.T) {
+	f := newFakeMenuPane("Alpha", "Beta")
+	f.search = true
+	srv := menuKeysServer(t, f)
+	rec := postMenuKeys(srv, map[string]any{"sig": currentSig(t, f), "setText": "be", "keys": keyList("enter")})
+	if rec.Code != http.StatusOK || f.typed != "be" || f.picked != "Alpha" {
+		t.Fatalf("status %d typed %q picked %q", rec.Code, f.typed, f.picked)
+	}
+	if got := f.pressed(); !reflect.DeepEqual(got, []string{"text:be", "Enter"}) {
+		t.Errorf("pressed %v", got)
+	}
+}
+
+func TestMenuSetTextRefusals(t *testing.T) {
+	f := newFakeMenuPane("Alpha")
+	srv := menuKeysServer(t, f)
+	sig := currentSig(t, f)
+	// No input on this menu: the screen isn't what the browser thought.
+	rec := postMenuKeys(srv, map[string]any{"sig": sig, "setText": "x"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("no input: status %d", rec.Code)
+	}
+	f.search = true
+	sig = currentSig(t, f)
+	for name, text := range map[string]string{"control": "a\x1b[A", "newline": "a\nb", "too long": strings.Repeat("x", 201)} {
+		if rec := postMenuKeys(srv, map[string]any{"sig": sig, "setText": text}); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d", name, rec.Code)
+		}
+	}
+	if len(f.sent) != 0 {
+		t.Errorf("pressed %v", f.pressed())
+	}
+}
+
+func TestMenuTextDelta(t *testing.T) {
+	cases := []struct {
+		from, to string
+		want     []string
+	}{
+		{"", "abc", []string{"text:abc"}},
+		{"abc", "abcd", []string{"text:d"}},
+		{"abc", "ab", []string{"BSpace"}},
+		{"abc", "axy", []string{"BSpace", "BSpace", "text:xy"}},
+		{"same", "same", nil},
+		{"a😀", "a", []string{"BSpace"}},
+	}
+	for _, c := range cases {
+		var got []string
+		for _, k := range menuTextDelta(c.from, c.to) {
+			if k.Text != "" {
+				got = append(got, "text:"+k.Text)
+			} else {
+				got = append(got, k.Name)
+			}
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q → %q: %v, want %v", c.from, c.to, got, c.want)
+		}
 	}
 }

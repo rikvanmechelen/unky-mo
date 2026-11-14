@@ -69,27 +69,22 @@ function menuKeyFromEvent(e, view) {
   return [...e.key].length === 1 ? e.key : null;
 }
 
-// menuTextDelta is the key presses that turn the text a menu's input shows
-// (prev) into what the browser's input now holds (next): backspaces to the
-// common prefix, then the new tail typed.
-function menuTextDelta(prev, next) {
-  const a = [...prev], b = [...next];
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  const keys = [];
-  for (let n = a.length - i; n > 0; n--) keys.push({ key: "backspace" });
-  if (i < b.length) keys.push({ text: b.slice(i).join("") });
-  return keys;
-}
-
-// menuClickPlan is what clicking a row does: move the cursor there, or —
-// when it's already there — press Enter if the legend offers it. null means
-// nothing to do.
+// menuClickPlan is what clicking a row does: move the cursor there. It
+// never presses Enter, even on the row the cursor is already on: a second
+// tap would then change a /config setting by accident. The cursor row's
+// action button (menuEnterLabel) does that. null means nothing to do.
 function menuClickPlan(view, index) {
   const row = view && view.rows && view.rows[index];
-  if (!row) return null;
-  if (!row.cursor) return { goto: { row: index } };
-  return menuHasKey(view, "enter") ? { keys: [{ key: "enter" }] } : null;
+  if (!row || row.cursor) return null;
+  return { goto: { row: index } };
+}
+
+// menuEnterLabel is what Enter does here, in the legend's words ("Set as
+// default"), for the cursor row's action button; null when Enter does
+// nothing the legend mentions.
+function menuEnterLabel(view) {
+  const k = ((view && view.legend) || []).find((k) => (k.keys || [])[0] === "enter");
+  return k ? k.label.charAt(0).toUpperCase() + k.label.slice(1) : null;
 }
 
 // commandMenuTag is the tag the slash list shows on a command that opens a
@@ -115,5 +110,5 @@ function isBareSlashCommand(text) {
 }
 
 if (typeof module === "object" && module.exports) {
-  module.exports = { menuSections, menuLegendButtons, menuHasKey, menuKeyFromEvent, menuTextDelta, menuClickPlan, commandMenuTag, isBareSlashCommand };
+  module.exports = { menuSections, menuLegendButtons, menuHasKey, menuKeyFromEvent, menuClickPlan, menuEnterLabel, commandMenuTag, isBareSlashCommand };
 }

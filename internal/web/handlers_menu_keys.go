@@ -47,6 +47,39 @@ type menuKeysReq struct {
 	Goto *struct {
 		Row int `json:"row"`
 	} `json:"goto"`
+	// SetText is what the menu's text box should hold. The server types
+	// the difference from what the box holds on screen right now, so an
+	// edit made in the terminal meanwhile isn't overwritten blindly.
+	SetText *string `json:"setText"`
+}
+
+// checkMenuText applies the {"text"} key's rules to a whole text box.
+func checkMenuText(t string) error {
+	if stripControl(t) != t || strings.ContainsAny(t, "\n\t") {
+		return fmt.Errorf("control characters must be sent as keys")
+	}
+	if utf8.RuneCountInString(t) > maxMenuText {
+		return fmt.Errorf("text too long (max %d characters)", maxMenuText)
+	}
+	return nil
+}
+
+// menuTextDelta is the key presses that turn a text box holding from into
+// one holding to: backspaces to their common prefix, then the rest typed.
+func menuTextDelta(from, to string) []tmux.Key {
+	a, b := []rune(from), []rune(to)
+	i := 0
+	for i < len(a) && i < len(b) && a[i] == b[i] {
+		i++
+	}
+	var keys []tmux.Key
+	for n := len(a) - i; n > 0; n-- {
+		keys = append(keys, tmux.Key{Name: "BSpace"})
+	}
+	if i < len(b) {
+		keys = append(keys, tmux.Key{Text: string(b[i:])})
+	}
+	return keys
 }
 
 // menuKeysToTmux validates the browser's keys and turns them into tmux keys.
@@ -75,11 +108,8 @@ func menuKeysToTmux(keys []menuKeyReq) ([]tmux.Key, error) {
 				return nil, fmt.Errorf("unsupported key %q", k.Key)
 			}
 		case k.Text != "" && k.Key == "":
-			if stripControl(k.Text) != k.Text || strings.ContainsAny(k.Text, "\n\t") {
-				return nil, fmt.Errorf("control characters must be sent as keys")
-			}
-			if utf8.RuneCountInString(k.Text) > maxMenuText {
-				return nil, fmt.Errorf("text too long (max %d characters)", maxMenuText)
+			if err := checkMenuText(k.Text); err != nil {
+				return nil, err
 			}
 			out = append(out, tmux.Key{Text: k.Text})
 		default:
@@ -108,7 +138,8 @@ func writeMenuConflict(w http.ResponseWriter, msg string, m *menuView) {
 // (another viewer or the terminal user may have moved on). "goto" walks
 // the cursor to a row of that menu as a closed loop on the row's text:
 // rows scroll in and out of view and description lines count as rows, so
-// counting key presses would drift. The answer is the screen afterwards.
+// counting key presses would drift. "setText" then sets the menu's text
+// box, and "keys" are pressed last. The answer is the screen afterwards.
 func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 	var req menuKeysReq
@@ -125,7 +156,13 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if len(keys) == 0 && req.Goto == nil {
+	if req.SetText != nil {
+		if err := checkMenuText(*req.SetText); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	if len(keys) == 0 && req.Goto == nil && req.SetText == nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("nothing to press"))
 		return
 	}
@@ -168,6 +205,26 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 		} else if msg != "" {
 			writeMenuConflict(w, msg, cur)
 			return
+		}
+	}
+	if req.SetText != nil {
+		if cur == nil {
+			writeMenuConflict(w, "the menu closed", nil)
+			return
+		}
+		if cur.Input == nil {
+			writeMenuConflict(w, "this menu has no text box", cur)
+			return
+		}
+		if delta := menuTextDelta(cur.Input.Text, *req.SetText); len(delta) > 0 {
+			if err := s.deps.ClaudePane.SendKeys(target, delta); err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
+			if cur, err = s.menuSettle(windowID, cur.Sig); err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
 		}
 	}
 	if len(keys) > 0 {

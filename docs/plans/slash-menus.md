@@ -365,3 +365,12 @@ Found by trying it in the browser and re-reviewing the code:
 - A subtitle the terminal had word-wrapped came out as two lines; lines
   are joined when the first one ended only because the next word didn't
   fit the pane's width (the edge's length).
+- Typing in the browser's search box used to send backspaces + text
+  computed against the text the browser last saw; an edit in the terminal
+  meanwhile made the count wrong. Now the browser sends the whole text
+  (`setText`) and the server types the difference from the box as it is on
+  screen, under the sig check.
+- A second tap on the cursor row pressed Enter, which on a phone changes a
+  `/config` setting with one careless tap. Row clicks now only move the
+  cursor; the cursor row has a button named from the legend's Enter entry
+  ("Set as default ⏎", "Change ⏎").

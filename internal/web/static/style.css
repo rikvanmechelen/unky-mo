@@ -2115,6 +2115,7 @@ button.file-row.overview-file { padding: 3px 12px; }
 .menu-listbar { display: flex; align-items: center; gap: 6px; }
 .menu-listbar__count { flex: 1; font-size: 12px; color: var(--ink-4); }
 .menu-btn--key { font-family: var(--font-mono); min-width: 2.4em; }
+.menu-row__act { margin-left: auto; flex: none; font-weight: 700; }
 .menu-legend__item { display: inline-flex; gap: 4px; align-items: center; }
 .menu-tab { padding: 3px 10px; font-size: 13px; color: var(--ink-3); border: 1px solid var(--line); }
 .menu-tab.is-active { background: var(--ink); color: var(--paper); border-color: var(--ink); font-weight: 700; }
