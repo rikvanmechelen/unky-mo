@@ -1305,6 +1305,7 @@ function main() {
     modelChipEl.hidden = !m || ended;
     if (!m) return;
     modelChipEl.textContent = m.name.toLowerCase();
+    modelChipEl.dataset.family = modelFamily(m);
     modelChipEl.disabled = modelStatus !== "idle";
     modelChipEl.title = (m.id ? `${m.name} (${m.id})` : m.name) +
       (modelStatus === "idle" ? " · click to change (/model)" : "");

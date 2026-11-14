@@ -33,6 +33,7 @@
 
   /* Permission modes, after Claude Code's footer colors (darkened to read
      on white). Manual mode keeps the plain black composer. */
+  --purple: #7b3fe4;
   --mode-accept: #7b3fe4;
   --mode-plan:   #00807a;
   --mode-auto:   #a86400;
@@ -108,6 +109,7 @@
   --claude: #d97757;
   --claude-glint: #f5c6b3;
 
+  --purple: #a98bff;
   --mode-accept: #a98bff;
   --mode-plan:   #2ec4b6;
   --mode-auto:   #ffab40;
@@ -1179,7 +1181,10 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
   font-family: var(--font-mono); font-size: 12px; line-height: 1.4; color: var(--ink-3);
 }
 .model-chip[hidden] { display: none; }
-.model-chip:hover:not(:disabled) { color: var(--ink-2); text-decoration: underline; }
+.model-chip[data-family="opus"] { color: var(--green); }
+.model-chip[data-family="fable"] { color: var(--purple); }
+.model-chip[data-family="other"] { color: var(--red); }
+.model-chip:hover:not(:disabled) { text-decoration: underline; }
 .model-chip:disabled { cursor: default; }
 .model-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .mode-chip__hint { color: var(--ink-4); }

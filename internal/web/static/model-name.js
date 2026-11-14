@@ -30,6 +30,13 @@ function modelDisplayName(id) {
   return `${family[0].toUpperCase()}${family.slice(1)} ${version}${suffix}`;
 }
 
+// modelFamily is what the chip's colour goes by: "opus", "fable", or
+// "other" for every other model (and ids it can't read).
+function modelFamily(m) {
+  const family = /^(opus|fable)\b/i.exec((m && m.name) || "");
+  return family ? family[1].toLowerCase() : "other";
+}
+
 const SET_MODEL = /(?:Set model to|Kept model as)\s+`([^`]+)`/;
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
@@ -74,5 +81,5 @@ function createModelTracker() {
 }
 
 if (typeof module === "object" && module.exports) {
-  module.exports = { modelDisplayName, modelFromLine, createModelTracker };
+  module.exports = { modelDisplayName, modelFamily, modelFromLine, createModelTracker };
 }

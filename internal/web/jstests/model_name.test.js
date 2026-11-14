@@ -1,7 +1,7 @@
 // Tests for static/model-name.js, run by `node --test`.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { modelDisplayName, modelFromLine, createModelTracker } = require("../static/model-name.js");
+const { modelDisplayName, modelFamily, modelFromLine, createModelTracker } = require("../static/model-name.js");
 
 const assistant = (model, extra = {}) => ({ type: "assistant", message: { role: "assistant", model, content: [] }, ...extra });
 const user = (content) => ({ type: "user", message: { role: "user", content } });
@@ -16,6 +16,16 @@ test("model ids read as Claude Code names them", () => {
   assert.equal(modelDisplayName("us.anthropic.claude-sonnet-4-5-20250929-v1:0"), "Sonnet 4.5");
   assert.equal(modelDisplayName("some-other-model"), "some-other-model");
   assert.equal(modelDisplayName(""), "");
+});
+
+test("the chip's colour goes by family: opus, fable, or other", () => {
+  assert.equal(modelFamily({ name: "Opus 5.5" }), "opus");
+  assert.equal(modelFamily({ name: "Opus 4.6 (1M context)" }), "opus");
+  assert.equal(modelFamily({ name: "Fable 5.1" }), "fable");
+  assert.equal(modelFamily({ name: "Sonnet 5.5" }), "other");
+  assert.equal(modelFamily({ name: "Haiku 3.5" }), "other");
+  assert.equal(modelFamily({ name: "some-opus-thing" }), "other");
+  assert.equal(modelFamily(null), "other");
 });
 
 test("an assistant line names its model; synthetic and sidechain lines don't", () => {
