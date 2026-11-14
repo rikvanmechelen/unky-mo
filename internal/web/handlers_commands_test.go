@@ -30,6 +30,7 @@ func TestCommandsList(t *testing.T) {
 	cmds.EXPECT().List("/ws/foo", "s5").Return([]claude.SlashCommand{
 		{Name: "compact", Description: "Summarize", ArgumentHint: "<instructions>", Source: claude.CommandBuiltin},
 		{Name: "model", Description: "Set the model", Source: claude.CommandBuiltin, Dialog: true, Aliases: []string{"m"}},
+		{Name: "login", Description: "Sign in", Source: claude.CommandBuiltin, Dialog: true, Terminal: true},
 		{Name: "eng:review", Description: "Review", Source: claude.CommandPlugin},
 	}).Times(1)
 
@@ -42,7 +43,7 @@ func TestCommandsList(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 3 || got[0].ArgumentHint != "<instructions>" || !got[1].Dialog || got[1].Aliases[0] != "m" || got[2].Source != "plugin" {
+		if len(got) != 4 || got[0].ArgumentHint != "<instructions>" || !got[1].Dialog || got[1].Terminal || got[1].Aliases[0] != "m" || !got[2].Terminal || got[3].Source != "plugin" {
 			t.Errorf("got %+v", got)
 		}
 	}

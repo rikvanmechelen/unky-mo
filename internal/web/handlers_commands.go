@@ -14,10 +14,11 @@ type commandView struct {
 	ArgumentHint string   `json:"argument_hint,omitempty"`
 	Aliases      []string `json:"aliases,omitempty"`
 	Source       string   `json:"source"`
-	// Dialog: the command opens an interactive dialog in the terminal
-	// (when ArgumentHint is set, only when run without arguments), which
-	// the browser can't drive.
-	Dialog bool `json:"dialog,omitempty"`
+	// Dialog: the command opens an interactive menu in the terminal (when
+	// ArgumentHint is set, only when run without arguments). The chat view
+	// drives it (menu.js), unless Terminal says it can't.
+	Dialog   bool `json:"dialog,omitempty"`
+	Terminal bool `json:"terminal,omitempty"`
 }
 
 // handleCommands lists the slash commands the live session in windowID can
@@ -39,7 +40,7 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	for _, c := range cmds {
 		out = append(out, commandView{
 			Name: c.Name, Description: c.Description, ArgumentHint: c.ArgumentHint,
-			Aliases: c.Aliases, Source: c.Source, Dialog: c.Dialog,
+			Aliases: c.Aliases, Source: c.Source, Dialog: c.Dialog, Terminal: c.Terminal,
 		})
 	}
 	writeJSON(w, out)

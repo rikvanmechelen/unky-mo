@@ -131,6 +131,16 @@ func TestSlashCommandsMergesSources(t *testing.T) {
 	if c := got["model"]; !c.Dialog {
 		t.Errorf("model should open a dialog: %+v", c)
 	}
+	for _, name := range []string{"login", "logout", "ide", "feedback", "resume"} {
+		if c := got[name]; !c.Dialog || !c.Terminal {
+			t.Errorf("%s hands off to something the browser can't reach: %+v", name, c)
+		}
+	}
+	for _, name := range []string{"model", "config", "permissions", "mcp", "theme", "effort", "status"} {
+		if c := got[name]; c.Terminal {
+			t.Errorf("%s is a menu the web can drive: %+v", name, c)
+		}
+	}
 	all := SlashCommands(cwd, "s1")
 	for i := 1; i < len(all); i++ {
 		if all[i-1].Name >= all[i].Name {

@@ -26,6 +26,12 @@ type SlashCommand struct {
 	// Dialog marks a built-in that opens an interactive dialog in the
 	// terminal (with an ArgumentHint: when run without arguments).
 	Dialog bool
+	// Terminal marks a Dialog the web can't drive: it hands off to
+	// something outside the pane (a browser sign-in, an IDE, a bug
+	// report), or, like /resume, is done better by the dashboard's own
+	// UI. The rest are slash-command menus the chat view operates (see
+	// docs/plans/slash-menus.md).
+	Terminal bool
 }
 
 const (
@@ -60,17 +66,17 @@ var builtinCommands = []SlashCommand{
 	{Name: "effort", Description: "Set effort level for model usage", Dialog: true},
 	{Name: "exit", Description: "Exit Claude Code", Aliases: []string{"quit"}},
 	{Name: "export", Description: "Export the current conversation to a file or clipboard", ArgumentHint: "[filename]", Dialog: true},
-	{Name: "feedback", Description: "Send feedback to Anthropic or report a bug", ArgumentHint: "[report]", Aliases: []string{"bug"}, Dialog: true},
+	{Name: "feedback", Description: "Send feedback to Anthropic or report a bug", ArgumentHint: "[report]", Aliases: []string{"bug"}, Dialog: true, Terminal: true},
 	{Name: "focus", Description: "Toggle focus view: just your prompt, summary, and response", ArgumentHint: "[on|off]", Dialog: true},
 	{Name: "fork", Description: "Copy this conversation into a new background session and keep working here", ArgumentHint: "[prompt]", Dialog: true},
 	{Name: "goal", Description: "Set a goal Claude checks before stopping", ArgumentHint: "[<condition> | clear]"},
 	{Name: "help", Description: "Show help and available commands", Dialog: true},
 	{Name: "hooks", Description: "View hook configurations for tool events", Dialog: true},
-	{Name: "ide", Description: "Manage IDE integrations and show status", ArgumentHint: "[open]", Dialog: true},
+	{Name: "ide", Description: "Manage IDE integrations and show status", ArgumentHint: "[open]", Dialog: true, Terminal: true},
 	{Name: "init", Description: "Initialize a new CLAUDE.md file with codebase documentation"},
 	{Name: "insights", Description: "Generate a report analyzing your Claude Code sessions"},
-	{Name: "login", Description: "Sign in to your Anthropic account", Dialog: true},
-	{Name: "logout", Description: "Sign out from your Anthropic account", Dialog: true},
+	{Name: "login", Description: "Sign in to your Anthropic account", Dialog: true, Terminal: true},
+	{Name: "logout", Description: "Sign out from your Anthropic account", Dialog: true, Terminal: true},
 	{Name: "mcp", Description: "Manage MCP servers", ArgumentHint: "[reconnect (<server>|all)|enable|disable [<server>|all]]", Dialog: true},
 	{Name: "memory", Description: "Edit CLAUDE.md files and memory settings", Dialog: true},
 	{Name: "model", Description: "Set the AI model for Claude Code", ArgumentHint: "[model]", Dialog: true},
@@ -84,7 +90,7 @@ var builtinCommands = []SlashCommand{
 	{Name: "reload-plugins", Description: "Activate pending plugin changes in the current session", ArgumentHint: "[--force]"},
 	{Name: "reload-skills", Description: "Pick up skills added or changed on disk during this session"},
 	{Name: "rename", Description: "Rename the current conversation", ArgumentHint: "[name]", Aliases: []string{"name"}},
-	{Name: "resume", Description: "Resume a previous conversation", ArgumentHint: "[conversation id or search term]", Aliases: []string{"continue"}, Dialog: true},
+	{Name: "resume", Description: "Resume a previous conversation", ArgumentHint: "[conversation id or search term]", Aliases: []string{"continue"}, Dialog: true, Terminal: true},
 	{Name: "rewind", Description: "Restore the code and/or conversation to a previous point", Aliases: []string{"checkpoint", "undo"}, Dialog: true},
 	{Name: "skill-doctor", Description: "Show which loaded skills are unused and costing context", Dialog: true},
 	{Name: "skills", Description: "List available skills", Dialog: true},
