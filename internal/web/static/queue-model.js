@@ -50,6 +50,10 @@ const SYSTEM_QUEUE_ENTRY = /^\s*<(task-notification|agent-message)\b/;
 // Another Claude session's message (SendMessage between sessions) is shown,
 // labelled with the session it came from.
 const PEER_QUEUE_ENTRY = /^\s*<cross-session-message\b[^>]*?\sfrom-name="([^"]*)"/;
+// A peer message's remove line leaves out the enqueue's hop-chain attribute
+// (seen on 2.1.3xx), so entries are matched without it.
+const HOP_CHAIN = /^(\s*<cross-session-message\b[^>]*?)\shop-chain="[^"]*"/;
+const queueKey = (content) => content.replace(HOP_CHAIN, "$1");
 
 // createQueueTracker folds queue-operation lines, in file order, into the
 // user messages still waiting. The transcript replays from its start on
@@ -57,7 +61,8 @@ const PEER_QUEUE_ENTRY = /^\s*<cross-session-message\b[^>]*?\sfrom-name="([^"]*)
 function createQueueTracker() {
   let items = []; // {content, system, peer}, oldest first
   const dropFirst = (content) => {
-    const i = items.findIndex((it) => it.content === content);
+    let i = items.findIndex((it) => it.content === content);
+    if (i < 0) i = items.findIndex((it) => queueKey(it.content) === queueKey(content));
     if (i >= 0) items.splice(i, 1);
   };
   return {

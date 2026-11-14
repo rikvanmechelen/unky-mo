@@ -105,3 +105,12 @@ test("another session's message is an entry, named by its sender", () => {
   q.onLine(line("peer-remove"));
   assert.deepEqual(q.entries().map((e) => e.peer), [null, null]);
 });
+
+test("a peer message's remove matches its enqueue without the hop-chain", () => {
+  const q = createQueueTracker();
+  const tag = (attrs) => `<cross-session-message from="uds:/s.sock"${attrs} from-name="firmware" from-mode="prompting">\nband log`;
+  q.onLine(op("enqueue", { content: tag(' hop-chain="64701c,873e4c"') }));
+  q.onLine(op("enqueue", { content: "mine" }));
+  q.onLine(op("remove", { content: tag(""), reason: "absorbed_mid_turn" }));
+  assert.deepEqual(q.pending(), ["mine"]);
+});

@@ -1432,6 +1432,15 @@ function main() {
   const queueTracker = createQueueTracker();
   const queueStrip = document.getElementById("queue-strip");
   let queueStatus = "none";
+  // Collapsed, the strip is one row; the label opens it. Remembered.
+  let queueOpen = false;
+  try { queueOpen = localStorage.getItem("mo.queueOpen") === "1"; } catch {}
+  function setQueueOpen(open) {
+    queueOpen = open;
+    try { localStorage.setItem("mo.queueOpen", open ? "1" : "0"); } catch {}
+    queueStrip.classList.toggle("is-open", open);
+    queueStrip.querySelector(".queue-strip__label")?.setAttribute("aria-expanded", String(open));
+  }
 
   function renderQueue() {
     const items = queueStatus === "active" ? queueTracker.entries() : [];
@@ -1439,8 +1448,14 @@ function main() {
     if (queueStrip.dataset.key === key) return;
     queueStrip.dataset.key = key;
     queueStrip.hidden = items.length === 0;
+    queueStrip.classList.toggle("is-open", queueOpen);
+    const label = el("button", {
+      type: "button", class: "queue-strip__label", "aria-expanded": String(queueOpen),
+      text: items.length === 1 ? "Queued" : `Queued (${items.length})`,
+    });
+    label.addEventListener("click", () => setQueueOpen(!queueOpen));
     queueStrip.replaceChildren(...(items.length ? [
-      el("span", { class: "queue-strip__label", text: items.length === 1 ? "Queued" : `Queued (${items.length})` }),
+      label,
       ...items.map((it) => {
         const btn = el("button", {
           type: "button", class: "queue-strip__item" + (it.peer !== null ? " is-peer" : ""),

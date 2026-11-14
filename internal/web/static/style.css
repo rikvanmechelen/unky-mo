@@ -1169,11 +1169,21 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
   font-size: 13px; color: var(--ink-2);
 }
 .queue-strip[hidden] { display: none; }
-.queue-strip__label { font-weight: 700; letter-spacing: var(--tracking-bold); color: var(--ink); }
+.queue-strip:not(.is-open) { flex-wrap: nowrap; overflow: hidden; }
+.queue-strip:not(.is-open) .queue-strip__hint { display: none; }
+.queue-strip.is-open { max-height: 40vh; overflow-y: auto; }
+.queue-strip__label {
+  all: unset; flex: none; cursor: pointer; white-space: nowrap;
+  font-weight: 700; letter-spacing: var(--tracking-bold); color: var(--ink);
+}
+.queue-strip__label::after { content: " ▸"; color: var(--ink-4); }
+.queue-strip.is-open .queue-strip__label::after { content: " ▾"; }
+.queue-strip__label:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .queue-strip__item {
-  all: unset; cursor: pointer; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  all: unset; cursor: pointer; max-width: 40ch; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border-bottom: 1px solid var(--line);
 }
+.queue-strip:not(.is-open) .queue-strip__item { flex: 0 1 auto; }
 .queue-strip__item:hover { color: var(--ink); border-bottom-color: currentColor; }
 .queue-strip__item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .queue-strip__item.is-peer::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: middle; background: var(--blue); }
