@@ -1293,9 +1293,31 @@ function main() {
     ] : []));
   }
 
+  // The model, from the transcript (see model-name.js). A click opens
+  // Claude Code's /model menu in the browser, only while the session idles:
+  // mid-turn the command would be queued as a message.
+  const modelTracker = createModelTracker();
+  const modelChipEl = document.getElementById("model-chip");
+  let modelStatus = "none";
+
+  function renderModel() {
+    const m = modelTracker.current();
+    modelChipEl.hidden = !m || ended;
+    if (!m) return;
+    modelChipEl.textContent = m.name.toLowerCase();
+    modelChipEl.disabled = modelStatus !== "idle";
+    modelChipEl.title = (m.id ? `${m.name} (${m.id})` : m.name) +
+      (modelStatus === "idle" ? " · click to change (/model)" : "");
+  }
+  modelChipEl.addEventListener("click", () => {
+    if (modelStatus === "idle") sendPrompt("/model");
+  });
+
   function clearTranscript() {
     queueTracker.reset();
     renderQueue();
+    modelTracker.reset();
+    renderModel();
     if (es) { es.close(); es = null; }
     streamSessionID = null;
     view.clear();
@@ -1315,6 +1337,7 @@ function main() {
       view.onLine(line);
       overview.onTranscriptLine(line);
       if (queueTracker.onLine(line)) renderQueue();
+      if (modelTracker.onLine(line)) renderModel();
     });
     // Sent once the stored backlog is out; live lines follow.
     stream.addEventListener("caught-up", () => {
@@ -1646,6 +1669,7 @@ function main() {
     if (es) { es.close(); es = null; }
     spinner.setActive(false);
     modeChip.setStatus("ended");
+    renderModel();
     hideBanners();
     setBadge("ended");
     setNotice("Session ended. The tmux window is closed.");
@@ -1858,6 +1882,8 @@ function main() {
 
       queueStatus = status;
       renderQueue();
+      modelStatus = status;
+      renderModel();
       const cs = composerState({
         status, hasSession: !!p, name: p && p.name, pendingTool: p && p.pending_tool,
         waitingToStart, held: !!heldUntilStart,

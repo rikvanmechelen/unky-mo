@@ -63,7 +63,10 @@
         <button class="composer__send-now" id="send-now-btn" type="button" hidden title="Claude takes this message right away (ctrl+enter): a running tool moves to the background">Send now</button>
         <button class="composer__send" id="send-btn" type="submit">Send</button>
       </form>
-      <div class="composer-mode" id="mode-chip" hidden></div>
+      <div class="composer-foot">
+        <div class="composer-mode" id="mode-chip" hidden></div>
+        <button class="model-chip" id="model-chip" type="button" hidden></button>
+      </div>
       <div class="composer__error" id="send-error"></div>
     </footer>
 
@@ -118,6 +121,7 @@
 <script src="/rails.js"></script>
 <script src="/question-model.js"></script>
 <script src="/queue-model.js"></script>
+<script src="/model-name.js"></script>
 <script src="/permission-model.js"></script>
 <script src="/diffview.js"></script>
 <script src="/chat.js"></script>
