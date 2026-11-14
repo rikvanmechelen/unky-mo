@@ -1190,9 +1190,28 @@ function main() {
     const own = bannerStatus === "permission" || bannerStatus === "question";
     dialogBanner.style.display = dialogBlocked && !own ? "flex" : "none";
   }
+  // A dialog over the prompt box may be a slash-command menu (/model,
+  // /config, …): while one is up, watch Claude's screen for it so the
+  // banner can offer it in the browser.
+  const dialogBannerText = document.getElementById("dialog-banner-text");
+  const dialogBannerDefault = dialogBannerText.textContent;
+  const menuOpenBtn = document.getElementById("menu-open");
+  const menuDialog = createMenuDialog();
+  const menuWatcher = createMenuWatcher((menu) => {
+    menuOpenBtn.hidden = !menu;
+    dialogBannerText.textContent = menu
+      ? `A menu is open in Claude's terminal${menu.title ? ": " + menu.title : ""}.`
+      : dialogBannerDefault;
+    if (menu) menuDialog.update(menu);
+    else menuDialog.close();
+  });
+  menuOpenBtn.addEventListener("click", () => {
+    const menu = menuWatcher.current();
+    if (menu) menuDialog.open(menu);
+  });
   const modeChip = createModeChip(modeChipRoot, composer,
     (msg) => { sendError.textContent = msg; },
-    (blocked) => { dialogBlocked = blocked; renderDialogBanner(); });
+    (blocked) => { dialogBlocked = blocked; menuWatcher.setActive(blocked); renderDialogBanner(); });
   const bashChanges = createBashChanges();
   bashChanges.subscribe(() => overview.setBashChanges(bashChanges.all()));
   const onOpenDiff = (path) => editor.open(path, "diff");
@@ -1649,6 +1668,7 @@ function main() {
     drawer.setWindow(id);
     spinner.setWindow(id);
     modeChip.setWindow(id);
+    menuWatcher.setWindow(id);
     subagents.setWindow(id);
     commandMenu.setWindow(id);
     editor.setWindow(id);
