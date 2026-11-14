@@ -2101,6 +2101,8 @@ button.file-row.overview-file { padding: 3px 12px; }
 .insp-line.is-add .insp-line__n, .insp-line.is-del .insp-line__n { color: var(--ink-3); }
 
 /* Slash-command menus (menu.js) */
+/* .dialog's display: flex would otherwise keep a closed one on the page. */
+.menu-dialog:not([open]) { display: none; }
 .menu-dialog { max-width: 720px; max-height: calc(100dvh - 32px); overflow: auto; }
 .menu-dialog__body { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .menu-tabbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
