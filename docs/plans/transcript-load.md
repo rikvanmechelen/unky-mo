@@ -99,3 +99,7 @@ plus the server re-reading the file.
   unknown id, index out of range, malformed id, an id that only appears in
   text, an SVG or HTML payload refused, a window without a session → 404 with
   no file read).
+
+Built as planned. Checked in headless Chrome on `kids_com [app]`: after a
+switch, all 76 image cards folded → 0 `/tool-image` requests; opening one →
+exactly one request and the screenshot as a thumbnail above its label.

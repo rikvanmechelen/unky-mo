@@ -1151,6 +1151,7 @@ textarea.permission-choice__text { flex-basis: 100%; resize: vertical; border: 1
 .msg-user__image { all: unset; cursor: zoom-in; display: block; border: 1px solid var(--line); }
 .msg-user__image img { display: block; max-width: 240px; max-height: 160px; object-fit: contain; }
 .msg-user__image:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.tool-card__images { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 8px; }
 .image-viewer { padding: 0; border: 0; background: transparent; max-width: 95vw; max-height: 95vh; max-height: 95dvh; cursor: zoom-out; }
 .image-viewer::backdrop { background: rgba(0, 0, 0, 0.75); }
 .image-viewer img { display: block; max-width: 95vw; max-height: 95vh; max-height: 95dvh; object-fit: contain; }

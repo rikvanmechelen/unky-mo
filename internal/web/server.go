@@ -168,6 +168,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/tickets", s.handleTickets)
 	s.mux.HandleFunc("GET /api/tickets/{id}", s.handleTicketDetail)
 	s.mux.HandleFunc("GET /api/transcript/{windowID}", s.handleTranscript)
+	s.mux.HandleFunc("GET /api/sessions/{windowID}/tool-image/{toolUseID}", s.handleToolImage)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/prompt", s.handlePrompt)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/attachments", s.handleUploadAttachment)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/attachments/{id}", s.handleGetAttachment)

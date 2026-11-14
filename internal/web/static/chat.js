@@ -591,16 +591,6 @@ function isAgentTool(name) {
   return name === "Agent" || name === "Task";
 }
 
-// createTranscriptView renders a session's JSONL lines (as streamed by
-// /api/transcript or a subagent's transcript stream) into container,
-// following the conversation tree's active branch. scrollEl is the
-// element that scrolls. opts.userLabel names who wrote user turns
-// ("You" by default); opts.onToolCard(entry, block) is called for every
-// tool card it creates, so the caller can decorate it. With
-// opts.onOpenFile(absPath), file tools (Read/Edit/Write/…) get an "Open"
-// button that calls it; opts.onOpenDiff(path) opens a repo-relative path
-// from a diff a command printed or made. opts.bashChanges (createBashChanges)
-// gives Bash cards the change their command made to the checkout.
 // transcriptGhost is the loading skeleton for a transcript: a prompt, the
 // reply's lines, a tool card, another prompt and reply, sitting at the bottom
 // as the real transcript will. Like the Overview's, it fades in after 150ms,
@@ -619,6 +609,19 @@ function transcriptGhost() {
   ]);
 }
 
+// createTranscriptView renders a session's JSONL lines (as streamed by
+// /api/transcript or a subagent's transcript stream) into container,
+// following the conversation tree's active branch. scrollEl is the
+// element that scrolls. opts.userLabel names who wrote user turns
+// ("You" by default); opts.onToolCard(entry, block) is called for every
+// tool card it creates, so the caller can decorate it. With
+// opts.onOpenFile(absPath), file tools (Read/Edit/Write/…) get an "Open"
+// button that calls it; opts.onOpenDiff(path) opens a repo-relative path
+// from a diff a command printed or made. opts.bashChanges (createBashChanges)
+// gives Bash cards the change their command made to the checkout.
+// opts.toolImageURL(toolUseID, i) is where a tool result's i'th image can be
+// fetched (the stream leaves image data out); without it the card names the
+// image instead.
 function createTranscriptView(container, scrollEl, opts = {}) {
   const transcript = container;
   const transcriptScroll = scrollEl;
@@ -957,6 +960,21 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     if (!previewed || previewed === entry || previewed.seq < entry.seq) previewToolCard(entry);
   }
 
+  // toolImages is a tool result's images as thumbnails (a Read of a
+  // screenshot). The stream leaves their data out, so each is fetched from
+  // the server; the card's body is hidden while folded, and a lazy image
+  // there isn't loaded until the card opens.
+  function toolImages(block) {
+    if (!opts.toolImageURL || !Array.isArray(block.content)) return [];
+    const thumbs = block.content.filter((b) => b.type === "image" && b.source?.type === "omitted").map((b, i) => {
+      const src = opts.toolImageURL(block.tool_use_id, i);
+      const btn = el("button", { type: "button", class: "msg-user__image", "aria-label": "View image" }, [el("img", { loading: "lazy", src, alt: "" })]);
+      btn.addEventListener("click", () => openImageViewer(src));
+      return btn;
+    });
+    return thumbs.length ? [el("div", { class: "tool-card__images" }, thumbs)] : [];
+  }
+
   function fillToolResult(block, toolUseResult) {
     const entry = toolCards.get(block.tool_use_id);
     if (!entry) return; // result for a tool_use we never saw (e.g. truncated backlog) — drop silently
@@ -1017,6 +1035,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
     ]));
     body.appendChild(el("div", { class: "tool-card__field is-output" }, [
       el("span", { class: "tool-card__field-label", text: "Output" }),
+      ...toolImages(block),
       el("pre", { text }),
     ]));
     if (entry.name === "Bash" && (text.trim() || diffs)) previewToolCard(entry);
@@ -1329,6 +1348,7 @@ function main() {
     editor.open(root && absPath.startsWith(root + "/") ? absPath.slice(root.length + 1) : absPath);
   };
   const view = createTranscriptView(transcript, transcriptScroll, {
+    toolImageURL: (toolUseID, i) => `/api/sessions/${encodeURIComponent(windowID)}/tool-image/${encodeURIComponent(toolUseID)}?i=${i}`,
     onToolCard: subagents.decorateCard,
     onOpenFile: openAbsFile,
     onOpenDiff,
