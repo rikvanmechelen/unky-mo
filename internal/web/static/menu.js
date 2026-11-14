@@ -10,7 +10,11 @@ const MENU_POLL_MS = 1000;
 // to onChange(menu | null). send() types keys into the menu; the answer is
 // the screen afterwards, adopted at once. The ETag makes an unchanged
 // screen a 304. onNote gets a message for a refused key press (or "").
-function createMenuWatcher(onChange, onNote = () => {}) {
+// deps replaces fetch and the timers in tests.
+function createMenuWatcher(onChange, onNote = () => {}, deps = {}) {
+  const fetch = deps.fetch || window.fetch.bind(window);
+  const setTimeout = deps.setTimeout || window.setTimeout.bind(window);
+  const clearTimeout = deps.clearTimeout || window.clearTimeout.bind(window);
   let windowID = null;
   let active = false;
   let etag = null;
@@ -31,12 +35,12 @@ function createMenuWatcher(onChange, onNote = () => {}) {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/menu`,
         { headers: etag ? { "If-None-Match": etag } : {} });
-      // An answer from before a key press would put the old screen back.
-      if (g !== gen || sending) return;
       if (res.ok) {
         const data = await res.json();
-        if (g !== gen || sending) return;
-        if (!data.menu || !last || data.menu.sig !== last.sig) set(data.menu || null);
+        // An answer read while a key press is out would put the old screen
+        // back: drop it (the press answers with the new one), but keep
+        // polling — returning here once killed the loop for good.
+        if (g === gen && !sending && (!data.menu || !last || data.menu.sig !== last.sig)) set(data.menu || null);
       }
     } catch (err) {
       // transient — keep what we have
@@ -284,4 +288,8 @@ function createMenuDialog({ send, onClose = () => {} }) {
     },
     close() { if (dialog.open) dialog.close(); },
   };
+}
+
+if (typeof module === "object" && module.exports) {
+  module.exports = { createMenuWatcher };
 }
