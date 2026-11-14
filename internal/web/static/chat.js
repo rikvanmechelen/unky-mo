@@ -1569,11 +1569,29 @@ function main() {
     }
   }
 
-  // The message box grows with its text, up to a cap set in CSS.
+  // The message box grows with its text, up to a cap set in CSS. An empty
+  // box keeps CSS's one line: Chrome measures a wrapped placeholder too, and
+  // the long "active" one would leave it tall after the placeholder changes.
   function autosize() {
+    if (promptInput.value === "") {
+      promptInput.style.height = "";
+      return;
+    }
+    // Measured without a scrollbar: the one the shrunken box shows would
+    // narrow it and wrap the text onto more lines.
+    promptInput.style.overflowY = "hidden";
     promptInput.style.height = "auto";
     promptInput.style.height = `${promptInput.scrollHeight + promptInput.offsetHeight - promptInput.clientHeight}px`;
+    promptInput.style.overflowY = "";
   }
+  // Lines rewrap when the width changes (rotation, rails, the Overview).
+  let promptWidth = 0;
+  new ResizeObserver(() => {
+    const w = promptInput.clientWidth;
+    if (w === promptWidth) return;
+    promptWidth = w;
+    if (w > 0) autosize();
+  }).observe(promptInput);
   promptInput.addEventListener("input", () => {
     autosize();
     saveStoredDraft();

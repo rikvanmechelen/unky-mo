@@ -29,8 +29,6 @@ function composerState(c) {
     placeholder = c.pendingTool === "AskUserQuestion" ? "Answer in the form above…" : "Type a number or your answer…";
   } else if (c.status === "permission") {
     placeholder = "Answer the prompt above, or in the terminal";
-  } else if (active) {
-    placeholder = "Message Claude (it picks this up after its current step)";
   } else {
     placeholder = c.hasSession ? `Message ${c.name}` : "Message this session";
   }

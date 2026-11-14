@@ -14,7 +14,7 @@ test("an idle session sends", () => {
 test("a working session queues, and can send now", () => {
   const s = composerState({ ...base, status: "active" });
   assert.deepEqual([s.canSend, s.canSendNow, s.label], [true, true, "Queue"]);
-  assert.match(s.placeholder, /after its current step/);
+  assert.equal(s.placeholder, "Message api");
 });
 
 test("a permission prompt locks the box", () => {
