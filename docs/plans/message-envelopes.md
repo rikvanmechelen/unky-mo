@@ -102,3 +102,10 @@ CSS uses the tokens only (both themes). No Node test: this is DOM wiring over st
 - `chat.js` `renderMessage`: `type: "attachment"` → `describeQueuedCommand(msg.attachment)` → `appendDescribed`. The user's own message becomes a user bubble tagged "read mid-turn", a peer's a peer card with the same tag, a subagent's a "Subagent report" row, and a task notification a meta row.
 - Not part of the Overview's intent trace: it reads only `user` lines, and a mid-turn message doesn't start a turn.
 - Go test: `TestTranscriptCursorFiltersForwardedTypes` gains a `queued_command` attachment (forwarded) next to the existing `hook` attachment (still a stub) and one whose `attachment` is a string (a stub, not dropped).
+
+## Step 5 in detail: the Queued strip
+
+- `queue-model.js`: the tracker's items gain `peer`, the sender's name read from a `<cross-session-message … from-name="…">` at the start of the content (null otherwise). A new `entries()` returns `[{content, peer}]` for everything not hidden. `pending()` (strings) stays for its tests and callers. What's hidden stays the same (`task-notification`, `agent-message`).
+- `chat.js` `renderQueue`: each item is a button reading `envelopeSummary(content, 80)`, so a peer's message is `app: GO. The new build…` and a paste is `[Pasted N lines]`. Peer items carry an `is-peer` class (a blue square before the text) and the strip's title still counts them. The tooltip is the longer summary.
+- A click opens a "Queued message" dialog (`diff-dialog` styles, content-sized) whose body is a throwaway `createTranscriptView` fed one synthetic `user` line (`origin: {kind: "peer"}` for a peer's, `{kind: "human"}` otherwise). It's the same peer card and paste blocks as the transcript, with nothing new to keep in sync.
+- Tests: `jstests/queue_model.test.js` gains peer entries (name, an entry that only mentions the tag mid-text isn't a peer, hidden kinds unchanged) using the step 1 `peer-enqueue` / `peer-remove` fixtures.

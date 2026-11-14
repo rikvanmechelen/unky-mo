@@ -47,12 +47,15 @@ function composerState(c) {
 // Background-task notifications and agent messages travel through the same
 // queue; they aren't the user's messages.
 const SYSTEM_QUEUE_ENTRY = /^\s*<(task-notification|agent-message)\b/;
+// Another Claude session's message (SendMessage between sessions) is shown,
+// labelled with the session it came from.
+const PEER_QUEUE_ENTRY = /^\s*<cross-session-message\b[^>]*?\sfrom-name="([^"]*)"/;
 
 // createQueueTracker folds queue-operation lines, in file order, into the
 // user messages still waiting. The transcript replays from its start on
 // every (re)connect, so callers reset() first.
 function createQueueTracker() {
-  let items = []; // {content, system}, oldest first
+  let items = []; // {content, system, peer}, oldest first
   const dropFirst = (content) => {
     const i = items.findIndex((it) => it.content === content);
     if (i >= 0) items.splice(i, 1);
@@ -66,7 +69,7 @@ function createQueueTracker() {
       switch (msg.operation) {
         case "enqueue":
           if (content === null) return false;
-          items.push({ content, system: SYSTEM_QUEUE_ENTRY.test(content) });
+          items.push({ content, system: SYSTEM_QUEUE_ENTRY.test(content), peer: content.match(PEER_QUEUE_ENTRY)?.[1] ?? null });
           return true;
         case "remove":
         case "popAll":
@@ -82,6 +85,8 @@ function createQueueTracker() {
     },
     // The user's queued messages, oldest first.
     pending() { return items.filter((it) => !it.system).map((it) => it.content); },
+    // The same as {content, peer}: peer names the session that sent it.
+    entries() { return items.filter((it) => !it.system).map(({ content, peer }) => ({ content, peer })); },
   };
 }
 

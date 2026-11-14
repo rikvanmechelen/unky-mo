@@ -1163,7 +1163,15 @@ html[data-focus-source="keyboard"] .composer__input:focus-visible { outline: 2px
 }
 .queue-strip[hidden] { display: none; }
 .queue-strip__label { font-weight: 700; letter-spacing: var(--tracking-bold); color: var(--ink); }
-.queue-strip__item { max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-strip__item {
+  all: unset; cursor: pointer; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+.queue-strip__item:hover { color: var(--ink); border-bottom-color: currentColor; }
+.queue-strip__item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.queue-strip__item.is-peer::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: middle; background: var(--blue); }
+.queued-dialog { width: min(760px, calc(100vw - 32px)); }
+.queued-dialog__body { padding: 20px 24px 24px; overflow-y: auto; }
 .queue-strip__hint { margin-left: auto; color: var(--ink-4); }
 .composer__send-now {
   flex: none; height: 48px; padding: 0 16px;

@@ -90,3 +90,18 @@ test("identical messages are removed one at a time; unrelated lines change nothi
   q.reset();
   assert.deepEqual(q.pending(), []);
 });
+
+test("another session's message is an entry, named by its sender", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const line = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, "../testdata/envelopes", name + ".jsonl"), "utf8"));
+  const q = createQueueTracker();
+  q.onLine({ type: "queue-operation", operation: "enqueue", content: "mine" });
+  q.onLine(line("peer-enqueue"));
+  q.onLine({ type: "queue-operation", operation: "enqueue", content: "<task-notification>\n<summary>x</summary>\n</task-notification>" });
+  q.onLine({ type: "queue-operation", operation: "enqueue", content: "why does <cross-session-message from-name=\"x\"> show?" });
+  assert.deepEqual(q.entries().map((e) => e.peer), [null, "app", null]);
+  assert.equal(q.pending().length, 3);
+  q.onLine(line("peer-remove"));
+  assert.deepEqual(q.entries().map((e) => e.peer), [null, null]);
+});

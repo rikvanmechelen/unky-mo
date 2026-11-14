@@ -1383,16 +1383,50 @@ function main() {
   let queueStatus = "none";
 
   function renderQueue() {
-    const items = queueStatus === "active" ? queueTracker.pending() : [];
+    const items = queueStatus === "active" ? queueTracker.entries() : [];
     const key = JSON.stringify(items);
     if (queueStrip.dataset.key === key) return;
     queueStrip.dataset.key = key;
     queueStrip.hidden = items.length === 0;
     queueStrip.replaceChildren(...(items.length ? [
       el("span", { class: "queue-strip__label", text: items.length === 1 ? "Queued" : `Queued (${items.length})` }),
-      ...items.map((t) => el("span", { class: "queue-strip__item", text: t, title: t })),
+      ...items.map((it) => {
+        const btn = el("button", {
+          type: "button", class: "queue-strip__item" + (it.peer !== null ? " is-peer" : ""),
+          text: envelopeSummary(it.content, 80), title: envelopeSummary(it.content, 400),
+        });
+        btn.addEventListener("click", () => openQueued(it));
+        return btn;
+      }),
       el("span", { class: "queue-strip__hint", text: "Claude reads these after its current step" }),
     ] : []));
+  }
+
+  // openQueued shows one queued message in full, drawn by the transcript's
+  // own renderer: a peer's as its card, the user's with its pastes.
+  const queuedTitle = el("span", { class: "agent-dialog__title" });
+  const queuedClose = el("button", { class: "diff-dialog__close", type: "button", text: "Close" });
+  const queuedInner = el("div", { class: "chat-transcript__inner" });
+  const queuedBody = el("div", { class: "diff-dialog__body queued-dialog__body" }, [queuedInner]);
+  const queuedDialog = el("dialog", { class: "diff-dialog queued-dialog", "aria-label": "Queued message" }, [
+    el("div", { class: "diff-dialog__head" }, [queuedTitle, el("span", { class: "diff-dialog__spacer" }), queuedClose]),
+    queuedBody,
+  ]);
+  document.body.appendChild(queuedDialog);
+  const queuedView = createTranscriptView(queuedInner, queuedBody);
+  queuedClose.addEventListener("click", () => queuedDialog.close());
+  queuedDialog.addEventListener("click", (e) => { if (e.target === queuedDialog) queuedDialog.close(); });
+  queuedDialog.addEventListener("close", () => queuedView.clear());
+
+  function openQueued(it) {
+    queuedView.clear();
+    queuedTitle.textContent = it.peer !== null ? `Queued message from ${it.peer}` : "Your queued message";
+    queuedView.onLine({
+      type: "user", uuid: "queued", parentUuid: null,
+      origin: { kind: it.peer !== null ? "peer" : "human" },
+      message: { role: "user", content: it.content },
+    });
+    if (!queuedDialog.open) queuedDialog.showModal();
   }
 
   // The model, from the transcript (see model-name.js). A click opens
