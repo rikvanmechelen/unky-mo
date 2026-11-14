@@ -214,3 +214,51 @@ What the fixtures taught beyond the survey:
   is gone.
 - `Raw` (the block, dedented, plain) is always returned so the browser can
   fall back to it.
+
+## Step 2 in detail (built)
+
+`GET /api/sessions/{w}/menu` → `{"menu": menuView | null}`, ETag = the menu's
+`sig` (304 while nothing moves). `ClaudePane` gained `CaptureStyled`
+(`tmux.CapturePaneStyled`, `capture-pane -e`), since the active tab is only
+in the colours. Browser: `menu-model.js` (`menuSections`, Node-tested),
+`menu.js` (`createMenuWatcher` polls while the footer is gone,
+`createMenuDialog` draws a read-only `<dialog>`: tabs, input, grouped rows,
+extra, legend, a "Terminal view" toggle for `raw`), and the dialog banner
+grows an "Open menu" button whenever the watcher finds a menu. Nothing is
+typed yet.
+
+## Step 3 in detail
+
+`POST /api/sessions/{w}/menu/keys`:
+
+```json
+{"sig": "…", "keys": [{"key": "down"}, {"key": "s"}, {"text": "think"}],
+ "goto": {"row": 3}}
+```
+
+- `sig` must equal the screen's current sig, else **409** with the current
+  menu in the body (the browser re-renders); no menu → 409 `{menu:null}`.
+  Nothing is pressed in either case.
+- **Vocabulary** (`menuKeyToTmux`): `up down left right enter esc tab btab
+  space pgup pgdn home end backspace`, `C-a`…`C-z` except `C-c C-d C-z`
+  (quit/suspend Claude), and any single printable character (`{"key":"s"}`
+  is how the legend's letters are sent) or `{"text": …}` (no control
+  characters, ≤ 200 chars). ≤ 64 keys. Anything else → 400.
+- **Esc**: at most one per request, and it must be last. Esc on a menu
+  closes it (or clears a search), and a second one opens `/rewind`.
+- **`goto`** moves the cursor to a row of the view the sig names, as a
+  closed loop on the row's *text*, not a key count: press ↓ or ↑ toward it,
+  re-read, stop on a match. Lists scroll (`↓ 9 more`) and unmarked
+  description lines are rows, so counting keys would drift. Bounded by
+  rows + above + below + 2 presses, and it gives up (409, cursor wherever
+  it is) when two presses in a row change nothing. `keys` run after it.
+- After the keys it waits (`Server.menuSettle` × a few) for the screen to
+  change from the old sig, since Claude redraws asynchronously, and answers
+  `{"menu": newView | null}` so the browser needn't wait for a poll. One
+  request at a time (`menuMu`), like the mode cycle.
+- Tests use a `fakeMenuPane` that draws a list in the probed layout and
+  reacts to Up/Down/Enter/Esc/text, with a viewport and no wrap.
+- Browser: ↑/↓/←/→/Enter/Esc/Tab/typing go to the menu, clicking a row is
+  `goto` (+ Enter for a numbered/pick-one list), legend items are buttons
+  (a `←/→` pair is two), "Type to search" focuses the dialog's input,
+  Close sends Esc (once, and only while a menu is still up).
