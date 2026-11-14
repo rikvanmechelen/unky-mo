@@ -57,6 +57,8 @@ type Server struct {
 	// modeMu serializes permission-mode changes; modeSettle is the wait
 	// between footer re-reads after each shift+tab (zero in tests).
 	modeMu     sync.Mutex
+	// menuMu serializes key presses into slash-command menus.
+	menuMu sync.Mutex
 	modeSettle time.Duration
 
 	// bootID identifies this process, so a browser that asked for a
@@ -142,6 +144,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/permission", s.handlePermission)
 	s.mux.HandleFunc("POST /api/sessions/{windowID}/permission", s.handleAnswerPermission)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/menu", s.handleMenu)
+	s.mux.HandleFunc("POST /api/sessions/{windowID}/menu/keys", s.handleMenuKeys)
 	s.mux.HandleFunc("GET /api/windows/{windowID}/startup", s.handleStartup)
 	s.mux.HandleFunc("POST /api/windows/{windowID}/startup", s.handleAnswerStartup)
 	s.mux.HandleFunc("GET /api/sessions/{windowID}/shells", s.handleShells)
