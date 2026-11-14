@@ -24,7 +24,8 @@ function openImageViewer(src, alt) {
 // added in: detach and restore move a set between the strip and a session's
 // draft, uploads still running included.
 function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID, onChange, onError }) {
-  // Each item: {file, url, windowID, id, state: "uploading" | "ready" | "error", ctrl}.
+  // Each item: {file, name, url, windowID, id, state: "uploading" | "ready" | "error", ctrl}.
+  // An image restored from a stored draft has no file; its url is the server's copy.
   let items = [];
 
   const picker = el("input", { type: "file", accept: ATTACHABLE_TYPES.join(","), multiple: "", hidden: "" });
@@ -70,7 +71,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     if (rejected.length) onError(`Can't attach ${rejected.map((f) => f.name || f.type).join(", ")}: only PNG, JPEG, GIF and WebP images`);
     for (const file of files) {
       if (ATTACHABLE_TYPES.includes(file.type)) {
-        upload({ file, url: URL.createObjectURL(file), windowID: getWindowID(), id: null, state: "uploading" });
+        upload({ file, name: file.name, url: URL.createObjectURL(file), windowID: getWindowID(), id: null, state: "uploading" });
       }
     }
   }
@@ -96,7 +97,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
       item.error = err.message;
       // An image detached into another session's draft shows its error
       // when that session's strip comes back.
-      if (items.includes(item)) onError(`${item.file.name || "image"}: ${err.message}`);
+      if (items.includes(item)) onError(`${item.name || "image"}: ${err.message}`);
     }
     if (items.includes(item)) render();
   }
@@ -110,7 +111,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
   // drop forgets an item; deleteOnServer also removes a stored upload.
   function drop(item, deleteOnServer) {
     item.ctrl?.abort();
-    URL.revokeObjectURL(item.url);
+    if (item.file) URL.revokeObjectURL(item.url);
     if (deleteOnServer && item.id) {
       fetch(`/api/sessions/${encodeURIComponent(item.windowID)}/attachments/${encodeURIComponent(item.id)}`, { method: "DELETE" })
         .catch(() => {});
@@ -120,10 +121,17 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
   function render() {
     strip.hidden = items.length === 0;
     strip.replaceChildren(...items.map((item) => {
-      const name = item.file.name || "pasted image";
-      const thumb = el("button", { type: "button", class: "attachment__thumb", title: name, "aria-label": `View ${name}` }, [
-        el("img", { src: item.url, alt: "" }),
-      ]);
+      const name = item.name || "pasted image";
+      const img = el("img", { src: item.url, alt: "" });
+      // A restored image that has expired on the server is gone for good.
+      if (!item.file) {
+        img.addEventListener("error", () => {
+          if (!items.includes(item)) return;
+          items = items.filter((i) => i !== item);
+          render();
+        });
+      }
+      const thumb = el("button", { type: "button", class: "attachment__thumb", title: name, "aria-label": `View ${name}` }, [img]);
       thumb.addEventListener("click", () => openImageViewer(item.url, name));
       const removeBtn = el("button", { type: "button", class: "attachment__remove", title: "Remove", "aria-label": `Remove ${name}`, text: "×" });
       removeBtn.addEventListener("click", () => remove(item));
@@ -134,6 +142,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
 
   return {
     ids: () => items.filter((i) => i.state === "ready").map((i) => i.id),
+    items: () => items.slice(),
     pending: () => items.some((i) => i.state === "uploading"),
     failed: () => items.some((i) => i.state === "error"),
     count: () => items.length,
@@ -155,6 +164,14 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     restore(list) {
       items = list.slice();
       render();
+    },
+    // fromStored turns a stored draft's [{id, name}] back into items, shown
+    // from the server's copy.
+    fromStored(windowID, list) {
+      return list.map(({ id, name }) => ({
+        file: null, name, windowID, id, state: "ready",
+        url: `/api/sessions/${encodeURIComponent(windowID)}/attachments/${encodeURIComponent(id)}`,
+      }));
     },
     // discard forgets detached images whose prompt was sent elsewhere.
     discard(list) {

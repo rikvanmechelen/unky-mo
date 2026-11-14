@@ -79,3 +79,39 @@ func TestHandleDeleteAttachment(t *testing.T) {
 		t.Error("attachment still there")
 	}
 }
+
+func TestHandleGetAttachment(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	id, err := store.Save("@5", strings.NewReader(pngHeader))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Deps{Attachments: store}, 0, "test")
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	rec := get("/api/sessions/@5/attachments/" + id)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/png" {
+		t.Errorf("content type: want image/png, got %q", got)
+	}
+	if rec.Body.String() != pngHeader {
+		t.Error("body isn't the stored image")
+	}
+
+	for _, path := range []string{
+		"/api/sessions/@6/attachments/" + id,                               // another window's id
+		"/api/sessions/@5/attachments/" + strings.Repeat("0", 32) + ".png", // unknown
+		"/api/sessions/@5/attachments/..%2F..%2Fetc%2Fpasswd",
+		"/api/sessions/@5/attachments/notanid.png",
+	} {
+		if rec := get(path); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: want 404, got %d", path, rec.Code)
+		}
+	}
+}

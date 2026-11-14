@@ -1089,7 +1089,7 @@ function main() {
     pasteTarget: promptInput,
     dropTarget: composer.closest(".chat-footer"),
     getWindowID: () => windowID,
-    onChange: () => {},
+    onChange: () => saveStoredDraft(),
     onError: (msg) => { sendError.textContent = msg; },
   });
   const permissionBanner = document.getElementById("permission-banner");
@@ -1267,7 +1267,14 @@ function main() {
   // What was in the message box and image strip of the sessions switched
   // away from: windowID -> {text, items}. The items are the strip's own,
   // uploads still running included, so switching back loses nothing.
+  // The shown draft is also stored (draft-model.js) for a page reload.
   const drafts = new Map();
+  const draftStorage = (() => { try { return window.localStorage; } catch { return null; } })();
+  let switching = false; // resetSession empties and refills the box: nothing to store
+
+  function saveStoredDraft() {
+    if (!switching && windowID) saveDraft(draftStorage, windowID, promptInput.value, attachments.items());
+  }
 
   function stashDraft(id) {
     const text = [heldUntilStart, promptInput.value].filter((t) => t && t.trim()).join("\n");
@@ -1278,15 +1285,22 @@ function main() {
 
   function restoreDraft(id) {
     const d = drafts.get(id);
-    if (!d) return;
-    drafts.delete(id);
-    setPrompt(d.text);
-    attachments.restore(d.items);
+    if (d) {
+      drafts.delete(id);
+      setPrompt(d.text);
+      attachments.restore(d.items);
+      return;
+    }
+    const stored = id && loadDraft(draftStorage, id);
+    if (!stored) return;
+    setPrompt(stored.text);
+    attachments.restore(attachments.fromStored(id, stored.attachments));
   }
 
   // afterSend empties the box a prompt was sent from: the one shown, or
   // the draft it became if the view moved to another session meanwhile.
   function afterSend(id) {
+    dropDraft(draftStorage, id);
     if (id === windowID) {
       setPrompt("");
       attachments.clear();
@@ -1405,11 +1419,15 @@ function main() {
     promptInput.style.height = "auto";
     promptInput.style.height = `${promptInput.scrollHeight + promptInput.offsetHeight - promptInput.clientHeight}px`;
   }
-  promptInput.addEventListener("input", autosize);
+  promptInput.addEventListener("input", () => {
+    autosize();
+    saveStoredDraft();
+  });
 
   function setPrompt(text) {
     promptInput.value = text;
     autosize();
+    saveStoredDraft();
   }
 
   // Phone keyboards have no shift+enter, so there Enter adds a line and only
@@ -1717,6 +1735,7 @@ function main() {
   // resetSession points the view at another window (initial load, a nav
   // click, or back/forward) — everything per-session starts over.
   function resetSession(id, isStarting) {
+    switching = true;
     if (windowID) stashDraft(windowID);
     windowID = id;
     clearTranscript();
@@ -1728,6 +1747,7 @@ function main() {
     startupGaveUp = false;
     setPrompt("");
     restoreDraft(id);
+    switching = false;
     sendError.textContent = "";
     setNotice(id ? "" : "Pick a session on the left.");
     hideBanners();

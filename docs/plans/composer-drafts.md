@@ -1,6 +1,6 @@
 # Keeping the composer's draft per session
 
-**Status:** planned 2026-11-14.
+**Status:** steps 1–2 built on main 2026-11-14; tests pass, not yet checked in a browser, not pushed.
 
 ## Problem
 

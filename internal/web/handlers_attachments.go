@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 )
 
 // handleUploadAttachment stores one image (the raw request body) for a live
@@ -39,4 +41,25 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	s.deps.Attachments.Delete(r.PathValue("windowID"), r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetAttachment serves a stored image, for the thumbnails of a draft
+// restored after a page reload. Like DELETE it isn't gated on a live
+// session; the store only hands out ids saved under that window.
+func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.deps.Attachments.Path(r.PathValue("windowID"), r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no such attachment"))
+		return
+	}
+	// The store keeps only the four sniffed types, named by extension.
+	ext := strings.TrimPrefix(filepath.Ext(p), ".")
+	for typ, e := range attachmentExts {
+		if e == ext {
+			w.Header().Set("Content-Type", typ)
+		}
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeFile(w, r, p)
 }
