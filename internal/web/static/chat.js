@@ -1196,7 +1196,7 @@ function main() {
   const dialogBannerText = document.getElementById("dialog-banner-text");
   const dialogBannerDefault = dialogBannerText.textContent;
   const menuOpenBtn = document.getElementById("menu-open");
-  const menuDialog = createMenuDialog();
+  const menuDialog = createMenuDialog({ send: (payload) => menuWatcher.send(payload) });
   const menuWatcher = createMenuWatcher((menu) => {
     menuOpenBtn.hidden = !menu;
     dialogBannerText.textContent = menu
@@ -1204,7 +1204,7 @@ function main() {
       : dialogBannerDefault;
     if (menu) menuDialog.update(menu);
     else menuDialog.close();
-  });
+  }, (msg) => menuDialog.note(msg));
   menuOpenBtn.addEventListener("click", () => {
     const menu = menuWatcher.current();
     if (menu) menuDialog.open(menu);

@@ -1,23 +1,28 @@
 // Claude Code's slash-command menus (/model, /config, /permissions, …) in
 // the browser. The server parses the menu off Claude's pane (menu.go) and
-// this draws it: a title or tab strip, a search box, rows with a cursor,
-// extra content, and the legend of keys. Needs menu-model.js.
+// takes keys back (handlers_menu_keys.go); this draws the menu and turns
+// clicks and key presses into those keys. Needs menu-model.js.
 
 const MENU_POLL_MS = 1000;
 
-// createMenuWatcher polls GET /menu while active (the footer is gone, so a
-// dialog may be up) and hands each change to onChange(menu | null). The
-// ETag makes an unchanged screen a 304.
-function createMenuWatcher(onChange) {
+// createMenuWatcher keeps the current menu: it polls GET /menu while
+// active (the footer is gone, so a dialog may be up) and hands each change
+// to onChange(menu | null). send() types keys into the menu; the answer is
+// the screen afterwards, adopted at once. The ETag makes an unchanged
+// screen a 304. onNote gets a message for a refused key press (or "").
+function createMenuWatcher(onChange, onNote = () => {}) {
   let windowID = null;
   let active = false;
   let etag = null;
   let timer = null;
   let gen = 0;
   let last = null;
+  let sending = 0;
+  let chain = Promise.resolve();
 
   function set(menu) {
     last = menu;
+    etag = menu ? `"${menu.sig}"` : null;
     onChange(menu);
   }
 
@@ -26,14 +31,12 @@ function createMenuWatcher(onChange) {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/menu`,
         { headers: etag ? { "If-None-Match": etag } : {} });
-      if (g !== gen) return;
-      if (res.status === 304) {
-        // unchanged
-      } else if (res.ok) {
+      // An answer from before a key press would put the old screen back.
+      if (g !== gen || sending) return;
+      if (res.ok) {
         const data = await res.json();
-        if (g !== gen) return;
-        etag = res.headers.get("ETag");
-        set(data.menu || null);
+        if (g !== gen || sending) return;
+        if (!data.menu || !last || data.menu.sig !== last.sig) set(data.menu || null);
       }
     } catch (err) {
       // transient — keep what we have
@@ -45,8 +48,34 @@ function createMenuWatcher(onChange) {
     gen++;
     clearTimeout(timer);
     timer = null;
-    etag = null;
     if (last) set(null);
+  }
+
+  async function post(p) {
+    const menu = last;
+    if (!menu || !windowID) return;
+    const id = windowID, g = gen;
+    sending++;
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/menu/keys`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        // A row click is relative to the screen it was made on.
+        body: JSON.stringify({ sig: p.sig || menu.sig, keys: p.keys, goto: p.goto }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (g !== gen) return;
+      if (res.ok) {
+        onNote("");
+        set(data.menu || null);
+      } else {
+        onNote(data.error || `Couldn't send (${res.status})`);
+        if (res.status === 409 && "menu" in data) set(data.menu || null);
+      }
+    } catch (err) {
+      if (g === gen) onNote(String(err));
+    } finally {
+      sending--;
+    }
   }
 
   return {
@@ -54,7 +83,8 @@ function createMenuWatcher(onChange) {
       const was = active;
       stop();
       windowID = id;
-      if (was && id) { gen++; poll(); }
+      chain = Promise.resolve();
+      if (was && id) poll();
     },
     setActive(on) {
       if (on === active) return;
@@ -64,34 +94,96 @@ function createMenuWatcher(onChange) {
       else stop();
     },
     current() { return last; },
-    // refresh re-reads now, e.g. right after keys went to the menu.
-    refresh() {
-      if (!windowID) return;
-      clearTimeout(timer);
-      etag = null;
-      poll();
-    },
-    // adopt takes a view the server already returned (a key press answers
-    // with the new screen), so the dialog doesn't wait for the next poll.
-    adopt(menu, newEtag) {
-      etag = newEtag || null;
-      set(menu);
+    // send types keys (and/or moves the cursor); calls queue so a held
+    // arrow key is a sequence, not a race.
+    send(payload) {
+      chain = chain.then(() => post(payload));
+      return chain;
     },
   };
 }
 
-// createMenuDialog draws a menu view into a <dialog>. The dialog is
-// read-only for now: it shows what the terminal shows.
-function createMenuDialog({ onClose = () => {} } = {}) {
-  const dialog = el("dialog", { class: "dialog menu-dialog" });
+// createMenuDialog draws a menu view into a <dialog> and sends what the
+// user does through send(payload). The dialog holds the keyboard while
+// it's open: keys go to Claude's menu, not to the page. With an input in
+// the menu (a search box), typing goes to a real <input> whose edits are
+// sent as key presses.
+function createMenuDialog({ send, onClose = () => {} }) {
+  const dialog = el("dialog", { class: "dialog menu-dialog", tabindex: "-1" });
   const body = el("div", { class: "menu-dialog__body" });
   dialog.appendChild(body);
+  const inputEl = el("input", { class: "menu-input__field", type: "text", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Menu input" });
+  const note = el("div", { class: "menu-note", role: "status" });
   let view = null;
   let showRaw = false;
+  let shownText = ""; // what the menu's input holds, as far as we know
+  let typing = 0; // text sends in flight, during which the screen's text isn't authoritative
+  let typeTimer = null;
 
-  dialog.addEventListener("close", () => { onClose(); });
+  dialog.addEventListener("close", () => onClose());
+  // Esc is the menu's, not the dialog's.
+  dialog.addEventListener("cancel", (e) => { e.preventDefault(); send({ keys: [{ key: "esc" }] }); });
+  // Buttons and rows never take focus, so the dialog keeps the keyboard.
+  dialog.addEventListener("mousedown", (e) => {
+    if (e.target.closest("button, .menu-row, .menu-tab") && e.target !== inputEl) e.preventDefault();
+  });
+
+  const NAV_IN_INPUT = new Set(["enter", "esc", "up", "down", "tab", "btab", "pgup", "pgdn"]);
+  dialog.addEventListener("keydown", (e) => {
+    if (!view) return;
+    const key = menuKeyFromEvent(e, view);
+    if (!key) return;
+    if (e.target === inputEl) {
+      if (!NAV_IN_INPUT.has(key)) return; // text, left/right, backspace: the input's own
+      flushTyping();
+    } else if (view.input && [...key].length === 1) {
+      // a printable key with a search box: it's for the box
+      inputEl.focus();
+      return;
+    }
+    e.preventDefault();
+    send({ keys: [{ key }] });
+  });
+
+  function flushTyping() {
+    clearTimeout(typeTimer);
+    typeTimer = null;
+    const keys = menuTextDelta(shownText, inputEl.value);
+    if (!keys.length) return;
+    shownText = inputEl.value;
+    typing++;
+    send({ keys }).finally(() => { typing--; });
+  }
+  inputEl.addEventListener("input", () => {
+    clearTimeout(typeTimer);
+    typeTimer = setTimeout(flushTyping, 120);
+  });
+
+  function button(text, title, onClick, cls = "") {
+    const b = el("button", { class: "btn btn--small menu-btn " + cls, type: "button", title, tabindex: "-1", text });
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  const press = (key) => () => send({ keys: [{ key }] });
+
+  function renderRow(row, index) {
+    const cls = "menu-row" + (row.cursor ? " is-cursor" : "") + (row.marker ? " has-marker" : "");
+    const cells = [];
+    if (row.number) cells.push(el("span", { class: "menu-row__num", text: `${row.number}.` }));
+    if (row.marker) cells.push(el("span", { class: "menu-row__marker", "aria-hidden": "true", text: row.marker }));
+    (row.cols && row.cols.length ? row.cols : [row.text]).forEach((c, i) =>
+      cells.push(el("span", { class: "menu-row__col" + (i ? " is-secondary" : ""), text: c })));
+    const node = el("div", { class: cls, role: "option", "aria-selected": String(!!row.cursor), "data-index": String(index) }, cells);
+    node.addEventListener("click", () => {
+      // Relative to the screen the click was made on.
+      const plan = menuClickPlan(view, index);
+      if (plan) send({ ...plan, sig: view.sig });
+    });
+    return node;
+  }
 
   function render() {
+    const hadFocus = document.activeElement === inputEl;
     const scroll = body.querySelector(".menu-rows");
     const keep = scroll ? scroll.scrollTop : 0;
     body.replaceChildren();
@@ -99,15 +191,22 @@ function createMenuDialog({ onClose = () => {} } = {}) {
 
     body.appendChild(el("div", { class: "dialog__title", text: view.title || "Menu" }));
     if (view.tabs && view.tabs.length) {
-      body.appendChild(el("div", { class: "menu-tabs", role: "tablist" }, view.tabs.map((t) =>
-        el("span", { class: "menu-tab" + (t.active ? " is-active" : ""), role: "tab", "aria-selected": String(!!t.active), text: t.label }))));
+      const tabs = el("div", { class: "menu-tabs", role: "tablist" }, view.tabs.map((t) =>
+        el("span", { class: "menu-tab" + (t.active ? " is-active" : ""), role: "tab", "aria-selected": String(!!t.active), text: t.label })));
+      body.appendChild(el("div", { class: "menu-tabbar" }, [
+        tabs,
+        button("‹", "Previous tab (←)", press("left")),
+        button("›", "Next tab (→)", press("right")),
+      ]));
     }
     if (view.subtitle) body.appendChild(el("div", { class: "menu-sub", text: view.subtitle }));
     if (view.input) {
-      const shown = view.input.text || view.input.placeholder || "";
-      body.appendChild(el("div", { class: "menu-input" + (view.input.text ? "" : " is-placeholder") }, [
+      if (!typing && !typeTimer) shownText = view.input.text || "";
+      if (!typing && !typeTimer) inputEl.value = shownText;
+      inputEl.placeholder = view.input.placeholder || "";
+      body.appendChild(el("label", { class: "menu-input" }, [
         el("span", { class: "menu-input__icon", "aria-hidden": "true", text: view.input.kind === "search" ? "⌕" : "›" }),
-        el("span", { text: shown }),
+        inputEl,
       ]));
     }
 
@@ -119,15 +218,7 @@ function createMenuDialog({ onClose = () => {} } = {}) {
         if (view.above) list.appendChild(el("div", { class: "menu-more", text: `↑ ${view.above} more` }));
         for (const sec of menuSections(view)) {
           if (sec.group) list.appendChild(el("div", { class: "menu-group", text: sec.group }));
-          for (const { row, index } of sec.items) {
-            const cls = "menu-row" + (row.cursor ? " is-cursor" : "") + (row.marker ? " has-marker" : "");
-            const cells = [];
-            if (row.number) cells.push(el("span", { class: "menu-row__num", text: `${row.number}.` }));
-            if (row.marker) cells.push(el("span", { class: "menu-row__marker", "aria-hidden": "true", text: row.marker }));
-            (row.cols && row.cols.length ? row.cols : [row.text]).forEach((c, i) =>
-              cells.push(el("span", { class: "menu-row__col" + (i ? " is-secondary" : ""), text: c })));
-            list.appendChild(el("div", { class: cls, role: "option", "aria-selected": String(!!row.cursor), "data-index": String(index) }, cells));
-          }
+          for (const { row, index } of sec.items) list.appendChild(renderRow(row, index));
         }
         if (view.below) list.appendChild(el("div", { class: "menu-more", text: `↓ ${view.below} more` }));
         body.appendChild(list);
@@ -138,35 +229,45 @@ function createMenuDialog({ onClose = () => {} } = {}) {
       if (view.extra && view.extra.length) body.appendChild(el("pre", { class: "menu-extra", text: view.extra.join("\n") }));
     }
 
-    if (view.legend && view.legend.length) {
-      body.appendChild(el("div", { class: "menu-legend" }, view.legend.map((k) =>
-        el("span", { class: "menu-legend__item" }, [
-          el("kbd", { text: k.typing ? "type" : (k.keys || []).join(" / ") }),
-          el("span", { text: " " + k.label }),
-        ]))));
+    body.appendChild(note);
+    const legend = menuLegendButtons(view.legend);
+    if (legend.length) {
+      body.appendChild(el("div", { class: "menu-legend" }, legend.map((k) => el("span", { class: "menu-legend__item" }, [
+        ...(k.typing
+          ? [el("kbd", { text: "type" })]
+          : k.buttons.map((b) => button(b.text, `${b.key} — ${k.label}`, press(b.key), "menu-btn--key"))),
+        el("span", { text: " " + k.label }),
+      ]))));
     }
 
     const actions = el("div", { class: "dialog__actions" });
-    const rawBtn = el("button", { class: "btn btn--small", type: "button", text: showRaw ? "Structured view" : "Terminal view" });
-    rawBtn.addEventListener("click", () => { showRaw = !showRaw; render(); });
-    const closeBtn = el("button", { class: "btn", type: "button", text: "Close" });
-    closeBtn.addEventListener("click", () => dialog.close());
-    actions.append(rawBtn, closeBtn);
+    actions.append(
+      button(showRaw ? "Structured view" : "Terminal view", "Show what the terminal shows", () => { showRaw = !showRaw; render(); }),
+      button("Hide", "Hide this; the menu stays open in the terminal", () => dialog.close()),
+    );
     body.appendChild(actions);
+    if (hadFocus) {
+      inputEl.focus();
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    }
   }
 
   return {
     element: dialog,
     isOpen() { return dialog.open; },
+    note(msg) { note.textContent = msg || ""; },
     open(v) {
       view = v;
       if (!dialog.isConnected) document.body.appendChild(dialog);
       render();
       if (!dialog.open) dialog.showModal();
+      if (!view.input) dialog.focus();
+      else inputEl.focus();
     },
     update(v) {
+      const same = view && v && v.sig === view.sig;
       view = v;
-      if (dialog.open) render();
+      if (dialog.open && !same) render();
     },
     close() { if (dialog.open) dialog.close(); },
   };
