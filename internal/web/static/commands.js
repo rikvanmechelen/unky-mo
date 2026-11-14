@@ -3,8 +3,9 @@
 // (built-ins, skills, plugin and custom commands, from
 // /api/sessions/{windowID}/commands — see claude.SlashCommands), filtered as
 // you type. ↑/↓ move, Tab completes, Enter completes and sends, Esc closes.
-// Commands that open a terminal dialog are marked, since the browser can't
-// drive those.
+// Commands that open a menu are marked ("opens menu": the chat view drives
+// it, see menu.js) and those that need the terminal say so. Needs
+// menu-model.js.
 
 const COMMANDS_STALE_MS = 30000;
 const COMMANDS_MAX_SHOWN = 50;
@@ -126,10 +127,9 @@ function createCommandMenu(form, input, onSubmit, enterAddsLine) {
         el("span", { class: "cmd-menu__hint", text: c.argument_hint || "" }),
         el("span", { class: "cmd-menu__desc", text: desc }),
         el("span", { class: "cmd-menu__tags" }, [
-          ...(c.dialog ? [el("span", {
-            class: "cmd-menu__tag is-dialog", text: "opens in terminal",
-            title: c.argument_hint ? "Without arguments this opens a dialog in the terminal, which the browser can't answer"
-              : "Opens a dialog in the terminal, which the browser can't answer",
+          ...(commandMenuTag(c) ? [el("span", {
+            class: "cmd-menu__tag " + (commandMenuTag(c).terminal ? "is-dialog" : "is-menu"),
+            text: commandMenuTag(c).text, title: commandMenuTag(c).title,
           })] : []),
           el("span", { class: "cmd-menu__tag", text: c.source }),
         ]),

@@ -297,3 +297,25 @@ Space/`s`/`t`/ctrl keys, ‹ › for tabs, the typed input for search, row click
   it and pressing Enter changes real settings (it flipped auto-compact and
   idle compaction in the probe session, put back by hand). Probe `/config`
   with a throwaway `$HOME`/`CLAUDE_CONFIG_DIR`, or not at all.
+
+## Step 5 notes (built)
+
+- **Slash list tags**: `claude.SlashCommand.Terminal` (and `terminal` in
+  `/commands`) marks the dialogs the web can't drive — `login`, `logout`,
+  `ide`, `feedback`, `resume` (an external flow, or done better by the
+  dashboard's own resume). Every other `Dialog` command now reads "opens
+  menu" (`commandMenuTag` in `menu-model.js`); those that print a line
+  instead (`/context`, `/color red`) simply open nothing.
+- **Auto-open**: after a send, a message that is exactly `/word`
+  (`isBareSlashCommand`) makes the chat view look for a menu for 4 s
+  (`expectMenu`: forces the watcher on, because the footer poll lags) and
+  opens the dialog when one shows. A skill command polls briefly and finds
+  none. A menu started in the terminal still just gets the banner's "Open
+  menu" button — nothing pops up uninvited.
+- **Phone**: the dialog scrolls (`overflow: auto`), row lists cap at 40dvh,
+  buttons are 36px tall, legend keys are real buttons (the keyboard on a
+  phone has no arrows or Esc).
+- **Notifier**: nothing to build. It only reads panes of windows with no
+  session row, for the trust dialog; a menu belongs to a session with a
+  row, and `TestMenusAreNotOtherDialogs` pins that no menu fixture parses
+  as the trust dialog or a permission prompt.

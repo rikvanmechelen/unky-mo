@@ -419,3 +419,18 @@ func TestParseMenuFilteredSearch(t *testing.T) {
 		t.Errorf("rows = %q", menuRowTexts(v))
 	}
 }
+
+func TestMenusAreNotOtherDialogs(t *testing.T) {
+	// The push notifier and the answer endpoints read the same pane with
+	// their own parsers; a menu must never look like one of their dialogs.
+	files, _ := filepath.Glob(filepath.Join("testdata", "menus", "*.txt"))
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		if v := parseStartupDialog(string(b)); v.found {
+			t.Errorf("%s parsed as the trust dialog", filepath.Base(f))
+		}
+		if v := parsePermissionDialog(string(b)); v.found {
+			t.Errorf("%s parsed as a permission prompt", filepath.Base(f))
+		}
+	}
+}

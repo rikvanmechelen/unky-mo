@@ -92,6 +92,28 @@ function menuClickPlan(view, index) {
   return menuHasKey(view, "enter") ? { keys: [{ key: "enter" }] } : null;
 }
 
+// commandMenuTag is the tag the slash list shows on a command that opens a
+// dialog: null for a plain command, "opens menu" for one the chat view can
+// drive, "opens in terminal" for one it can't (c.terminal).
+function commandMenuTag(c) {
+  if (!c.dialog) return null;
+  if (c.terminal) {
+    return { text: "opens in terminal", terminal: true,
+      title: c.argument_hint ? "Without arguments this opens a dialog in the terminal, which the browser can't answer"
+        : "Opens a dialog in the terminal, which the browser can't answer" };
+  }
+  return { text: "opens menu", terminal: false,
+    title: c.argument_hint ? "Without arguments this opens a menu, which you can operate from here"
+      : "Opens a menu, which you can operate from here" };
+}
+
+// isBareSlashCommand: the message is just "/word" — the shape of a command
+// that opens a menu (with arguments it usually doesn't), so the chat view
+// looks for one after sending it.
+function isBareSlashCommand(text) {
+  return /^\/[A-Za-z][\w:.-]*$/.test(text.trim());
+}
+
 if (typeof module === "object" && module.exports) {
-  module.exports = { menuSections, menuLegendButtons, menuHasKey, menuKeyFromEvent, menuTextDelta, menuClickPlan };
+  module.exports = { menuSections, menuLegendButtons, menuHasKey, menuKeyFromEvent, menuTextDelta, menuClickPlan, commandMenuTag, isBareSlashCommand };
 }

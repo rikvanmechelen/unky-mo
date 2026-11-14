@@ -1197,7 +1197,24 @@ function main() {
   const dialogBannerDefault = dialogBannerText.textContent;
   const menuOpenBtn = document.getElementById("menu-open");
   const menuDialog = createMenuDialog({ send: (payload) => menuWatcher.send(payload) });
+  // A bare "/command" just sent may be about to draw a menu: look for one
+  // for a few seconds (the footer poll can lag) and open it when it shows.
+  let menuAutoOpenUntil = 0;
+  let menuExpectTimer = null;
+  function expectMenu() {
+    menuAutoOpenUntil = Date.now() + 4000;
+    menuWatcher.setActive(true);
+    clearTimeout(menuExpectTimer);
+    menuExpectTimer = setTimeout(() => {
+      menuAutoOpenUntil = 0;
+      menuWatcher.setActive(dialogBlocked);
+    }, 4500);
+  }
   const menuWatcher = createMenuWatcher((menu) => {
+    if (menu && Date.now() < menuAutoOpenUntil) {
+      menuAutoOpenUntil = 0;
+      if (!menuDialog.isOpen()) menuDialog.open(menu);
+    }
     menuOpenBtn.hidden = !menu;
     dialogBannerText.textContent = menu
       ? `A menu is open in Claude's terminal${menu.title ? ": " + menu.title : ""}.`
@@ -1318,6 +1335,7 @@ function main() {
         sendError.textContent = data.error || `request failed (${res.status})`;
         return false;
       }
+      if (isBareSlashCommand(text)) expectMenu();
       return true;
     } catch (err) {
       sendError.textContent = String(err);

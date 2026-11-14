@@ -114,3 +114,21 @@ test("menuClickPlan selects first, activates on the cursor row", () => {
   assert.equal(menuClickPlan(noEnter, 0), null);
   assert.deepEqual(menuClickPlan(noEnter, 1), { goto: { row: 1 } });
 });
+
+const { commandMenuTag, isBareSlashCommand } = require("../static/menu-model.js");
+
+test("commandMenuTag: menus the web drives vs dialogs that need the terminal", () => {
+  assert.equal(commandMenuTag({ name: "compact" }), null);
+  assert.deepEqual(commandMenuTag({ name: "model", dialog: true }), { text: "opens menu", terminal: false,
+    title: "Opens a menu, which you can operate from here" });
+  assert.equal(commandMenuTag({ name: "model", dialog: true, argument_hint: "[model]" }).title,
+    "Without arguments this opens a menu, which you can operate from here");
+  const t = commandMenuTag({ name: "login", dialog: true, terminal: true });
+  assert.equal(t.text, "opens in terminal");
+  assert.equal(t.terminal, true);
+});
+
+test("isBareSlashCommand: a lone /word may open a menu", () => {
+  for (const ok of ["/model", "  /config  ", "/plugin\n", "/eng:review"]) assert.equal(isBareSlashCommand(ok), true, ok);
+  for (const no of ["", "model", "/model opus", "/", "//x", "/a/b", "hello /model", "/model\nmore"]) assert.equal(isBareSlashCommand(no), false, no);
+});
