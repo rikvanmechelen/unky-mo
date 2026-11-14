@@ -145,6 +145,17 @@ func TestHookEvent_SessionStartCompact_StaysActive(t *testing.T) {
 	}
 }
 
+// Idle compaction fires the same SessionStart at the prompt, with no turn and
+// so no Stop after it: it must not mark the session working.
+func TestHookEvent_SessionStartCompact_StaysIdle(t *testing.T) {
+	mgr := NewManager()
+	mgr.ProcessHookEvent(HookEvent{Type: EventStop, SessionID: "s1"})
+	mgr.ProcessHookEvent(HookEvent{Type: EventSessionStart, SessionID: "s1", Source: "compact"})
+	if got := mgr.Status("s1"); got != StatusIdle {
+		t.Errorf("after idle compaction SessionStart: got %v, want StatusIdle", got)
+	}
+}
+
 func TestHookEvent_SessionEnd_RemovesSession(t *testing.T) {
 	mgr := NewManager()
 	mgr.ProcessHookEvent(HookEvent{Type: EventUserPromptSubmit, SessionID: "s1"})

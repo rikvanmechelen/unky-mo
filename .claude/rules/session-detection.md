@@ -26,7 +26,8 @@ Session status (active/idle/permission/question) is managed by `status.Manager` 
 
 State transitions:
 - `UserPromptSubmit` / ordinary `PreToolUse` → Active
-- `SessionStart` → Idle (startup, `--resume` and `/clear` all land at the prompt), except `source: "compact"` → Active (auto-compaction fires mid-turn). `source` is read from the forwarded `hook_input`.
+- `SessionStart` → Idle (startup, `--resume` and `/clear` all land at the prompt), except `source: "compact"`, which leaves the status unchanged: auto-compaction fires it mid-turn (already Active), idle compaction (`idleCompaction`, Claude Code 2.1.325) at the prompt with no Stop to follow, and the payload doesn't say which. `source` is read from the forwarded `hook_input`.
+- JSONL: a compaction's summary (`user` line with `isCompactSummary: true`) is skipped, so the turn before the compaction decides. Idle compaction leaves it as the last conversational line, which used to read as a fresh prompt → Active forever.
 - `PreToolUse` where `ToolName` is a known interactive tool (`isInteractiveTool`, currently just `AskUserQuestion`) → **Question**, with `PendingTool`/`PendingInput` captured from the event (see below)
 - `Stop` / JSONL `end_turn` → Idle
 - `PermissionRequest` → Permission, **except** when its `tool_name` is an interactive tool (`AskUserQuestion`) → Question (see the gotcha below)

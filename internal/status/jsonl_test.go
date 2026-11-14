@@ -52,6 +52,35 @@ func TestReadJSONLStatus_UserPrompt_ReturnsActive(t *testing.T) {
 	}
 }
 
+// Idle compaction's tail, trimmed from a Claude Code 2.1.325 transcript: the
+// summary is a user line with no reply, so the turn before it decides.
+func TestReadJSONLStatus_IdleCompaction_ReturnsIdle(t *testing.T) {
+	path := writeTestJSONL(t, t.TempDir(), []string{
+		`{"type":"assistant","message":{"role":"assistant","content":"done","stop_reason":"end_turn"}}`,
+		`{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}`,
+		`{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."}}`,
+		`{"type":"attachment","attachment":{"type":"skill_listing"}}`,
+		`{"type":"system","subtype":"informational","content":"Compacted while idle, before the prompt cache expired"}`,
+		`{"type":"atis-latch"}`,
+	})
+	if got := ReadJSONLStatus(path); got != StatusIdle {
+		t.Errorf("idle compaction: got %v, want StatusIdle", got)
+	}
+}
+
+// Auto-compaction mid-turn: the turn before the summary was still working.
+func TestReadJSONLStatus_MidTurnCompaction_ReturnsActive(t *testing.T) {
+	path := writeTestJSONL(t, t.TempDir(), []string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use"}],"stop_reason":"tool_use"}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+		`{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}`,
+		`{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation."}}`,
+	})
+	if got := ReadJSONLStatus(path); got != StatusActive {
+		t.Errorf("mid-turn compaction: got %v, want StatusActive", got)
+	}
+}
+
 func TestReadJSONLStatus_ToolResult_ReturnsActive(t *testing.T) {
 	path := writeTestJSONL(t, t.TempDir(), []string{
 		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use"}],"stop_reason":"tool_use"}}`,

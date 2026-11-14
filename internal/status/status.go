@@ -180,12 +180,15 @@ func (m *Manager) ProcessHookEvent(evt HookEvent) {
 		// for input — not working. Treating it as active left a freshly
 		// launched session reading "Working" until its first turn ended,
 		// which also locked the web composer out of sending that turn.
-		// The exception is auto-compaction, which fires SessionStart
-		// mid-turn while Claude carries on with the work.
-		newStatus = StatusIdle
+		// The exception is compaction, which leaves the status as it was:
+		// auto-compaction fires mid-turn while Claude carries on with the
+		// work, and idle compaction ("idleCompaction", Claude Code 2.1.325)
+		// fires at the prompt with no turn, so no Stop ever follows it. The
+		// payload doesn't say which one it is.
 		if evt.Source == "compact" {
-			newStatus = StatusActive
+			return
 		}
+		newStatus = StatusIdle
 	case EventStop:
 		newStatus = StatusIdle
 	case EventNotificationIdle:

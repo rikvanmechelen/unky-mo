@@ -67,8 +67,9 @@ func scanJSONLTail(buf []byte) SessionStatus {
 		}
 
 		var msg struct {
-			Type    string `json:"type"`
-			Message struct {
+			Type             string `json:"type"`
+			IsCompactSummary bool   `json:"isCompactSummary"`
+			Message          struct {
 				StopReason string          `json:"stop_reason"`
 				Content    json.RawMessage `json:"content"`
 			} `json:"message"`
@@ -88,6 +89,12 @@ func scanJSONLTail(buf []byte) SessionStatus {
 			// tool_use or any other stop_reason = still working.
 			return StatusActive
 		case "user":
+			if msg.IsCompactSummary {
+				// A compaction's summary isn't a prompt. Idle compaction
+				// writes it at the prompt with no reply after it, so what
+				// came before the compaction decides.
+				continue
+			}
 			if isToolResult(msg.Message.Content) {
 				return StatusActive
 			}
