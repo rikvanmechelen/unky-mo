@@ -319,3 +319,24 @@ Space/`s`/`t`/ctrl keys, ‹ › for tabs, the typed input for search, row click
   session row, for the trust dialog; a menu belongs to a session with a
   row, and `TestMenusAreNotOtherDialogs` pins that no menu fixture parses
   as the trust dialog or a permission prompt.
+
+## Step 6 (not built, on purpose)
+
+Argument forms (`/model opus`, `/effort high`, `/theme dark` sent as text)
+would only duplicate what the generic dialog now does, and they'd need
+per-command argument lists that can't be verified without changing real
+settings: the one probe session that pressed Enter in `/config` flipped
+two of them. `argument_hint` is already shown in the slash list, and the
+menus offer the same choices (including `/model`'s "this session only" on
+`s`). Revisit only if a menu turns out too awkward on a phone.
+
+## Step 7 (built)
+
+`CLAUDE.md` has the paragraph (next to the dialog banner and the other
+pane-reading features), `.claude/rules/testing.md` the test inventory.
+Fixtures were probed on Claude Code 2.1.325; on an upgrade run
+`go test ./internal/web -run Menu` after refreshing `testdata/menus/`
+(close each menu until the `▔` edge is gone before the next capture).
+Verified by hand: nothing — the browser half was only syntax-checked
+(`node --check`) and unit-tested for its pure parts; it needs a look in a
+real browser after `make install` and `./mo restart`.
