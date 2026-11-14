@@ -434,3 +434,45 @@ func TestMenusAreNotOtherDialogs(t *testing.T) {
 		}
 	}
 }
+
+func TestParseMenuIgnoresEdgesInTheTranscript(t *testing.T) {
+	// The transcript can show "▔▔▔" (a tool's output, a quoted capture)
+	// above the real prompt box. Reading that as a menu would send menu
+	// keys into the prompt.
+	edge := strings.Repeat("▔", 40)
+	indented := "⏺ Bash(cat menu.txt)\n  ⎿  " + edge + "\n     Select model\n     ❯ 1. Default\n\n" + footerScreen("  ⏵⏵ auto mode on (shift+tab to cycle)")
+	if v := parseMenu(indented); v != nil {
+		t.Errorf("indented edge in the transcript parsed as a menu: %+v", v.Title)
+	}
+	spaces := "     " + edge + "\n     Select model\n     ❯ 1. Default\n\n" + footerScreen("  ⏵⏵ auto mode on (shift+tab to cycle)")
+	if v := parseMenu(spaces); v != nil {
+		t.Errorf("space-indented edge parsed as a menu: %+v", v.Title)
+	}
+	atColumnZero := edge + "\n   Select model\n   ❯ 1. Default\n\n" + footerScreen("  ⏵⏵ auto mode on (shift+tab to cycle)")
+	if v := parseMenu(atColumnZero); v != nil {
+		t.Errorf("an edge with the prompt box below it parsed as a menu: %+v", v.Title)
+	}
+}
+
+func TestParseMenuJoinsWrappedSubtitle(t *testing.T) {
+	// A sentence the terminal wrapped is one line in the browser; separate
+	// short lines (a detail page's fields) stay separate.
+	// /model in a 90-column pane, as in the screenshot that showed it.
+	narrow := strings.Repeat("▔", 90) + `
+   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For
+   other/previous model names, specify with --model.
+
+   ❯ 1.  Default (recommended) ✔  Fable 5.1
+     2.  Opus 5.5                 For complex work
+
+   Enter to set as default · s to use this session only · Esc to cancel`
+	v := parseMenu(narrow)
+	if v == nil || strings.Contains(v.Subtitle, "\n") || !strings.Contains(v.Subtitle, "For other/previous model names, specify with --model.") {
+		t.Errorf("subtitle = %+v", v)
+	}
+	d := mustParseMenu(t, "mcp-detail.txt")
+	if !strings.Contains(d.Subtitle, "\nAuth:") || !strings.Contains(d.Subtitle, "\nURL:") {
+		t.Errorf("detail subtitle lost its lines: %q", d.Subtitle)
+	}
+}

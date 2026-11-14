@@ -85,9 +85,11 @@ const menuMarkers = "✔✘✓✗◯○●◉⚠→▸›☐☑"
 
 func stripSGR(s string) string { return sgrRe.ReplaceAllString(s, "") }
 
+// isMenuEdge: a menu's top edge runs from column 0 across the pane. The
+// transcript can show "▔" too (a tool's output, a quoted capture), but
+// indented under its ⎿.
 func isMenuEdge(plain string) bool {
-	t := strings.TrimSpace(plain)
-	return strings.HasPrefix(t, strings.Repeat("▔", menuEdgeMin))
+	return strings.HasPrefix(plain, strings.Repeat("▔", menuEdgeMin))
 }
 
 // parseMenu reads the menu on screen, or returns nil when there is none.
@@ -111,6 +113,15 @@ func parseMenu(screen string) *menuView {
 	if edge < 0 {
 		return nil
 	}
+	// A menu replaces the prompt box. With the box below the edge, the
+	// edge is something in the transcript, and keys sent to this "menu"
+	// would go to the prompt.
+	for _, l := range lines[edge+1:] {
+		if isRule(l) {
+			return nil
+		}
+	}
+	width := len([]rune(strings.TrimRight(lines[edge], " ")))
 	end := len(lines)
 	for end > edge+1 && strings.TrimSpace(lines[end-1]) == "" {
 		end--
@@ -268,7 +279,12 @@ func parseMenu(screen string) *menuView {
 		case ind == base && v.Title == "":
 			v.Title = t
 		case (ind <= base+1 && i < stop && stop < len(block)) || prose:
-			subtitle = append(subtitle, t)
+			// A line the terminal wrapped continues the one before.
+			if n := len(subtitle); n > 0 && i > 0 && wrappedBefore(block[i-1], t, width) {
+				subtitle[n-1] += " " + t
+			} else {
+				subtitle = append(subtitle, t)
+			}
 		default:
 			if hasList && len(rows) > 0 {
 				listEnded = true
@@ -282,7 +298,8 @@ func parseMenu(screen string) *menuView {
 	}
 
 	// A heading is an unmarked line at the list's indent that introduces
-	// rows with a glyph or number (a bare list can't be told from rows); it names the rows after it instead of being one.
+	// rows with a glyph or number (a bare list can't be told from rows); it
+	// names the rows after it instead of being one.
 	group := ""
 	for i, r := range rows {
 		isPlain := !r.Cursor && r.Marker == "" && r.Number == 0 && !r.MoreBelow && !r.MoreAbove
@@ -310,6 +327,17 @@ func parseMenu(screen string) *menuView {
 	}
 	v.Sig = menuSig(v)
 	return v
+}
+
+// wrappedBefore reports whether prev ended where it did only because next's
+// first word didn't fit in width columns: word wrap, not a line break.
+func wrappedBefore(prev, next string, width int) bool {
+	prev = strings.TrimRight(prev, " ")
+	if strings.TrimSpace(prev) == "" || width <= 0 {
+		return false
+	}
+	word := strings.Fields(next)[0]
+	return len([]rune(prev))+1+len([]rune(word)) > width
 }
 
 // nextLineIsMarked reports whether the next line after block[i] starts a
