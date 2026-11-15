@@ -221,7 +221,7 @@ func (x *index) symbols(lang, p string, extract func(src string) any) any {
 		}
 	}
 	src := x.read(p)
-	if src == nil {
+	if src == nil || x.cancelled() {
 		return nil
 	}
 	v := extract(*src)
@@ -261,6 +261,11 @@ func (x *index) symbolsMany(paths []string, lang func(p string) string, extract 
 		go func() {
 			defer wg.Done()
 			for j := range next {
+				// A cancelled analysis stops scanning: it's reported as
+				// unfinished anyway, and the scans are most of its work.
+				if x.cancelled() {
+					continue
+				}
 				out[j.i] = extract(paths[j.i], j.src)
 			}
 		}()
@@ -271,11 +276,17 @@ func (x *index) symbolsMany(paths []string, lang func(p string) string, extract 
 	close(next)
 	wg.Wait()
 	for _, j := range jobs {
-		if oid := x.blobs[paths[j.i]]; oid != "" {
+		if oid := x.blobs[paths[j.i]]; oid != "" && out[j.i] != nil {
 			symCache.put(lang(paths[j.i])+"\x00"+oid, out[j.i])
 		}
 	}
 	return out
+}
+
+// cancelled reports whether the analysis this index belongs to was
+// cancelled.
+func (x *index) cancelled() bool {
+	return x.r != nil && x.r.ctx != nil && x.r.ctx.Err() != nil
 }
 
 // cached reports whether symbols(lang, p, …) would be served from the

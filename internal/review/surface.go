@@ -185,32 +185,39 @@ func textChanges(r *repo, files []*file, pats []pattern) []Change {
 			}
 		}
 	}
-	var out []Change
-	verified := 0
-	for n, o := range after {
-		if _, had := before[n]; had {
-			continue
+	// A name only counts as added if the base has it nowhere, and as
+	// removed if the new version has it nowhere; at most maxVerify of each
+	// are checked (in name order), with one batched grep per side.
+	var added, removed []string
+	for _, n := range sortedKeys(after) {
+		if _, had := before[n]; !had {
+			added = append(added, n)
 		}
-		if verified < maxVerify {
-			verified++
-			if r.inBase(o.match) {
-				continue
-			}
-		}
-		out = append(out, Change{Op: OpAdded, Name: n, Path: o.path, Line: o.line})
 	}
-	verified = 0
-	for n, o := range before {
-		if _, has := after[n]; has {
-			continue
+	for _, n := range sortedKeys(before) {
+		if _, has := after[n]; !has {
+			removed = append(removed, n)
 		}
-		if verified < maxVerify {
-			verified++
-			if r.inWorktree(o.match) {
-				continue
-			}
+	}
+	matches := func(names []string, side map[string]occ) []string {
+		var out []string
+		for _, n := range names[:min(len(names), maxVerify)] {
+			out = append(out, side[n].match)
 		}
-		out = append(out, Change{Op: OpRemoved, Name: n, Path: o.path, Line: o.line})
+		return out
+	}
+	inBase := r.foundInBase(matches(added, after))
+	inNew := r.foundInWorktree(matches(removed, before))
+	var out []Change
+	for i, n := range added {
+		if o := after[n]; i >= maxVerify || !inBase[o.match] {
+			out = append(out, Change{Op: OpAdded, Name: n, Path: o.path, Line: o.line})
+		}
+	}
+	for i, n := range removed {
+		if o := before[n]; i >= maxVerify || !inNew[o.match] {
+			out = append(out, Change{Op: OpRemoved, Name: n, Path: o.path, Line: o.line})
+		}
 	}
 	return out
 }

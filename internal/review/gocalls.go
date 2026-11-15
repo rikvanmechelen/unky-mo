@@ -296,7 +296,14 @@ func newGoLoader(idx *index, module string) *goLoader {
 	return l
 }
 
-func (l *goLoader) budgetSpent() bool { return time.Since(l.start) > goBudget }
+// budgetSpent: past goBudget, or the analysis was cancelled (its deadline
+// passed, or the request went away).
+func (l *goLoader) budgetSpent() bool {
+	if l.idx != nil && l.idx.r != nil && l.idx.r.ctx != nil && l.idx.r.ctx.Err() != nil {
+		return true
+	}
+	return time.Since(l.start) > goBudget
+}
 
 // importMap lists each package dir's in-module imports (non-test files),
 // from the import scan the architecture analysis caches by blob id.

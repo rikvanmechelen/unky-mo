@@ -215,21 +215,61 @@ func text(c *gitfiles.Content, err error) *string {
 // tracked files; inWorktree whether it does in the working tree's tracked
 // and untracked files. They tell a name that's new to the repo from one
 // that only moved into a changed file.
-func (r *repo) inBase(literal string) bool {
+// foundInBase reports which literals occur anywhere in the base commit.
+func (r *repo) foundInBase(literals []string) map[string]bool {
 	if r.rev == "" {
-		return false
+		return map[string]bool{}
 	}
-	_, _, err := r.cmd.Output(r.ctx, r.root, "git", "grep", "-q", "-F", "-e", literal, r.rev, "--")
-	return err == nil
+	return r.grepFound(literals, r.rev)
 }
 
-func (r *repo) inWorktree(literal string) bool {
+// foundInWorktree reports which literals occur anywhere in the new version:
+// the head commit, or the working tree with untracked files.
+func (r *repo) foundInWorktree(literals []string) map[string]bool {
 	if r.head != "" {
-		_, _, err := r.cmd.Output(r.ctx, r.root, "git", "grep", "-q", "-F", "-e", literal, r.head, "--")
-		return err == nil
+		return r.grepFound(literals, r.head)
 	}
-	_, _, err := r.cmd.Output(r.ctx, r.root, "git", "grep", "-q", "-F", "--untracked", "-e", literal, "--")
-	return err == nil
+	return r.grepFound(literals, "")
+}
+
+// grepFound reports which of literals occur in rev's tree ("" for the
+// working tree, untracked files included). One git grep -o reads all of
+// them at once (one process per literal used to mean hundreds per
+// analysis); since -o prints one match where two literals overlap, the
+// ones not seen are grepped again without those found, until a round finds
+// nothing, which is exact.
+func (r *repo) grepFound(literals []string, rev string) map[string]bool {
+	found := map[string]bool{}
+	left := map[string]bool{}
+	for _, l := range literals {
+		if l != "" && !strings.ContainsAny(l, "\n\x00") {
+			left[l] = true
+		}
+	}
+	for len(left) > 0 && r.ctx.Err() == nil {
+		pats := strings.Join(sortedKeys(left), "\n") + "\n"
+		args := []string{"grep", "-o", "-h", "-F", "-f", "-"}
+		if rev == "" {
+			args = append(args, "--untracked", "--")
+		} else {
+			args = append(args, rev, "--")
+		}
+		out, _, err := r.cmd.OutputStdin(r.ctx, r.root, []byte(pats), "git", args...)
+		if err != nil && len(out) == 0 {
+			return found // exit 1: none of them; anything else: unknown, treat as not found
+		}
+		progress := false
+		for _, m := range strings.Split(string(out), "\n") {
+			if left[m] {
+				found[m], progress = true, true
+				delete(left, m)
+			}
+		}
+		if !progress {
+			break
+		}
+	}
+	return found
 }
 
 // Analyze reads the changed files of o (an overview from

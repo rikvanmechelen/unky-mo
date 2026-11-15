@@ -671,3 +671,46 @@ paths = ["a", "e"]
 		t.Errorf("no rules: %v %v", a.UnitLayers, a.Rules.Order)
 	}
 }
+
+// A cancelled analysis stops scanning files (the scans are most of its
+// work) and caches nothing, since nothing it skipped was read.
+func TestSymbolsManyStopsWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	src := "x"
+	x := &index{r: &repo{ctx: ctx}, blobs: map[string]string{"a.py": "0123abcd-cancel-test"}, texts: map[string]*string{"a.py": &src}}
+	calls := 0
+	out := x.symbolsMany([]string{"a.py"}, func(string) string { return "cancel-test" }, func(p, src string) any {
+		calls++
+		return src
+	})
+	if calls != 0 || out[0] != nil {
+		t.Errorf("scanned %d files, got %v", calls, out)
+	}
+	if _, ok := symCache.get("cancel-test\x000123abcd-cancel-test"); ok {
+		t.Errorf("a skipped scan was cached")
+	}
+}
+
+// grepFound finds every literal one batched git grep -o can see, including
+// ones another literal's match hides (-o prints one match where two
+// overlap), in a commit and in the working tree with untracked files.
+func TestGrepFound(t *testing.T) {
+	dir := gitRepo(t)
+	write(t, dir, "a.txt", "abcd FOO_BAR\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "a")
+	write(t, dir, "new.txt", "UNTRACKED_NAME\n")
+	r := &repo{ctx: context.Background(), cmd: moexec.DefaultCommander, root: dir, rev: "HEAD"}
+	lits := []string{"abc", "bcd", "FOO", "FOO_BAR", "missing", "UNTRACKED_NAME", ""}
+	got := r.foundInBase(lits)
+	want := map[string]bool{"abc": true, "bcd": true, "FOO": true, "FOO_BAR": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("base: %v, want %v", got, want)
+	}
+	got = r.foundInWorktree(lits)
+	want["UNTRACKED_NAME"] = true
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("worktree: %v, want %v", got, want)
+	}
+}
