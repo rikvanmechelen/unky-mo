@@ -283,7 +283,7 @@ type Deps struct {
 	// BashDiffs shows what each Bash call changed; nil when snapshots are off.
 	BashDiffs BashChanges
 	Restarter Restarter
-	// Attachments holds images uploaded from the composer until the prompt
+	// Attachments holds files uploaded from the composer until the prompt
 	// that references them is sent.
 	Attachments *AttachmentStore
 	// Agents is the configured [[agent]] list. Launches only ever run a

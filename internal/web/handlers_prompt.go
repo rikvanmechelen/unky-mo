@@ -14,7 +14,7 @@ import (
 // argument.
 const maxPromptBytes = 64 << 10
 
-// maxPromptAttachments bounds the images sent with one prompt.
+// maxPromptAttachments bounds the files sent with one prompt.
 const maxPromptAttachments = 10
 
 // handlePrompt injects a prompt into a live session's tmux pane, gated on
@@ -27,8 +27,9 @@ const maxPromptAttachments = 10
 // actual response is not in this response body — it streams back over the
 // session's already-open /api/transcript/{windowID} SSE connection.
 // Multi-line text goes in as one bracketed paste (SendPastedText).
-// Attachments are ids from /attachments (never paths); their files are
-// pasted ahead of the text and become "[Image #N]" (SendPrompt).
+// Attachments are ids from /attachments (never paths). Images are pasted
+// ahead of the text and become "[Image #N]" (SendPrompt); other files are
+// named after the text as paths for Claude to read (withFileLines).
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 
@@ -54,7 +55,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Attachments) > maxPromptAttachments {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("at most %d images per prompt", maxPromptAttachments))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("at most %d attachments per prompt", maxPromptAttachments))
 		return
 	}
 
@@ -76,15 +77,20 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	paths := make([]string, 0, len(body.Attachments))
+	var paths, files []string
 	for _, id := range body.Attachments {
 		p, ok := s.deps.Attachments.Path(windowID, id)
 		if !ok {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("unknown attachment %q (expired? attach it again)", id))
 			return
 		}
-		paths = append(paths, p)
+		if isImageAttachmentID(id) {
+			paths = append(paths, p)
+		} else {
+			files = append(files, p)
+		}
 	}
+	text = withFileLines(text, files)
 
 	target := s.tmuxSession + ":" + windowID + ".0"
 	var err error
@@ -109,6 +115,24 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{})
+}
+
+// withFileLines names attached files after the prompt's text, as paths on
+// this machine that Claude can read.
+func withFileLines(text string, files []string) string {
+	var lines string
+	switch len(files) {
+	case 0:
+		return text
+	case 1:
+		lines = "Attached file: " + files[0]
+	default:
+		lines = "Attached files:\n- " + strings.Join(files, "\n- ")
+	}
+	if text == "" {
+		return lines
+	}
+	return text + "\n\n" + lines
 }
 
 // sendNowKeys is Claude Code's "send now" chord: it moves a running tool to

@@ -8,10 +8,11 @@ import (
 	"strings"
 )
 
-// handleUploadAttachment stores one image (the raw request body) for a live
-// session's composer and returns its id, which a later /prompt names in
-// "attachments". It isn't gated on the session's status: an image can be
-// attached while Claude is busy and sent once it's idle.
+// handleUploadAttachment stores one upload (the raw request body, its name
+// in ?name=) for a live session's composer and returns its id, kind and
+// stored name; a later /prompt names the id in "attachments". It isn't
+// gated on the session's status: a file can be attached while Claude is
+// busy and sent once it's idle.
 func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 	if s.deps.Attachments == nil {
@@ -22,17 +23,17 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
 		return
 	}
-	id, err := s.deps.Attachments.Save(windowID, http.MaxBytesReader(w, r.Body, maxAttachmentBytes+1))
+	a, err := s.deps.Attachments.Save(windowID, r.URL.Query().Get("name"), http.MaxBytesReader(w, r.Body, maxFileBytes+1))
 	var tooBig *http.MaxBytesError
 	switch {
 	case errors.Is(err, ErrAttachmentTooLarge), errors.As(err, &tooBig):
 		writeError(w, http.StatusRequestEntityTooLarge, ErrAttachmentTooLarge)
-	case errors.Is(err, ErrUnsupportedAttachment):
-		writeError(w, http.StatusUnsupportedMediaType, err)
+	case errors.Is(err, ErrEmptyAttachment):
+		writeError(w, http.StatusBadRequest, err)
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to store image: %w", err))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to store the file: %w", err))
 	default:
-		writeJSON(w, map[string]string{"id": id})
+		writeJSON(w, a)
 	}
 }
 
@@ -45,10 +46,13 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 
 // handleGetAttachment serves a stored image, for the thumbnails of a draft
 // restored after a page reload. Like DELETE it isn't gated on a live
-// session; the store only hands out ids saved under that window.
+// session; the store only hands out ids saved under that window. Other
+// files are never served: that would hand any uploaded content back to a
+// browser under this origin.
 func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.deps.Attachments.Path(r.PathValue("windowID"), r.PathValue("id"))
-	if !ok {
+	id := r.PathValue("id")
+	p, ok := s.deps.Attachments.Path(r.PathValue("windowID"), id)
+	if !ok || !isImageAttachmentID(id) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such attachment"))
 		return
 	}

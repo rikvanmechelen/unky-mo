@@ -189,8 +189,8 @@ func TestHandlePromptStripsControlCharacters(t *testing.T) {
 // hands those paths, in order, to SendPrompt.
 func TestHandlePromptWithAttachmentsSendsResolvedPaths(t *testing.T) {
 	store := newAttachmentStore(t.TempDir(), time.Now)
-	a, _ := store.Save("@5", strings.NewReader(pngHeader))
-	b, _ := store.Save("@5", strings.NewReader("GIF89a"))
+	a := saveID(t, store, "@5", strings.NewReader(pngHeader))
+	b := saveID(t, store, "@5", strings.NewReader("GIF89a"))
 	pa, _ := store.Path("@5", a)
 	pb, _ := store.Path("@5", b)
 
@@ -207,7 +207,7 @@ func TestHandlePromptWithAttachmentsSendsResolvedPaths(t *testing.T) {
 
 func TestHandlePromptImageOnly(t *testing.T) {
 	store := newAttachmentStore(t.TempDir(), time.Now)
-	a, _ := store.Save("@5", strings.NewReader(pngHeader))
+	a := saveID(t, store, "@5", strings.NewReader(pngHeader))
 	pa, _ := store.Path("@5", a)
 
 	mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
@@ -220,11 +220,44 @@ func TestHandlePromptImageOnly(t *testing.T) {
 	}
 }
 
+// A file is named after the text as a path; images still go to SendPrompt.
+func TestHandlePromptWithFiles(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	img := saveID(t, store, "@5", strings.NewReader(pngHeader))
+	f1 := saveFile(t, store, "@5", "report.pdf", "%PDF-1.7")
+	f2 := saveFile(t, store, "@5", "app.log", "boom")
+	pimg, _ := store.Path("@5", img)
+	p1, _ := store.Path("@5", f1)
+	p2, _ := store.Path("@5", f2)
+
+	for _, c := range []struct {
+		body   string
+		expect func(m *mock_web.MockPromptSender)
+	}{
+		{`{"text":"","attachments":["` + f1 + `"]}`, func(m *mock_web.MockPromptSender) {
+			m.EXPECT().SendLiteralText("test:@5.0", "Attached file: "+p1).Return(nil)
+		}},
+		{`{"text":"why?","attachments":["` + f1 + `"]}`, func(m *mock_web.MockPromptSender) {
+			m.EXPECT().SendPastedText("test:@5.0", "why?\n\nAttached file: "+p1).Return(nil)
+		}},
+		{`{"text":"look","attachments":["` + f1 + `","` + img + `","` + f2 + `"]}`, func(m *mock_web.MockPromptSender) {
+			m.EXPECT().SendPrompt("test:@5.0", "look\n\nAttached files:\n- "+p1+"\n- "+p2, []string{pimg}).Return(nil)
+		}},
+	} {
+		mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
+		c.expect(mockPrompts)
+		srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+		if rec := postPrompt(t, srv, "@5", c.body); rec.Code != http.StatusOK {
+			t.Errorf("%s: want 200, got %d: %s", c.body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // An id that isn't in this window's store (another window's, expired, or a
 // path) is refused before anything reaches the pane.
 func TestHandlePrompt400OnUnknownAttachment(t *testing.T) {
 	store := newAttachmentStore(t.TempDir(), time.Now)
-	other, _ := store.Save("@6", strings.NewReader(pngHeader))
+	other := saveID(t, store, "@6", strings.NewReader(pngHeader))
 
 	for _, id := range []string{other, "../../etc/passwd", "/etc/passwd"} {
 		// No PromptSender expectations: any send fails the test.
@@ -239,7 +272,7 @@ func TestHandlePrompt400OnUnknownAttachment(t *testing.T) {
 
 func TestHandlePrompt409WithAttachmentsWhenBusy(t *testing.T) {
 	store := newAttachmentStore(t.TempDir(), time.Now)
-	a, _ := store.Save("@5", strings.NewReader(pngHeader))
+	a := saveID(t, store, "@5", strings.NewReader(pngHeader))
 
 	srv := NewServer(Deps{State: liveState(t, "@5", "active"), Attachments: store}, 0, "test")
 	rec := postPrompt(t, srv, "@5", `{"text":"hi","attachments":["`+a+`"]}`)

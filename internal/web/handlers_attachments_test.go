@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -40,9 +41,12 @@ func TestHandleUploadAttachmentReturnsID(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var resp struct{ ID string }
+	var resp Attachment
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
+	}
+	if resp.Kind != AttachmentImage {
+		t.Errorf("kind %q, want image", resp.Kind)
 	}
 	if _, ok := store.Path("@5", resp.ID); !ok {
 		t.Errorf("id %q not in the store", resp.ID)
@@ -56,18 +60,44 @@ func TestHandleUploadAttachmentErrors(t *testing.T) {
 	if rec := postAttachment(t, srv, "@9", strings.NewReader(pngHeader)); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown window: want 404, got %d", rec.Code)
 	}
-	if rec := postAttachment(t, srv, "@5", strings.NewReader("<svg></svg>")); rec.Code != http.StatusUnsupportedMediaType {
-		t.Errorf("not an image: want 415, got %d", rec.Code)
+	if rec := postAttachment(t, srv, "@5", strings.NewReader("")); rec.Code != http.StatusBadRequest {
+		t.Errorf("empty: want 400, got %d", rec.Code)
 	}
-	big := bytes.NewReader(append([]byte(pngHeader), make([]byte, maxAttachmentBytes)...))
+	big := bytes.NewReader(append([]byte(pngHeader), make([]byte, maxImageBytes)...))
 	if rec := postAttachment(t, srv, "@5", big); rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("oversized: want 413, got %d", rec.Code)
+		t.Errorf("oversized image: want 413, got %d", rec.Code)
+	}
+	huge := bytes.NewReader(make([]byte, maxFileBytes+1))
+	if rec := postAttachment(t, srv, "@5", huge); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized file: want 413, got %d", rec.Code)
+	}
+}
+
+// Any other content is a file, stored under the name from ?name=.
+func TestHandleUploadAttachmentFile(t *testing.T) {
+	store := newAttachmentStore(t.TempDir(), time.Now)
+	srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Attachments: store}, 0, "test")
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions/@5/attachments?name=my%20report.pdf", strings.NewReader("%PDF-1.7")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var a Attachment
+	if err := json.NewDecoder(rec.Body).Decode(&a); err != nil {
+		t.Fatal(err)
+	}
+	if a.Kind != AttachmentFile || a.Name != "my_report.pdf" {
+		t.Errorf("got %+v, want a file named my_report.pdf", a)
+	}
+	if p, ok := store.Path("@5", a.ID); !ok || filepath.Base(p) != "my_report.pdf" {
+		t.Errorf("Path(%q) = %q, %v", a.ID, p, ok)
 	}
 }
 
 func TestHandleDeleteAttachment(t *testing.T) {
 	store := newAttachmentStore(t.TempDir(), time.Now)
-	id, _ := store.Save("@5", strings.NewReader(pngHeader))
+	id := saveID(t, store, "@5", strings.NewReader(pngHeader))
 	srv := NewServer(Deps{Attachments: store}, 0, "test")
 
 	rec := httptest.NewRecorder()
@@ -82,10 +112,8 @@ func TestHandleDeleteAttachment(t *testing.T) {
 
 func TestHandleGetAttachment(t *testing.T) {
 	store := newAttachmentStore(t.TempDir(), time.Now)
-	id, err := store.Save("@5", strings.NewReader(pngHeader))
-	if err != nil {
-		t.Fatal(err)
-	}
+	id := saveID(t, store, "@5", strings.NewReader(pngHeader))
+	file := saveFile(t, store, "@5", "page.html", "<html><script>alert(1)</script></html>")
 	srv := NewServer(Deps{Attachments: store}, 0, "test")
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -109,6 +137,7 @@ func TestHandleGetAttachment(t *testing.T) {
 		"/api/sessions/@5/attachments/" + strings.Repeat("0", 32) + ".png", // unknown
 		"/api/sessions/@5/attachments/..%2F..%2Fetc%2Fpasswd",
 		"/api/sessions/@5/attachments/notanid.png",
+		"/api/sessions/@5/attachments/" + file, // a file, never served back
 	} {
 		if rec := get(path); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: want 404, got %d", path, rec.Code)
