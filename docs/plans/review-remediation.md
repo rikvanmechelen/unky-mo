@@ -1,6 +1,15 @@
 # Review remediation: security fixes and the big-file refactors
 
-**Status:** plan only, 2026-11-15. Nothing below is built. The findings it works through come from the full architecture, code and security review of `0ba174d` (report kept outside the repo; every finding is restated here with its file and line so this document stands alone).
+**Status:** built on branch `review-remediation` (81 commits off `0ba174d`), 2026-11-15; not merged, not installed. Every phase is done except the items below. `make install && mo restart` is needed before any of it runs. The findings it works through come from the full architecture, code and security review of `0ba174d` (report kept outside the repo; every finding is restated here with its file and line so this document stands alone).
+
+**Deviations from the plan as written:**
+- 0.2: a Node syntax test over every static script (`jstests/syntax.test.js`) instead of ESLint, which would have needed npm in CI.
+- 1.1: the device cookie stays `SameSite=Lax`, not `Strict`. Strict drops the cookie on any navigation from another site (a link in a chat or an email), which would land on the login form. The cross-site check (`csrf.go`) covers what Strict would have.
+- 2.x: `internal/tui` coverage reached 55%, not 60%. `app.go` is 575 lines (from 5,199). The sidebar's `Update` was split by section but not into one handler per message. Popups still run through `exec`, now with shell-quoted arguments and escaped titles.
+- 2.x: the TUI still records `branch` only for strays; `mo web` fills it in for live rows as before.
+- 4.1 (a shared comment/string blanker), 4.3 (an `rbScan` struct) and 4.6 (a shared class resolver) are not built. The scanners were made linear in 1.4 instead, which was the finding's real cost. 4.5 found no regexps compiled inside functions: the review's claim was wrong.
+- 6.3: `markFailed`/`lastFail` in `hub-model.js` stay. Removing them changes a launcher core file, which forces a core release on every installed app for no change in behaviour. The two V1 hook scripts in `scripts/` were deleted as well.
+- 7.1: the detailed feature text moved to `docs/reference.md` (corrected where it was stale) rather than into new per-feature plan docs. CLAUDE.md is ~1,700 words.
 
 ## Goal
 
