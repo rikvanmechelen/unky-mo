@@ -12,11 +12,11 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
+	gh "github.com/rvanmech/unky-mo/internal/github"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
 	"github.com/rvanmech/unky-mo/internal/project"
 	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/tickets"
-	gh "github.com/rvanmech/unky-mo/internal/github"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"github.com/rvanmech/unky-mo/internal/usage"
 	"go.uber.org/mock/gomock"
@@ -224,18 +224,17 @@ func TestGoldenScreens(t *testing.T) {
 		}},
 		{"detail_worktree_input", func(m Model) Model {
 			m = withDetail(m)
-			m.worktreeInput = newInput("feat/new")
+			m.worktree = &worktreePrompt{input: *newInput("feat/new")}
 			return m
 		}},
 		{"detail_lift_input", func(m Model) Model {
 			m = withDetail(m)
-			m.liftSessionInput = newInput("lifted")
+			m.lift = &liftPrompt{input: *newInput("lifted")}
 			return m
 		}},
 		{"detail_lift_dirty", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingLiftDirtyActive = true
-			m.pendingLiftBranch = "lifted"
+			m.lift = &liftPrompt{dirty: true, branch: "lifted"}
 			return m
 		}},
 		{"detail_wt_exists", func(m Model) Model {

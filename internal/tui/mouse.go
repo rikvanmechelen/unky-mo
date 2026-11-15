@@ -255,9 +255,8 @@ func (m Model) isModalActive() bool {
 		m.pendingNewMenuActive ||
 		m.pendingImportSessionID != "" ||
 		m.pendingWTExistsActive ||
-		m.pendingLiftDirtyActive ||
-		m.worktreeInput != nil ||
-		m.liftSessionInput != nil ||
+		m.lift != nil ||
+		m.worktree != nil ||
 		(m.screen == ScreenTicket && (m.pickerActive || m.pickerRememberActive))
 }
 

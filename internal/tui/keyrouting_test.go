@@ -3,8 +3,8 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/rvanmech/unky-mo/internal/project"
 )
 
@@ -27,25 +27,32 @@ func routedPrompts() []routedPrompt {
 			func(m *Model) { m.newProject = &newProjectPrompt{input: *input(), parentDir: "/ws"} },
 			func(m Model) bool { return m.newProject != nil }},
 		{"worktreeInput", "worktree",
-			func(m *Model) { m.worktreeInput = input() },
-			func(m Model) bool { return m.worktreeInput != nil }},
+			func(m *Model) { m.worktree = &worktreePrompt{input: *input()} },
+			func(m Model) bool { return m.worktree != nil }},
 		{"liftSessionInput", "lift",
-			func(m *Model) { m.liftSessionInput = input() },
-			func(m Model) bool { return m.liftSessionInput != nil }},
+			func(m *Model) { m.lift = &liftPrompt{input: *input()} },
+			func(m Model) bool { return m.lift != nil && !m.lift.dirty }},
 		{"pendingLiftDirty", "lift",
-			func(m *Model) { m.pendingLiftDirtyActive = true; m.pendingLiftBranch = "x" },
-			func(m Model) bool { return m.pendingLiftDirtyActive }},
+			func(m *Model) { m.lift = &liftPrompt{dirty: true, branch: "x"} },
+			func(m Model) bool { return m.lift != nil && m.lift.dirty }},
 		{"pendingNewMenu", "newSession",
 			func(m *Model) { m.pendingNewMenuActive = true; m.pendingNewPrimaryWin = "alpha" },
 			func(m Model) bool { return m.pendingNewMenuActive }},
 		{"pendingCleanup", "cleanup",
-			func(m *Model) { m.pendingCleanupActive = true; m.pendingCleanupStage = "action"; m.pendingCleanupBranch = "b" },
+			func(m *Model) {
+				m.pendingCleanupActive = true
+				m.pendingCleanupStage = "action"
+				m.pendingCleanupBranch = "b"
+			},
 			func(m Model) bool { return m.pendingCleanupActive }},
 		{"pendingWTExists", "wtExists",
 			func(m *Model) { m.pendingWTExistsActive = true; m.pendingWTExistsBranch = "b" },
 			func(m Model) bool { return m.pendingWTExistsActive }},
 		{"pendingAgentPicker", "agentPicker",
-			func(m *Model) { m.pendingAgentPickerActive = true; m.pendingAgentPickerBranch = &project.Branch{Name: "b"} },
+			func(m *Model) {
+				m.pendingAgentPickerActive = true
+				m.pendingAgentPickerBranch = &project.Branch{Name: "b"}
+			},
 			func(m Model) bool { return m.pendingAgentPickerActive }},
 		{"pendingSuspendQuit", "suspend",
 			func(m *Model) { m.pendingSuspendQuitActive = true },
@@ -123,7 +130,7 @@ func TestPromptsBeatGlobalKeys(t *testing.T) {
 // the project screen; elsewhere the key goes on down the chain.
 func TestScreenGatedPrompts(t *testing.T) {
 	m := goldenModel(t)
-	m.worktreeInput = func() *textinput.Model { ti := textinput.New(); return &ti }()
+	m.worktree = &worktreePrompt{input: textinput.New()}
 	m = pressKey(m, tea.KeyPressMsg(tea.Key{Code: '?', Text: "?"}))
 	if m.screen != ScreenHelp {
 		t.Errorf("a worktree input left open off the project screen must not take keys")

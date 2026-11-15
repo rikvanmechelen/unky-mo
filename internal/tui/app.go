@@ -240,21 +240,14 @@ type Model struct {
 	// newProject is non-nil while the user enters a folder name for a new
 	// project (N on the dashboard); key events route to it.
 	newProject *newProjectPrompt
-	// worktreeInput is non-nil when the user is entering a branch name for a
-	// new worktree. While set, key events route to the text input.
-	worktreeInput *textinput.Model
-	// Lift-session flow: `w` on a br-session row opens a text input for the
-	// new branch name, then (if the source is dirty) a multi-option menu to
-	// decide whether to carry the dirty state into the new worktree. The
-	// source session info is captured at prompt entry so cursor movement
-	// can't invalidate the target.
-	liftSessionInput        *textinput.Model
-	liftSessionSessionID    string
-	liftSessionSourcePath   string
-	liftSessionSourcePID    int    // 0 when the source session is historical
-	liftSessionSourceWindow string // tmux window to kill after SIGTERM; "" skips
-	pendingLiftDirtyActive  bool
-	pendingLiftBranch       string // branch name from the input prompt
+	// worktree is non-nil while the user enters a branch name for a new
+	// worktree (W on the project screen).
+	worktree *worktreePrompt
+	// lift is non-nil during the lift-to-new-worktree flow (w on a session
+	// row): first the branch name, then, if the source is dirty, what to do
+	// with its changes. The source session is captured when it opens, so
+	// cursor moves can't change the target.
+	lift *liftPrompt
 	// Pull requests panel (right side of project detail)
 	detailPRs        []gh.PullRequest
 	detailPRCursor   int
@@ -522,60 +515,62 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// New-worktree input captures all input while active.
-		if m.worktreeInput != nil && m.screen == ScreenProject {
+		if m.worktree != nil && m.screen == ScreenProject {
 			switch msg.String() {
 			case "enter":
-				branch := strings.TrimSpace(m.worktreeInput.Value())
-				m.worktreeInput = nil
+				branch := strings.TrimSpace(m.worktree.input.Value())
+				m.worktree = nil
 				if branch == "" {
 					return m, nil
 				}
 				return m, m.createWorktreeAndLaunch(branch)
 			case "esc", "escape":
-				m.worktreeInput = nil
+				m.worktree = nil
 				return m, nil
 			}
-			updated, cmd := m.worktreeInput.Update(msg)
-			m.worktreeInput = &updated
+			p := *m.worktree
+			var cmd tea.Cmd
+			p.input, cmd = p.input.Update(msg)
+			m.worktree = &p
 			return m, cmd
 		}
 
 		// Lift-session branch-name input captures all input while active.
-		if m.liftSessionInput != nil && m.screen == ScreenProject {
+		if m.lift != nil && !m.lift.dirty && m.screen == ScreenProject {
 			switch msg.String() {
 			case "enter":
-				branch := strings.TrimSpace(m.liftSessionInput.Value())
-				m.liftSessionInput = nil
+				branch := strings.TrimSpace(m.lift.input.Value())
 				if branch == "" {
-					m.clearLiftSessionState()
+					m.lift = nil
 					return m, nil
 				}
 				return m.decideLiftDirty(branch)
 			case "esc", "escape":
-				m.liftSessionInput = nil
-				m.clearLiftSessionState()
+				m.lift = nil
 				return m, nil
 			}
-			updated, cmd := m.liftSessionInput.Update(msg)
-			m.liftSessionInput = &updated
+			p := *m.lift
+			var cmd tea.Cmd
+			p.input, cmd = p.input.Update(msg)
+			m.lift = &p
 			return m, cmd
 		}
 
 		// Lift-session dirty-state menu: [s]tash+pop / [l]eave / [n]cancel.
 		// Non-destructive (creating a new worktree doesn't delete anything), so
 		// enter binds to the recommended primary `s` (carry the changes).
-		if m.pendingLiftDirtyActive {
+		if m.lift != nil && m.lift.dirty {
 			switch msg.String() {
 			case "s", "S", "enter":
 				cmd := m.runLiftSession(true)
-				m.clearLiftSessionState()
+				m.lift = nil
 				return m, cmd
 			case "l", "L":
 				cmd := m.runLiftSession(false)
-				m.clearLiftSessionState()
+				m.lift = nil
 				return m, cmd
 			case "n", "N", "esc", "escape":
-				m.clearLiftSessionState()
+				m.lift = nil
 				return m, nil
 			}
 			return m, nil
@@ -1119,7 +1114,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ti.Focus()
 				ti.CharLimit = 128
 				ti.SetWidth(40)
-				m.worktreeInput = &ti
+				m.worktree = &worktreePrompt{input: ti}
 				return m, textinput.Blink
 			}
 
@@ -3451,20 +3446,20 @@ func (m Model) projectDetailView() string {
 	// Footer
 	var footer string
 	switch {
-	case m.worktreeInput != nil:
+	case m.worktree != nil:
 		question := fmt.Sprintf("Create new worktree for %s — branch name:", p.Name)
-		footer = m.renderInputPrompt(question, m.worktreeInput.View(), []footerBinding{
+		footer = m.renderInputPrompt(question, m.worktree.input.View(), []footerBinding{
 			{"enter", "create"},
 			{"esc", "cancel"},
 		})
-	case m.liftSessionInput != nil:
+	case m.lift != nil && !m.lift.dirty:
 		question := fmt.Sprintf("Lift session into new worktree — branch name:")
-		footer = m.renderInputPrompt(question, m.liftSessionInput.View(), []footerBinding{
+		footer = m.renderInputPrompt(question, m.lift.input.View(), []footerBinding{
 			{"enter", "continue"},
 			{"esc", "cancel"},
 		})
-	case m.pendingLiftDirtyActive:
-		q := fmt.Sprintf("Source has uncommitted changes — carry into %s?", m.pendingLiftBranch)
+	case m.lift != nil && m.lift.dirty:
+		q := fmt.Sprintf("Source has uncommitted changes — carry into %s?", m.lift.branch)
 		footer = m.renderPrompt(q, withCancel([]footerBinding{
 			{"s", "stash + pop"},
 			{"l", "leave in source"},
@@ -4766,64 +4761,51 @@ func (m Model) startLiftSessionPrompt(row *detailRow) (tea.Model, tea.Cmd) {
 		}
 		window = row.tmuxWindow
 	}
-	m.liftSessionSessionID = row.session.SessionID
-	m.liftSessionSourcePath = row.path
-	m.liftSessionSourcePID = pid
-	m.liftSessionSourceWindow = window
-
 	ti := textinput.New()
 	ti.Placeholder = "new branch name"
 	ti.Focus()
 	ti.CharLimit = 128
 	ti.SetWidth(40)
-	m.liftSessionInput = &ti
+	m.lift = &liftPrompt{
+		input:        ti,
+		sessionID:    row.session.SessionID,
+		sourcePath:   row.path,
+		sourcePID:    pid,
+		sourceWindow: window,
+	}
 	return m, textinput.Blink
 }
 
 // decideLiftDirty runs after the user submits a branch name. If the source
 // is dirty, we open the [s]/[l]/[n] menu; otherwise we run the lift directly.
 func (m Model) decideLiftDirty(newBranch string) (tea.Model, tea.Cmd) {
-	m.pendingLiftBranch = newBranch
-	dirty, err := project.IsDirty(m.liftSessionSourcePath)
+	p := *m.lift
+	p.branch = newBranch
+	m.lift = &p
+	dirty, err := project.IsDirty(p.sourcePath)
 	if err != nil {
 		// Surface the error and bail — don't press on with an uncertain state.
 		cmd := func() tea.Msg {
 			return statusMsgEvent(fmt.Sprintf("Lift failed: %v", err))
 		}
-		m.clearLiftSessionState()
+		m.lift = nil
 		return m, cmd
 	}
 	if dirty {
-		m.pendingLiftDirtyActive = true
+		p.dirty = true
+		m.lift = &p
 		return m, nil
 	}
 	cmd := m.runLiftSession(false)
+	m.lift = nil
 	return m, cmd
 }
 
 // runLiftSession hands control to the ops adapter with the captured source
 // info and the user's stash-or-leave decision.
 func (m Model) runLiftSession(stashAndPop bool) tea.Cmd {
-	return m.liftSessionToWorktree(
-		m.liftSessionSessionID,
-		m.liftSessionSourcePath,
-		m.liftSessionSourceWindow,
-		m.liftSessionSourcePID,
-		m.pendingLiftBranch,
-		stashAndPop,
-	)
-}
-
-// clearLiftSessionState resets every field touched by the lift flow so a
-// fresh invocation starts from a clean slate.
-func (m *Model) clearLiftSessionState() {
-	m.liftSessionInput = nil
-	m.liftSessionSessionID = ""
-	m.liftSessionSourcePath = ""
-	m.liftSessionSourcePID = 0
-	m.liftSessionSourceWindow = ""
-	m.pendingLiftDirtyActive = false
-	m.pendingLiftBranch = ""
+	l := m.lift
+	return m.liftSessionToWorktree(l.sessionID, l.sourcePath, l.sourceWindow, l.sourcePID, l.branch, stashAndPop)
 }
 
 // resumeBranchSmart picks the most natural action for the given branch:

@@ -87,20 +87,20 @@ func TestStartLiftSessionPromptLive(t *testing.T) {
 
 	newModel, _ := m.startLiftSessionPrompt(row)
 	mm := newModel.(Model)
-	if mm.liftSessionInput == nil {
+	if mm.lift == nil {
 		t.Fatal("expected text input to be initialized")
 	}
-	if mm.liftSessionSessionID != "live-sess" {
-		t.Errorf("SessionID: got %q", mm.liftSessionSessionID)
+	if mm.lift.sessionID != "live-sess" {
+		t.Errorf("SessionID: got %q", mm.lift.sessionID)
 	}
-	if mm.liftSessionSourcePID != 4711 {
-		t.Errorf("SourcePID: got %d, want 4711", mm.liftSessionSourcePID)
+	if mm.lift.sourcePID != 4711 {
+		t.Errorf("SourcePID: got %d, want 4711", mm.lift.sourcePID)
 	}
-	if mm.liftSessionSourceWindow != "alpha" {
-		t.Errorf("SourceWindow: got %q", mm.liftSessionSourceWindow)
+	if mm.lift.sourceWindow != "alpha" {
+		t.Errorf("SourceWindow: got %q", mm.lift.sourceWindow)
 	}
-	if mm.liftSessionSourcePath != "/ws/alpha" {
-		t.Errorf("SourcePath: got %q", mm.liftSessionSourcePath)
+	if mm.lift.sourcePath != "/ws/alpha" {
+		t.Errorf("SourcePath: got %q", mm.lift.sourcePath)
 	}
 }
 
@@ -122,14 +122,14 @@ func TestStartLiftSessionPromptHistorical(t *testing.T) {
 
 	newModel, _ := m.startLiftSessionPrompt(row)
 	mm := newModel.(Model)
-	if mm.liftSessionInput == nil {
+	if mm.lift == nil {
 		t.Fatal("expected text input to be initialized")
 	}
-	if mm.liftSessionSourcePID != 0 {
-		t.Errorf("historical SourcePID must be 0, got %d", mm.liftSessionSourcePID)
+	if mm.lift.sourcePID != 0 {
+		t.Errorf("historical SourcePID must be 0, got %d", mm.lift.sourcePID)
 	}
-	if mm.liftSessionSourceWindow != "" {
-		t.Errorf("historical SourceWindow must be empty, got %q", mm.liftSessionSourceWindow)
+	if mm.lift.sourceWindow != "" {
+		t.Errorf("historical SourceWindow must be empty, got %q", mm.lift.sourceWindow)
 	}
 }
 
@@ -139,17 +139,14 @@ func TestDecideLiftDirtyOpensMenuWhenDirty(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "d.txt"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	m := Model{
-		liftSessionSourcePath: repo,
-		liftSessionSessionID:  "s",
-	}
+	m := Model{lift: &liftPrompt{sourcePath: repo, sessionID: "s"}}
 	newModel, cmd := m.decideLiftDirty("feat-new")
 	mm := newModel.(Model)
-	if !mm.pendingLiftDirtyActive {
-		t.Error("dirty source: dirty menu should be active")
+	if mm.lift == nil || !mm.lift.dirty {
+		t.Fatal("dirty source: dirty menu should be active")
 	}
-	if mm.pendingLiftBranch != "feat-new" {
-		t.Errorf("pendingLiftBranch: got %q", mm.pendingLiftBranch)
+	if mm.lift.branch != "feat-new" {
+		t.Errorf("branch: got %q", mm.lift.branch)
 	}
 	if cmd != nil {
 		t.Error("dirty path should not execute lift immediately — wait for user menu choice")
@@ -161,36 +158,16 @@ func TestDecideLiftDirtyOpensMenuWhenDirty(t *testing.T) {
 func TestDecideLiftDirtySkipsMenuWhenClean(t *testing.T) {
 	repo := initGitRepo(t)
 	m := Model{
-		detailProject:         &project.Project{Name: "alpha", Path: repo},
-		liftSessionSourcePath: repo,
-		liftSessionSessionID:  "s",
+		detailProject: &project.Project{Name: "alpha", Path: repo},
+		lift:          &liftPrompt{sourcePath: repo, sessionID: "s"},
 	}
 	newModel, cmd := m.decideLiftDirty("feat-clean")
 	mm := newModel.(Model)
-	if mm.pendingLiftDirtyActive {
-		t.Error("clean source: dirty menu must not activate")
+	if mm.lift != nil {
+		t.Error("clean source: the lift runs and the prompt closes")
 	}
 	if cmd == nil {
 		t.Error("clean source should produce a lift Cmd right away")
-	}
-}
-
-// clearLiftSessionState zeros every lift-flow field so a fresh invocation
-// starts from a known state.
-func TestClearLiftSessionState(t *testing.T) {
-	m := Model{
-		liftSessionSessionID:    "x",
-		liftSessionSourcePath:   "/y",
-		liftSessionSourcePID:    42,
-		liftSessionSourceWindow: "w",
-		pendingLiftDirtyActive:  true,
-		pendingLiftBranch:       "b",
-	}
-	m.clearLiftSessionState()
-	if m.liftSessionSessionID != "" || m.liftSessionSourcePath != "" ||
-		m.liftSessionSourcePID != 0 || m.liftSessionSourceWindow != "" ||
-		m.pendingLiftDirtyActive || m.pendingLiftBranch != "" {
-		t.Errorf("clearLiftSessionState left dirty state: %+v", m)
 	}
 }
 
@@ -339,34 +316,28 @@ func TestWKeyOnSessionRowOpensLiftPrompt(t *testing.T) {
 	}
 	got, _ := m.Update(tea.KeyPressMsg{Code: 'w'})
 	mm := got.(Model)
-	if mm.liftSessionInput == nil {
+	if mm.lift == nil {
 		t.Fatal("w on br-session row should open the lift input prompt")
 	}
-	if mm.liftSessionSessionID != "live-x" {
-		t.Errorf("SessionID not captured: %q", mm.liftSessionSessionID)
+	if mm.lift.sessionID != "live-x" {
+		t.Errorf("SessionID not captured: %q", mm.lift.sessionID)
 	}
-	if mm.liftSessionSourcePID != 4321 {
-		t.Errorf("SourcePID not captured: %d", mm.liftSessionSourcePID)
+	if mm.lift.sourcePID != 4321 {
+		t.Errorf("SourcePID not captured: %d", mm.lift.sourcePID)
 	}
 }
 
 // Dirty-menu key routing: `l` → run lift with stashAndPop=false and clear state.
 func TestDirtyMenuLeaveKeyClearsState(t *testing.T) {
 	m := Model{
-		pendingLiftDirtyActive: true,
-		pendingLiftBranch:      "feat",
-		liftSessionSessionID:   "s",
-		liftSessionSourcePath:  "/ws/alpha",
+		lift: &liftPrompt{dirty: true, branch: "feat", sessionID: "s", sourcePath: "/ws/alpha"},
 		// No detailProject → the cmd runs but the adapter returns a status event;
 		// we're validating state transitions, not ops behavior.
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 'l'})
 	mm := got.(Model)
-	if mm.pendingLiftDirtyActive {
+	if mm.lift != nil {
 		t.Error("dirty menu should clear after `l`")
-	}
-	if mm.pendingLiftBranch != "" {
-		t.Error("pendingLiftBranch should clear after `l`")
 	}
 	if cmd == nil {
 		t.Error("l should return a Cmd (the lift op adapter)")
@@ -377,14 +348,11 @@ func TestDirtyMenuLeaveKeyClearsState(t *testing.T) {
 // with stashAndPop=true.
 func TestDirtyMenuStashKeyClearsState(t *testing.T) {
 	m := Model{
-		pendingLiftDirtyActive: true,
-		pendingLiftBranch:      "feat",
-		liftSessionSessionID:   "s",
-		liftSessionSourcePath:  "/ws/alpha",
+		lift: &liftPrompt{dirty: true, branch: "feat", sessionID: "s", sourcePath: "/ws/alpha"},
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
 	mm := got.(Model)
-	if mm.pendingLiftDirtyActive {
+	if mm.lift != nil {
 		t.Error("dirty menu should clear after `s`")
 	}
 	if cmd == nil {
@@ -395,14 +363,11 @@ func TestDirtyMenuStashKeyClearsState(t *testing.T) {
 // Dirty-menu cancel: `n` / `esc` clears state and returns no Cmd.
 func TestDirtyMenuCancelClearsState(t *testing.T) {
 	m := Model{
-		pendingLiftDirtyActive: true,
-		pendingLiftBranch:      "feat",
-		liftSessionSessionID:   "s",
-		liftSessionSourcePath:  "/ws/alpha",
+		lift: &liftPrompt{dirty: true, branch: "feat", sessionID: "s", sourcePath: "/ws/alpha"},
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
 	mm := got.(Model)
-	if mm.pendingLiftDirtyActive {
+	if mm.lift != nil {
 		t.Error("dirty menu should clear after `n`")
 	}
 	if cmd != nil {
@@ -415,18 +380,13 @@ func TestLiftInputPromptEscCancels(t *testing.T) {
 	// Build a proper textinput so the input-active branch fires.
 	ti := newTestInput("some-branch")
 	m := Model{
-		screen:                ScreenProject,
-		liftSessionInput:      &ti,
-		liftSessionSessionID:  "s",
-		liftSessionSourcePath: "/ws/alpha",
+		screen: ScreenProject,
+		lift:   &liftPrompt{input: ti, sessionID: "s", sourcePath: "/ws/alpha"},
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	mm := got.(Model)
-	if mm.liftSessionInput != nil {
-		t.Error("esc should clear liftSessionInput")
-	}
-	if mm.liftSessionSessionID != "" {
-		t.Error("esc should clear session state")
+	if mm.lift != nil {
+		t.Error("esc should close the lift prompt and its state")
 	}
 	if cmd != nil {
 		t.Error("esc should not emit a Cmd")
