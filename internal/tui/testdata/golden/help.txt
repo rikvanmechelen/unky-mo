@@ -1,0 +1,30 @@
+[48;2;167;139;250m [m[1;38;2;243;244;246;48;2;167;139;250m Help [m[48;2;167;139;250m [m
+
+[1;38;2;243;244;246mNavigation[m
+  [1;38;2;243;244;246m↑/k[m          [38;2;156;163;175mMove up[m
+  [1;38;2;243;244;246m↓/j[m          [38;2;156;163;175mMove down[m
+  [1;38;2;243;244;246menter/→[m      [38;2;156;163;175mOpen project detail[m
+  [1;38;2;243;244;246mesc/←[m        [38;2;156;163;175mGo back[m
+  [1;38;2;243;244;246m/[m            [38;2;156;163;175mFilter projects[m
+
+[1;38;2;243;244;246mSessions[m
+  [1;38;2;243;244;246mn[m            [38;2;156;163;175mNew session (prompts if one is already running: switch/park+new/concurrent)[m
+  [1;38;2;243;244;246ma[m            [38;2;156;163;175mAttach to session (switch tmux window)[m
+  [1;38;2;243;244;246mr[m            [38;2;156;163;175mResume most recent session[m
+
+[1;38;2;243;244;246mBranches (project detail)[m
+  [1;38;2;243;244;246mA[m            [38;2;156;163;175mPick coding agent before launching (Claude, Gemini, etc.)[m
+  [1;38;2;243;244;246mw[m            [38;2;156;163;175mOpen branch under cursor as a worktree[m
+  [1;38;2;243;244;246mW[m            [38;2;156;163;175mPrompt for a new branch name + worktree[m
+  [1;38;2;243;244;246mm[m            [38;2;156;163;175mCheck out branch in main repo (refuse if dirty)[m
+  [1;38;2;243;244;246mM[m            [38;2;156;163;175mStash first, then check out in main[m
+  [1;38;2;243;244;246mx[m            [38;2;156;163;175mRemove worktree / delete branch (prompts; refuses on main)[m
+
+[1;38;2;243;244;246mOther[m
+  [1;38;2;243;244;246ms[m            [38;2;156;163;175mSuspend (leaves tmux session running; re-launch mo to resume)[m
+  [1;38;2;243;244;246m?[m            [38;2;156;163;175mToggle this help[m
+  [1;38;2;243;244;246mctrl+r[m       [38;2;156;163;175mRefresh (re-poll sessions, branches, state file)[m
+  [1;38;2;243;244;246mctrl+alt+r[m   [38;2;156;163;175mRestart (reload freshly-installed binary)[m
+  [1;38;2;243;244;246mq[m            [38;2;156;163;175mQuit[m
+
+[38;2;156;163;175mPress ? or esc to close[m
