@@ -1135,20 +1135,25 @@ func (l *swiftCalls) basesOf(ix *swiftIndex, t swiftType) []swiftType {
 
 // conforms reports whether t has p among its bases, at any depth.
 func (l *swiftCalls) conforms(ix *swiftIndex, t, p swiftType) bool {
+	return l.reached(ix, t)[p]
+}
+
+// reached is every type conforms finds from t: its bases, theirs, …, up
+// to 16 distinct ones.
+func (l *swiftCalls) reached(ix *swiftIndex, t swiftType) map[swiftType]bool {
+	out := map[swiftType]bool{}
 	seen := map[swiftType]bool{}
 	queue := l.basesOf(ix, t)
 	for len(queue) > 0 && len(seen) < 16 {
 		c := queue[0]
 		queue = queue[1:]
-		if c == p {
-			return true
-		}
+		out[c] = true
 		if !seen[c] {
 			seen[c] = true
 			queue = append(queue, l.basesOf(ix, c)...)
 		}
 	}
-	return false
+	return out
 }
 
 // construct is what Type( runs: its init (or an inherited one), else the
@@ -1403,16 +1408,25 @@ func (w *swiftCallLang) funcs(idx *index, files []string, full bool) (*callSet, 
 	}
 	less(protos)
 	less(types)
+	// The conforming types of each protocol, from one walk per type (in
+	// types' order): asking conforms for every protocol × type pair was
+	// quadratic in a file declaring many of both.
+	conforming := map[swiftType][]swiftType{}
+	for _, t := range types {
+		if d, ok := ix.decls[t]; ok && d.def.Sig == "protocol" {
+			continue
+		}
+		for p := range l.reached(ix, t) {
+			conforming[p] = append(conforming[p], t)
+		}
+	}
 	for _, p := range protos {
 		var reqs []string
 		for name := range ix.members[p] {
 			reqs = append(reqs, name)
 		}
 		sort.Strings(reqs)
-		for _, t := range types {
-			if d, ok := ix.decls[t]; (ok && d.def.Sig == "protocol") || !l.conforms(ix, t, p) {
-				continue
-			}
+		for _, t := range conforming[p] {
 			for _, name := range reqs {
 				req, ok := ix.member(p, name, swiftValue)
 				if !ok {
