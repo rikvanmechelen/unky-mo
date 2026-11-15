@@ -35,11 +35,11 @@ clean:
 	rm -f $(BINARY)
 
 fmt:
-	gofmt -w .
+	gofmt -w $$(git ls-files '*.go')
 
 # CI check: every Go file is gofmt'd.
 fmt-check:
-	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "not gofmt'd (run 'make fmt'):"; echo "$$out"; exit 1; fi
+	@out=$$(gofmt -l $$(git ls-files '*.go')); if [ -n "$$out" ]; then echo "not gofmt'd (run 'make fmt'):"; echo "$$out"; exit 1; fi
 
 test:
 	go test ./...

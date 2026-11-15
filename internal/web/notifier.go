@@ -143,7 +143,9 @@ func observe(row state.ProjectState) observation {
 	return o
 }
 
-func needsInput(status string) bool { return status == state.StatusQuestion || status == state.StatusPermission }
+func needsInput(status string) bool {
+	return status == state.StatusQuestion || status == state.StatusPermission
+}
 
 // observe takes one read of the state file's rows.
 func (t *notifyTracker) observe(rows []state.ProjectState, now time.Time) []notifyEvent {
