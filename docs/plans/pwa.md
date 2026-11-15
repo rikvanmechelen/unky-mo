@@ -1,6 +1,6 @@
 # mo web as an installed app that finds its machine
 
-**Status:** steps 1–4 built on main, 2026-11-14.
+**Status:** steps 1–5 built on main, 2026-11-14.
 
 ## Goal
 
@@ -230,6 +230,19 @@ The device probes (1–7) need phones; they're listed under step 7 as still to d
 - Tests:
   - Go: embedded static vs top-level navigation vs API; tickets (issued only to a device, accepted only on the listed GETs, expiry, tampering, a revoked device); CORS and its preflight without a login; a cross-origin pair (token, no cookie, origin recorded); `frame-ancestors`.
   - Node: `createEmbed` (not embedded → untouched; the handshake only from the parent; the header only same-origin; 401 and network failure reported to the parent's origin; `authURL`; sessionStorage restore) and the shell's message filter and token storage.
+
+## Step 5 in detail: core updates from any machine, and the base warning
+
+The worker's half (install, rollback, recovery page) was built in step 2. This step is the launcher's half.
+
+- **Where a core comes from.** Besides its own address (step 2), the launcher fetches `/api/hub/core` from the machine it just embedded, after that machine's `hello` named the expected id and its `whoami` accepted this shell's token: a machine this device already trusts. A newer `release` is posted to `/__mo/install`; it takes effect on the next start, and a note offers "Reload". `coreUpdate({core, running, trusted})` decides: install only when trusted, valid and newer.
+- **The base warning.** The installed base is the worker (`sw` from `/__mo/state`) and the manifest. A web page can't read the installed manifest, so the launcher records `mo.hub.base = {manifest}` whenever its own address answers (that's when the browser can refresh the manifest too). When a trusted machine's core reports a higher `sw` or `manifest`:
+  - If the own address answers, the launcher calls `registration.update()` and shows nothing.
+  - Otherwise it shows a dismissible strip: "This app's base is older than <machine>'s. Open it once from <install address>, or reinstall from <machine address>." Dismissing hides it until a still newer version shows up (`mo.hub.baseDismissed`). `baseWarning(...)` decides.
+  - The strip shows over the frame too, at the bottom.
+- **Protocol.** `HUB_PROTOCOL` in `hub-model.js` must equal the server's `HubProtocol` (a Go test reads it). A machine whose `hello.protocol` is more than one away from the launcher's isn't embedded: "Update mo on <machine>" (it's older) or "This launcher is too old for <machine>" (it's newer; its core update usually fixes that first). Nothing else depends on the protocol yet. The server checks nothing until there's a protocol 2.
+- Tests: `coreUpdate`, `baseWarning`, `protocolCheck` in Node; the Go test that the two protocol constants agree.
+- **Built as planned, plus:** before anything is sent to an address (the token's `whoami` check included), the shell probes it and requires `hello` to name the expected machine. Checked in headless Chrome with machine B built at release 2 / worker 2 / manifest 2: the shell (release 1) took B's launcher while its own address answered (no warning), then, with its own address down, started release 2, confirmed it, framed B and showed the base warning.
 
 ## Decisions
 

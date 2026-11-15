@@ -7,6 +7,10 @@
 // take a core with a higher release.
 const CORE_RELEASE = 1;
 
+// HUB_PROTOCOL is the hub API and message version this launcher speaks
+// (HubProtocol in Go). Machines one version away still work.
+const HUB_PROTOCOL = 1;
+
 const HUB_KEY = "mo.hub";
 const DEFAULT_PORT = "7890";
 
@@ -292,10 +296,40 @@ function shouldEmbed({ shell, url, own }) {
   return Boolean(shell) && url !== own;
 }
 
+// coreUpdate says whether to install a core another machine (or this
+// address) offers: only from a machine this device trusts, only a valid
+// document, only a newer release. Never a downgrade.
+function coreUpdate({ core, running, trusted }) {
+  if (!trusted || !core || typeof core !== "object") return false;
+  if (!Number.isInteger(core.release) || !core.files || typeof core.files !== "object" || !core.files[core.entry]) return false;
+  return core.release > running;
+}
+
+// baseWarning says whether to tell the person their app's base (worker or
+// manifest) is older than what a machine ships, which only reinstalling or
+// opening the install address fixes. null when there's nothing to say: no
+// newer base, the own address answers (the browser updates it then), or
+// this version was dismissed.
+function baseWarning({ installed, offered, ownAnswers, dismissed }) {
+  if (!installed || !offered || installed.sw == null) return null;
+  const newer = offered.sw > installed.sw || offered.manifest > installed.manifest;
+  if (!newer || ownAnswers) return null;
+  const key = `${offered.sw}:${offered.manifest}`;
+  return key === dismissed ? null : { key };
+}
+
+// protocolCheck compares a machine's protocol with this launcher's.
+function protocolCheck(theirs) {
+  if (!Number.isInteger(theirs) || theirs < HUB_PROTOCOL - 1) return "machine-old";
+  if (theirs > HUB_PROTOCOL + 1) return "launcher-old";
+  return "ok";
+}
+
 if (typeof module === "object" && module.exports) {
   module.exports = {
     CORE_RELEASE, normalizeAddress, loadHub, saveHub, learnMachine, mergeAddrs, addManual, markFailed,
     orderCandidates, probe, findMachine, targetPath, forwardDecision, isMachineID, safeNext, hubDeviceLabel,
     loadTokens, saveToken, dropToken, frameMessage, shouldEmbed,
+    coreUpdate, baseWarning, protocolCheck, HUB_PROTOCOL,
   };
 }

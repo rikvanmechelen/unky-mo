@@ -229,3 +229,37 @@ test("shouldEmbed: only in the installed app, only for another address", () => {
   assert.equal(shouldEmbed({ shell: true, url: own, own }), false);
   assert.equal(shouldEmbed({ shell: false, url: "https://10.1.4.7:7890", own }), false);
 });
+
+test("coreUpdate installs only a trusted, valid, newer core", () => {
+  const { coreUpdate } = require("../static/hub-model.js");
+  const core = { release: 5, files: { "/hub": { type: "text/html", body: "x" } }, entry: "/hub" };
+  assert.equal(coreUpdate({ core, running: 4, trusted: true }), true);
+  assert.equal(coreUpdate({ core, running: 5, trusted: true }), false, "same release");
+  assert.equal(coreUpdate({ core, running: 6, trusted: true }), false, "older");
+  assert.equal(coreUpdate({ core, running: 4, trusted: false }), false, "untrusted machine");
+  assert.equal(coreUpdate({ core: { ...core, release: "9" }, running: 4, trusted: true }), false);
+  assert.equal(coreUpdate({ core: { ...core, entry: "/x" }, running: 4, trusted: true }), false);
+  assert.equal(coreUpdate({ core: null, running: 4, trusted: true }), false);
+});
+
+test("baseWarning: only when a machine ships a newer base and the own address can't update it", () => {
+  const { baseWarning } = require("../static/hub-model.js");
+  const base = { sw: 1, manifest: 1 };
+  assert.equal(baseWarning({ installed: base, offered: { sw: 1, manifest: 1 }, ownAnswers: false, dismissed: null }), null);
+  assert.deepEqual(baseWarning({ installed: base, offered: { sw: 2, manifest: 1 }, ownAnswers: false, dismissed: null }), { key: "2:1" });
+  assert.deepEqual(baseWarning({ installed: base, offered: { sw: 1, manifest: 3 }, ownAnswers: false, dismissed: null }), { key: "1:3" });
+  assert.equal(baseWarning({ installed: base, offered: { sw: 2, manifest: 1 }, ownAnswers: true, dismissed: null }), null, "the browser updates it");
+  assert.equal(baseWarning({ installed: base, offered: { sw: 2, manifest: 1 }, ownAnswers: false, dismissed: "2:1" }), null, "dismissed");
+  assert.deepEqual(baseWarning({ installed: base, offered: { sw: 3, manifest: 1 }, ownAnswers: false, dismissed: "2:1" }), { key: "3:1" }, "a newer one shows again");
+  assert.equal(baseWarning({ installed: { sw: null, manifest: 1 }, offered: { sw: 2, manifest: 1 }, ownAnswers: false, dismissed: null }), null, "no worker: nothing to compare");
+});
+
+test("protocolCheck", () => {
+  const { protocolCheck, HUB_PROTOCOL } = require("../static/hub-model.js");
+  assert.equal(protocolCheck(HUB_PROTOCOL), "ok");
+  assert.equal(protocolCheck(HUB_PROTOCOL + 1), "ok");
+  assert.equal(protocolCheck(HUB_PROTOCOL - 1), "ok");
+  assert.equal(protocolCheck(HUB_PROTOCOL + 2), "launcher-old");
+  assert.equal(protocolCheck(HUB_PROTOCOL - 2), "machine-old");
+  assert.equal(protocolCheck(undefined), "machine-old");
+});

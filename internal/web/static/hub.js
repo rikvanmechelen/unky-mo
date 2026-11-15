@@ -27,6 +27,7 @@
     headStartMs: 600,
   };
   const found = {}; // machine id -> url that answered, null when none did
+  let ownUp = false; // this address answered
   const probing = new Set();
 
   const $ = (id) => document.getElementById(id);
@@ -101,19 +102,90 @@
     }
   }
 
-  // checkCore installs this address's launcher when it's newer than the
-  // one running. Takes effect on the next start.
-  async function checkCore() {
+  // installCore hands a newer core to the worker; it runs from the next
+  // start. Reports whether it was installed.
+  async function installCore(core) {
+    if (!coreUpdate({ core, running: CORE_RELEASE, trusted: true })) return false;
     try {
-      const res = await fetch("/api/hub/core", { cache: "no-store" });
-      if (!res.ok) return false;
-      const core = await res.json();
-      if (!(core.release > CORE_RELEASE)) return false;
       const put = await fetch("/__mo/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(core) });
       return put.ok;
     } catch {
       return false;
     }
+  }
+
+  async function fetchCore(base) {
+    try {
+      const res = await fetch(base + "/api/hub/core", { cache: "no-store", credentials: "omit" });
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // checkCore takes this address's launcher when it's newer, and notes the
+  // manifest this address serves: the browser refreshes the installed
+  // manifest (and worker) only from here.
+  async function checkCore() {
+    const core = await fetchCore("");
+    if (!core) return false;
+    try {
+      storage.setItem("mo.hub.base", JSON.stringify({ manifest: core.manifest }));
+    } catch {
+      // the base warning then assumes the oldest manifest
+    }
+    if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+    return installCore(core);
+  }
+
+  // fromMachine runs once another machine is embedded: take its launcher if
+  // newer, and say when its base is newer than this app's.
+  async function fromMachine(base, name) {
+    const core = await fetchCore(base);
+    if (!core) return;
+    if (await installCore(core)) note(`The launcher was updated from ${name}.`, { label: "Reload", run: () => location.reload() });
+    let installed = null;
+    try {
+      const st = await (await fetch("/__mo/state")).json();
+      let manifest = 1;
+      try {
+        manifest = JSON.parse(storage.getItem("mo.hub.base") || "{}").manifest || 1;
+      } catch {
+        manifest = 1;
+      }
+      installed = { sw: st.sw, manifest };
+    } catch {
+      return; // no worker: nothing installed to be old
+    }
+    let dismissed = null;
+    try {
+      dismissed = storage.getItem("mo.hub.baseDismissed");
+    } catch {
+      dismissed = null;
+    }
+    if (ownUp && core.sw > installed.sw && "serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+    }
+    const w = baseWarning({ installed, offered: { sw: core.sw, manifest: core.manifest }, ownAnswers: ownUp, dismissed });
+    if (w) showBaseWarning(w.key, name, base);
+  }
+
+  function showBaseWarning(key, name, base) {
+    const bar = $("hub-base");
+    bar.textContent = "";
+    bar.append(el("span", "", `This app's base is older than ${name}'s. Open it once from ${location.origin}, or reinstall it from ${base}.`));
+    const b = el("button", "btn btn--quiet", "Dismiss");
+    b.type = "button";
+    b.addEventListener("click", () => {
+      try {
+        storage.setItem("mo.hub.baseDismissed", key);
+      } catch {
+        // shows again next start
+      }
+      bar.hidden = true;
+    });
+    bar.append(b);
+    bar.hidden = false;
   }
 
   function go(url) {
@@ -146,6 +218,21 @@
   async function embedMachine(id, base, path) {
     const name = (hub.machines[id] && hub.machines[id].name) || "this machine";
     const again = () => embedMachine(id, base, framePath);
+    // Nothing goes to an address before it says it's this machine.
+    const hello = await probe(base, env);
+    if (!hello) {
+      setStatus(`${name} doesn't answer at ${base}.`);
+      return;
+    }
+    if (hello.machine !== id) {
+      setStatus(`Another machine answers at ${base}.`);
+      return;
+    }
+    const proto = protocolCheck(hello.protocol);
+    if (proto !== "ok") {
+      setStatus(proto === "machine-old" ? `Update mo on ${name}: it's too old for this launcher.` : `This launcher is too old for ${name}. Open ${base} once to update it.`);
+      return;
+    }
     const token = loadTokens(storage)[id];
     if (!token) return showLogin({ id, name, base, done: again });
     let check = null;
@@ -174,6 +261,7 @@
     frame.src = base + path;
     document.body.append(frame);
     document.body.classList.add("is-embedded");
+    fromMachine(base, name);
   }
 
   // relocate finds the framed machine again after it stopped answering
@@ -345,6 +433,7 @@
     const own = await probe(location.origin, env);
     if (!own) return findAll();
 
+    ownUp = true;
     hub = learnMachine(hub, own, location.origin, Date.now());
     found[own.machine] = location.origin;
     save();

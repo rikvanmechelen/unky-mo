@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -13,7 +15,7 @@ import (
 // installed apps only take a core whose release is higher than theirs, so a
 // change under the same release would never reach them.
 var coreReleases = map[int]string{
-	1: "8774eec8d6a5acb008c0d4efba985da8",
+	1: "8cf9a55f3e4d59286d19b9d56d259cb1",
 }
 
 func TestCoreReleaseTable(t *testing.T) {
@@ -132,5 +134,13 @@ func TestBasicAuthLetsPublicPathsThrough(t *testing.T) {
 		if rec.Code != want {
 			t.Errorf("%s without a login: %d, want %d", path, rec.Code, want)
 		}
+	}
+}
+
+func TestHubProtocolMatchesLauncher(t *testing.T) {
+	h := embeddedStatic()
+	m := regexp.MustCompile(`(?m)^const HUB_PROTOCOL = (\d+);`).FindSubmatch(h.assets["hub-model.js"].raw)
+	if m == nil || string(m[1]) != strconv.Itoa(HubProtocol) {
+		t.Fatalf("hub-model.js HUB_PROTOCOL = %q, HubProtocol = %d: they must agree", m, HubProtocol)
 	}
 }
