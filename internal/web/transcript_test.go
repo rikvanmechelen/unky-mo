@@ -236,7 +236,7 @@ func TestTranscriptHubDisconnectsStalledSubscriber(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"type":"user","uuid":"u0"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := &transcriptHub{sessions: map[string]*transcriptSession{}} // no watcher: changes are fed by hand
+	h := &transcriptHub{sessions: map[string]*transcriptSession{}, manual: true} // changes are fed by hand
 	_, stalled, unsubStalled, err := h.subscribe("s", path)
 	if err != nil {
 		t.Fatal(err)

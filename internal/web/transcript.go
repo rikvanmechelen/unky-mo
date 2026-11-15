@@ -283,6 +283,9 @@ func attachmentType(raw json.RawMessage) string {
 // (advancing past what's already been read) needs to be shared.
 type transcriptHub struct {
 	watcher *status.Watcher
+	// manual leaves the watcher off: changes come only through
+	// onFileChange (tests that feed them by hand).
+	manual bool
 
 	mu       sync.Mutex
 	sessions map[string]*transcriptSession // keyed by Claude session ID
@@ -294,18 +297,27 @@ type transcriptSession struct {
 }
 
 func newTranscriptHub() *transcriptHub {
-	h := &transcriptHub{sessions: make(map[string]*transcriptSession)}
+	return &transcriptHub{sessions: make(map[string]*transcriptSession)}
+}
+
+// ensureWatcher starts the file watcher on the first subscription rather
+// than when the hub is made: each watcher is an inotify instance, and a
+// process (or a test binary making a server per test) that never streams a
+// transcript shouldn't hold one. Linux caps them per user (128 by default),
+// so the test suite ran out in CI and live tailing silently stopped. A
+// failure is retried on the next subscription. Called with h.mu held.
+func (h *transcriptHub) ensureWatcher() {
+	if h.watcher != nil || h.manual {
+		return
+	}
 	w, err := status.NewWatcher(h.onFileChange)
 	if err != nil {
-		// fsnotify init failure is effectively unrecoverable for this
-		// feature but must not crash `mo web` — log and leave h.watcher
-		// nil; subscribe() still works for backlog-only requests, live
-		// tailing just never fires (extremely unlikely in practice —
-		// fsnotify.NewWatcher only fails on fd/resource exhaustion).
+		// Must not crash `mo web`: the backlog still streams, live tailing
+		// doesn't until a later subscription gets a watcher.
 		log.Printf("transcript hub: fsnotify unavailable, live updates disabled: %v", err)
+		return
 	}
 	h.watcher = w
-	return h
 }
 
 // subscribe returns the full current backlog for sessionID/path plus a
@@ -343,6 +355,7 @@ func (h *transcriptHub) subscribe(sessionID, path string) (backlog []json.RawMes
 		// and live updates would silently never arrive. Create it, exactly
 		// as Claude itself would on its first write.
 		ensureTranscriptDir(path)
+		h.ensureWatcher()
 		if h.watcher != nil {
 			h.watcher.WatchSession(sessionID, path)
 		}

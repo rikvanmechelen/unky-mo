@@ -54,7 +54,7 @@ func TestHandleTranscriptEmitsBacklogThenLiveMessage(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/api/transcript/@1")
+	resp, err := sseClient.Get(ts.URL + "/api/transcript/@1")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestHandleTranscriptGzip(t *testing.T) {
 	ts, jsonlPath := transcriptFixture(t)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/transcript/@1", nil)
 	req.Header.Set("Accept-Encoding", "gzip") // set by hand, so the transport doesn't decode it
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sseClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -192,3 +192,9 @@ func TestHandleTranscriptPlainWithoutGzip(t *testing.T) {
 		t.Fatal("backlog didn't arrive as plain text")
 	}
 }
+
+// sseClient reads the streams in these tests. Its timeout ends a body read
+// that would otherwise block forever when an expected line never comes, so
+// a missed live update fails the test instead of hanging the suite until
+// go test's 10-minute limit (as it did in CI when inotify ran out).
+var sseClient = &http.Client{Timeout: 15 * time.Second}

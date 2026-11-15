@@ -88,7 +88,7 @@ func TestSubagentTranscriptStreamsListedFile(t *testing.T) {
 
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
-	resp, err := http.Get(ts.URL + "/api/sessions/@5/subagents/abc/transcript")
+	resp, err := sseClient.Get(ts.URL + "/api/sessions/@5/subagents/abc/transcript")
 	if err != nil {
 		t.Fatal(err)
 	}
