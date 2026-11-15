@@ -66,7 +66,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, sess := range all {
-			if sess.CWD == b.WorktreePath {
+			if claude.PathWithin(sess.CWD, b.WorktreePath) {
 				live = append(live, sess)
 			}
 		}

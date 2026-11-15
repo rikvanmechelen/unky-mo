@@ -1221,7 +1221,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if b.IsMain && b.WorktreePath == "" {
 					return m, func() tea.Msg { return statusMsgEvent("Cannot delete the main branch") }
 				}
-				sessions := m.claude.SessionsForPath(b.WorktreePath)
+				var sessions []claude.Session
+				if b.WorktreePath != "" {
+					live, _ := m.claude.LiveSessions()
+					for _, s := range live {
+						if claude.PathWithin(s.CWD, b.WorktreePath) {
+							sessions = append(sessions, s)
+						}
+					}
+				}
 				m.pendingCleanupActive = true
 				m.pendingCleanupProjectPath = m.detailProject.Path
 				m.pendingCleanupProjectName = m.detailProject.Name

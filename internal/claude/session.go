@@ -273,6 +273,29 @@ func SessionsForPath(path string) []Session {
 	return matching
 }
 
+// PathWithin reports whether path is dir or somewhere below it, comparing
+// symlink-resolved paths when they resolve. Used before removing a
+// worktree: a session started in one of its subdirectories (or through a
+// symlinked path) is running in it just the same.
+func PathWithin(path, dir string) bool {
+	if path == "" || dir == "" {
+		return false
+	}
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return filepath.Clean(p)
+	}
+	for _, pair := range [][2]string{{filepath.Clean(path), filepath.Clean(dir)}, {resolve(path), resolve(dir)}} {
+		rel, err := filepath.Rel(pair[1], pair[0])
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionMessage represents a single user or assistant message from a session.
 type SessionMessage struct {
 	Role    string // "user" or "assistant"

@@ -3,6 +3,7 @@ package claude
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -85,5 +86,27 @@ func TestLiveSessionsCarriesAgentStatus(t *testing.T) {
 	}
 	if len(sessions) != 1 || sessions[0].Status != "waiting" || sessions[0].WaitingFor != "input needed" {
 		t.Fatalf("want status/waitingFor carried through, got %+v", sessions)
+	}
+}
+
+func TestPathWithin(t *testing.T) {
+	root := t.TempDir()
+	wt := filepath.Join(root, "p.worktrees", "feat")
+	os.MkdirAll(filepath.Join(wt, "sub"), 0o755)
+	os.Symlink(wt, filepath.Join(root, "link"))
+	for _, c := range []struct {
+		path string
+		want bool
+	}{
+		{wt, true},
+		{filepath.Join(wt, "sub"), true},
+		{filepath.Join(root, "link", "sub"), true},
+		{filepath.Join(root, "p.worktrees", "feat2"), false},
+		{filepath.Join(root, "p.worktrees"), false},
+		{"", false},
+	} {
+		if got := PathWithin(c.path, wt); got != c.want {
+			t.Errorf("PathWithin(%q) = %v, want %v", c.path, got, c.want)
+		}
 	}
 }
