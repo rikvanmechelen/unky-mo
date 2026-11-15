@@ -53,9 +53,23 @@ func TestCrossSiteRefused(t *testing.T) {
 	if got := csrfDo(t, srv, http.MethodGet, "/api/boot", map[string]string{"Sec-Fetch-Site": "cross-site"}); got == http.StatusForbidden {
 		t.Errorf("GET refused")
 	}
-	// The installed app's shell pairs and subscribes from its own origin.
-	if got := csrfDo(t, srv, http.MethodPost, "/api/hub/pair", map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://10.0.0.2:7890"}); got == http.StatusForbidden {
+	// The installed app's shell pairs and subscribes from its own origin:
+	// pairing carries the password, everything else its Bearer token.
+	cross := map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://10.0.0.2:7890"}
+	if got := csrfDo(t, srv, http.MethodPost, "/api/hub/pair", cross); got == http.StatusForbidden {
 		t.Errorf("cross-origin pairing refused")
+	}
+	withToken := map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://10.0.0.2:7890", "Authorization": "Bearer abc"}
+	for _, p := range []string{"/api/push/subscriptions", "/api/push/test", "/api/push/presence"} {
+		if got := csrfDo(t, srv, http.MethodPost, p, withToken); got == http.StatusForbidden {
+			t.Errorf("shell's %s with a token refused", p)
+		}
+		// A page without the token gets no exemption, whatever the method.
+		for _, m := range []string{http.MethodPost, http.MethodDelete} {
+			if got := csrfDo(t, srv, m, p, cross); got != http.StatusForbidden {
+				t.Errorf("cross-site %s %s without a token: want 403, got %d", m, p, got)
+			}
+		}
 	}
 }
 

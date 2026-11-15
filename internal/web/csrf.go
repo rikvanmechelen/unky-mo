@@ -34,7 +34,11 @@ func crossSiteRefused(r *http.Request) bool {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false
 	}
-	if hubCORSPaths[r.URL.Path] {
+	// The shell's cross-origin calls carry its Bearer token, which a page
+	// can't forge; pairing carries the password. A cookie alone (a same-site
+	// page on another port, or no login at all) gets no exemption: it could
+	// otherwise register its own push endpoint or drop the user's.
+	if hubCORSPaths[r.URL.Path] && (r.URL.Path == "/api/hub/pair" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")) {
 		return false
 	}
 	switch r.Header.Get("Sec-Fetch-Site") {
