@@ -1,10 +1,12 @@
 package review
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // routeLines parses src and lists its routes as "VERB path Controller#action
@@ -351,4 +353,76 @@ func TestRailsRoutesSurface(t *testing.T) {
 	if len(s.Routes) == 1 && (s.Routes[0].Detail != "→ TicketsController#show (ticket_path)" || s.Routes[0].Line != 4) {
 		t.Errorf("route %+v", s.Routes[0])
 	}
+}
+
+// TestRailsRoutesHostile: routes are repository content, so a stranger's
+// PR can be built to hurt the parser. Each of these used to recurse until a
+// fatal stack overflow, or to evaluate millions of routes; now each stops
+// quickly and says what it didn't read.
+func TestRailsRoutesHostile(t *testing.T) {
+	none := func(string) (string, bool) { return "", false }
+	words := "%w[" + strings.TrimSpace(strings.Repeat("a ", 100)) + "]"
+	cases := map[string]struct {
+		main  string
+		read  func(string) (string, bool)
+		skips string
+	}{
+		"concern using itself":      {main: "Rails.application.routes.draw do\n concern :a do\n  concerns :a\n  get 'x'\n end\n concerns :a\nend\n", read: none},
+		"concerns using each other": {main: "Rails.application.routes.draw do\n concern :a do\n  concerns :b\n end\n concern :b do\n  concerns :a\n end\n resources :posts, concerns: :a\nend\n", read: none},
+		"a million brackets":        {main: "get " + strings.Repeat("[", 1_000_000), read: none, skips: "nested more than"},
+		"deep ifs":                  {main: strings.Repeat("if x\n", 600_000), read: none, skips: "nested more than"},
+		"word-list product": {main: "Rails.application.routes.draw do\n" + words + ".each do |a|\n" + words + ".each do |b|\n" + words + ".each do |c|\n get \"#{a}/#{b}/#{c}\", to: 'x#y'\nend\nend\nend\nend\n",
+			read: none, skips: "routing statements"},
+		"draw fan-out": {main: "Rails.application.routes.draw do\n draw :r0\nend\n", read: func(p string) (string, bool) {
+			var n int
+			if _, err := fmt.Sscanf(strings.TrimPrefix(p, routesDir), "r%d.rb", &n); err != nil || n > 18 {
+				return "", false
+			}
+			if n == 18 {
+				return "get 'leaf', to: 'a#b'\n", true
+			}
+			return fmt.Sprintf("draw :r%d\ndraw :r%d\n", n+1, n+1), true
+		}, skips: "routing statements"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			rs := parseRailsRoutes(c.main, c.read, false)
+			if d := time.Since(start); d > 2*time.Second {
+				t.Errorf("took %v", d)
+			}
+			if c.skips != "" {
+				found := false
+				for _, s := range rs.Skipped {
+					found = found || strings.Contains(s.Text, c.skips)
+				}
+				if !found {
+					t.Errorf("no skip saying %q: %+v", c.skips, rs.Skipped)
+				}
+			}
+		})
+	}
+}
+
+// FuzzRailsRoutes: no input crashes the parser or takes long.
+//
+//	go test ./internal/review -run '^$' -fuzz FuzzRailsRoutes
+func FuzzRailsRoutes(f *testing.F) {
+	for _, s := range []string{
+		"Rails.application.routes.draw do\n resources :posts do\n  member do\n   get :preview\n  end\n end\nend\n",
+		"concern :c do\n concerns :c\nend\nconcerns :c\n",
+		"%w[a b].each do |x|\n get \"#{x}\"\nend\n",
+		"get [[[[[",
+		"scope '/a' do\n namespace :b do\n  root 'c#d'\n end\nend\n",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, src string) {
+		start := time.Now()
+		read := func(p string) (string, bool) { return src, true }
+		parseRailsRoutes(src, read, false)
+		if d := time.Since(start); d > time.Second && len(src) < 4096 {
+			t.Errorf("%d bytes took %v", len(src), d)
+		}
+	})
 }

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -113,7 +114,7 @@ var apiOnlyRe = regexp.MustCompile(`\bapi_only\s*=\s*true\b`)
 // new and edit actions, as config.api_only does.
 func parseRailsRoutes(main string, read func(p string) (string, bool), apiOnly bool) *routeSet {
 	e := &rtEval{read: read, apiOnly: apiOnly, named: map[string]bool{}, concerns: map[string]rtConcern{},
-		drawn: map[string]bool{routesFile: true}, out: &routeSet{}}
+		drawn: map[string]bool{routesFile: true}, out: &routeSet{}, using: map[string]bool{}, budget: rtBudget}
 	e.file(routesFile, main, rtScope{})
 	return e.out
 }
@@ -396,7 +397,31 @@ type rtStmt struct {
 type rtParser struct {
 	t []rtTok
 	i int
+	// depth counts the nesting of blocks and values being parsed. Past
+	// rtMaxNesting the rest of the file is dropped (tooDeep): routes are
+	// repository content, and an unbounded recursive descent over a file of
+	// a million "[" is a stack overflow, which no recover catches.
+	depth   int
+	tooDeep bool
 }
+
+// rtMaxNesting is far deeper than any real routes file nests.
+const rtMaxNesting = 200
+
+// enter counts one more level of nesting; false (and the rest of the input
+// dropped) past rtMaxNesting. Each enter that returns true is paired with a
+// leave.
+func (p *rtParser) enter() bool {
+	if p.depth >= rtMaxNesting {
+		p.tooDeep = true
+		p.i = len(p.t)
+		return false
+	}
+	p.depth++
+	return true
+}
+
+func (p *rtParser) leave() { p.depth-- }
 
 func (p *rtParser) peek() rtTok {
 	if p.i < len(p.t) {
@@ -431,6 +456,10 @@ var rtBlockKeywords = map[string]bool{"if": true, "unless": true, "while": true,
 // the end of input.
 func (p *rtParser) stmts(brace bool) []*rtStmt {
 	var out []*rtStmt
+	if !p.enter() {
+		return out
+	}
+	defer p.leave()
 	for {
 		p.skipNL()
 		if p.i >= len(p.t) {
@@ -714,6 +743,10 @@ func (p *rtParser) continues() bool {
 
 // value parses one value, with whatever operators and calls follow it.
 func (p *rtParser) value() rtVal {
+	if !p.enter() {
+		return rtVal{kind: 'x'}
+	}
+	defer p.leave()
 	v := p.primary()
 	for {
 		t := p.peek()
@@ -764,6 +797,10 @@ func (p *rtParser) value() rtVal {
 
 // primary parses a literal, a name (or call), a list, a hash or a lambda.
 func (p *rtParser) primary() rtVal {
+	if !p.enter() {
+		return rtVal{kind: 'x'}
+	}
+	defer p.leave()
 	t := p.next()
 	switch t.kind {
 	case rtStr:
@@ -967,14 +1004,32 @@ type rtEval struct {
 	out      *routeSet
 	cur      string // the file being read
 	lines    []string
+	// using holds the concerns being expanded, so a concern that uses
+	// itself (directly or through another) isn't expanded forever.
+	using map[string]bool
+	// budget is how many more statements may be evaluated. Loops over word
+	// lists multiply and drawn files can draw each other more than once, so
+	// a small file can describe millions of routes; past the budget the
+	// rest is dropped and reported once (over).
+	budget int
+	over   bool
 }
+
+// rtBudget is the most statements one routes evaluation runs: a large
+// app's routes are a few thousand.
+const rtBudget = 50_000
 
 // file evaluates one routes file's statements in scope sc.
 func (e *rtEval) file(p, src string, sc rtScope) {
 	prevFile, prevLines := e.cur, e.lines
 	e.cur, e.lines = p, strings.Split(src, "\n")
 	ps := &rtParser{t: rtTokens(src)}
-	e.stmts(ps.stmts(false), sc)
+	list := ps.stmts(false)
+	if ps.tooDeep {
+		e.out.Skipped = append(e.out.Skipped, railsSkip{
+			Text: fmt.Sprintf("nested more than %d levels deep: the rest of the file isn't read", rtMaxNesting), File: p})
+	}
+	e.stmts(list, sc)
 	e.cur, e.lines = prevFile, prevLines
 }
 
@@ -1003,6 +1058,15 @@ var rtTransparent = map[string]bool{"constraints": true, "defaults": true, "with
 	"case": true, "begin": true, "while": true, "until": true, "for": true, "format": true}
 
 func (e *rtEval) stmt(st *rtStmt, sc rtScope) {
+	if e.budget <= 0 {
+		if !e.over {
+			e.over = true
+			e.out.Skipped = append(e.out.Skipped, railsSkip{
+				Text: fmt.Sprintf("more than %d routing statements: the rest isn't read", rtBudget), File: e.cur, Line: st.line})
+		}
+		return
+	}
+	e.budget--
 	if st.assign || st.name == "" && st.recvVal.kind == 0 {
 		return
 	}
@@ -1162,14 +1226,16 @@ func (e *rtEval) useConcerns(st *rtStmt, sc rtScope, names []rtVal) {
 	for _, v := range names {
 		for _, n := range e.strs(sc, v) {
 			c, ok := e.concerns[n]
-			if !ok {
+			if !ok || e.using[n] {
 				e.skip(st)
 				continue
 			}
+			e.using[n] = true
 			prev := e.cur
 			e.cur = c.file
 			e.stmts(c.body, sc)
 			e.cur = prev
+			delete(e.using, n)
 		}
 	}
 }
