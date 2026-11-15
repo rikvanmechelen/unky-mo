@@ -118,7 +118,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown host", http.StatusMisdirectedRequest)
 		return
 	}
-	w.Header().Set("Content-Security-Policy", s.frameAncestors())
+	w.Header().Set("Content-Security-Policy", scriptPolicy+"; "+s.frameAncestors())
 	if crossSiteRefused(r) {
 		writeError(w, http.StatusForbidden, errCrossSite)
 		return

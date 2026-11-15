@@ -188,7 +188,7 @@ func TestCrossOriginPair(t *testing.T) {
 
 func TestFrameAncestors(t *testing.T) {
 	h, devices, _ := newLoginServer(t)
-	if got := loginDo(h, http.MethodGet, "/api/hub/hello", "", nil).Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+	if got := loginDo(h, http.MethodGet, "/api/hub/hello", "", nil).Header().Get("Content-Security-Policy"); got != scriptPolicy+"; frame-ancestors 'self'" {
 		t.Errorf("no devices: %q", got)
 	}
 	devices.Pair("shell", "https://192.168.1.20:7890")
@@ -196,7 +196,7 @@ func TestFrameAncestors(t *testing.T) {
 	devices.Pair("bad", "https://x.example; script-src *")
 	devices.Pair("dup", "https://192.168.1.20:7890")
 	got := loginDo(h, http.MethodGet, "/api/hub/hello", "", nil).Header().Get("Content-Security-Policy")
-	if got != "frame-ancestors 'self' https://192.168.1.20:7890" {
+	if got != scriptPolicy+"; frame-ancestors 'self' https://192.168.1.20:7890" {
 		t.Errorf("CSP = %q", got)
 	}
 }

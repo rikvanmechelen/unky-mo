@@ -10,7 +10,7 @@
 // Pure functions over an injected `caches`/`fetch` so jstests/sw.test.js can
 // run them in Node; the listeners are only attached inside a worker.
 
-const SW_VERSION = 1;
+const SW_VERSION = 2;
 
 const META = "mo-meta";
 const POINTER = "/__mo/pointer";
@@ -139,6 +139,13 @@ async function api(request, path, env) {
   }
   if (request.method !== "POST") return jsonResponse({ error: "not found" }, 404);
   if (path === "/__mo/install") {
+    // Only the launcher installs a core. A dashboard page shares this
+    // origin, so without the check a script there could make itself the
+    // launcher for good.
+    const from = env.clientPath ? await env.clientPath() : null;
+    if (from === null || !(from === "/hub" || from.startsWith("/hub/"))) {
+      return jsonResponse({ error: "only the launcher installs a core" }, 403);
+    }
     let core;
     try {
       core = await request.json();
@@ -293,7 +300,12 @@ if (typeof module === "object" && module.exports) {
     // Only these can ever be answered here; everything else isn't touched,
     // so the dashboard's polls and streams never pass through the worker.
     if (!handlesRequest(event.request)) return;
-    event.respondWith((async () => (await handleFetch(event.request, env())) || self.fetch(event.request))());
+    const e = env();
+    e.clientPath = async () => {
+      const c = event.clientId ? await self.clients.get(event.clientId) : null;
+      return c ? new URL(c.url).pathname : null;
+    };
+    event.respondWith((async () => (await handleFetch(event.request, e)) || self.fetch(event.request))());
   });
 
   self.addEventListener("push", (event) => {

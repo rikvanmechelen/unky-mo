@@ -128,6 +128,15 @@ var hubCORSPaths = map[string]bool{
 
 var originRE = regexp.MustCompile(`^https?://[a-z0-9.\-]+(:\d{1,5})?$|^https?://\[[0-9a-f:.]+\](:\d{1,5})?$`)
 
+// scriptPolicy lets the pages run only the dashboard's own script files:
+// no inline script, no eval, no plugins, no <base> pointing elsewhere.
+// Transcripts, files and tool output are attacker-influenced text that the
+// pages only ever insert as text; this is the second layer if a mistake
+// ever lets one in as markup. The launcher shares the origin and holds
+// every machine's token, so it matters most there. Connections and frames
+// stay open: the launcher talks to and frames other machines.
+const scriptPolicy = "script-src 'self'; object-src 'none'; base-uri 'self'"
+
 // frameAncestors is the Content-Security-Policy that lets only this origin
 // and the shells devices paired from frame the dashboard.
 func (s *Server) frameAncestors() string {

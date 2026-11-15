@@ -5,7 +5,7 @@
 // CORE_RELEASE is the launcher's release. Raise it whenever a core file
 // changes (the Go test TestCoreReleaseTable says so): installed apps only
 // take a core with a higher release.
-const CORE_RELEASE = 1;
+const CORE_RELEASE = 2;
 
 // HUB_PROTOCOL is the hub API and message version this launcher speaks
 // (HubProtocol in Go). Machines one version away still work.

@@ -53,6 +53,7 @@ function env(caches, fetchImpl) {
     fetch: fetchImpl || (async () => { throw new TypeError("offline"); }),
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (t) => clearTimeout(t),
+    clientPath: async () => "/hub",
   };
 }
 
@@ -209,4 +210,12 @@ test("notificationFor: own pages as before, a machine's through the shell, never
   assert.equal(machineFromScope(ORIGIN + "/hub/push/" + id + "/"), id);
   assert.equal(machineFromScope(ORIGIN + "/"), null);
   assert.equal(machineFromScope(ORIGIN + "/hub/push/nothex/"), null);
+});
+
+test("only the launcher page can install a core", async () => {
+  for (const [from, status] of [["/chat", 403], ["/hubx", 403], [null, 403], ["/hub", 200], ["/hub/x", 200]]) {
+    const e = env(fakeCaches());
+    e.clientPath = async () => from;
+    assert.equal((await install(e, core(1))).status, status, `from ${from}`);
+  }
 });

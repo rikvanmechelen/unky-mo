@@ -110,9 +110,10 @@
   }
 
   // installCore hands a newer core to the worker; it runs from the next
-  // start. Reports whether it was installed.
-  async function installCore(core) {
-    if (!coreUpdate({ core, running: CORE_RELEASE, trusted: true })) return false;
+  // start. Reports whether it was installed. trusted is true only for the
+  // app's own address, or after the person said to (see fromMachine).
+  async function installCore(core, trusted) {
+    if (!coreUpdate({ core, running: CORE_RELEASE, trusted })) return false;
     try {
       const put = await fetch("/__mo/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(core) });
       return put.ok;
@@ -142,15 +143,26 @@
       // the base warning then assumes the oldest manifest
     }
     if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
-    return installCore(core);
+    return installCore(core, true);
   }
 
-  // fromMachine runs once another machine is embedded: take its launcher if
-  // newer, and say when its base is newer than this app's.
+  // fromMachine runs once another machine is embedded: offer its launcher
+  // if newer, and say when its base is newer than this app's. The launcher
+  // runs at this app's address, which holds every machine's token, so code
+  // from another machine is never installed without the person saying so:
+  // a machine that was taken over would otherwise take over the app.
   async function fromMachine(base, name) {
     const core = await fetchCore(base);
     if (!core) return;
-    if (await installCore(core)) note(`The launcher was updated from ${name}.`, { label: "Reload", run: () => location.reload() });
+    if (coreUpdate({ core, running: CORE_RELEASE, trusted: true })) {
+      note(`${name} has a newer launcher. Install it only if you trust ${name}: it would run for every machine in this app.`, {
+        label: "Install",
+        run: async () => {
+          if (await installCore(core, true)) note(`The launcher was updated from ${name}.`, { label: "Reload", run: () => location.reload() });
+          else note(`The launcher from ${name} couldn't be installed.`);
+        },
+      });
+    }
     let installed = null;
     try {
       const st = await (await fetch("/__mo/state")).json();

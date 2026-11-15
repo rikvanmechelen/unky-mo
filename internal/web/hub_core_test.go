@@ -16,6 +16,7 @@ import (
 // change under the same release would never reach them.
 var coreReleases = map[int]string{
 	1: "e4210beeac92f961c84e32bca8a87ffd",
+	2: "d8e2c4d2810618f7056a442b66ebccc0",
 }
 
 func TestCoreReleaseTable(t *testing.T) {
