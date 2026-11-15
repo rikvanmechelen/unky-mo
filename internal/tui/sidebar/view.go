@@ -366,6 +366,8 @@ func renderDot(status string) string {
 		return dotPermission.Render("●")
 	case "external":
 		return dotExternal.Render("●")
+	case "unknown":
+		return dotNone.Render("◌") // live, status unknown (the TUI isn't writing state)
 	default:
 		return dotNone.Render("○")
 	}

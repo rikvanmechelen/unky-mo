@@ -153,7 +153,9 @@ func (m *Model) refreshFromSessions() {
 			continue
 		}
 		if liveByPath[m.items[i].Path] {
-			m.items[i].Status = "active"
+			// Running, but whether it's working or waiting is only known
+			// to the main TUI, whose state file is stale: don't guess.
+			m.items[i].Status = "unknown"
 		} else {
 			m.items[i].Status = "none"
 		}

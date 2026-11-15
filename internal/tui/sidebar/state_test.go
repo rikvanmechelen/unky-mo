@@ -1,6 +1,7 @@
 package sidebar
 
 import (
+	"github.com/rvanmech/unky-mo/internal/claude"
 	"os"
 	"path/filepath"
 	"testing"
@@ -229,7 +230,7 @@ func TestRefreshStateExternalHeaderHiddenWhenNoStrays(t *testing.T) {
 }
 
 func TestRefreshStateStaleFileFallsBackToLiveSessions(t *testing.T) {
-	m, _, claude, sf := newTestModel(t, "alpha", "@1")
+	m, _, cr, sf := newTestModel(t, "alpha", "@1")
 	// state.Write always bumps UpdatedAt=now, so write the JSON by hand with
 	// an old UpdatedAt.
 	old := time.Now().Add(-60 * time.Second)
@@ -242,12 +243,17 @@ func TestRefreshStateStaleFileFallsBackToLiveSessions(t *testing.T) {
 	m.items = []SidebarItem{
 		{Name: "Home", IsHome: true},
 		{Name: "alpha", Path: "/ws/alpha"},
+		{Name: "beta", Path: "/ws/beta", Status: "idle"},
 	}
-	claude.EXPECT().LiveSessions().Return(nil, nil).AnyTimes()
+	cr.EXPECT().LiveSessions().Return([]claude.Session{{CWD: "/ws/alpha"}}, nil).AnyTimes()
 
 	m.refreshState()
+	// A live session's status isn't known without the TUI: not "active".
+	if m.items[1].Status != "unknown" || m.items[2].Status != "none" {
+		t.Errorf("statuses %q %q, want unknown and none", m.items[1].Status, m.items[2].Status)
+	}
 	// Fallback path: existing items kept, statuses re-written from live sessions.
-	if len(m.items) != 2 {
+	if len(m.items) != 3 {
 		t.Errorf("fallback should preserve items; got %d", len(m.items))
 	}
 	// Usage should NOT be populated from a stale file.

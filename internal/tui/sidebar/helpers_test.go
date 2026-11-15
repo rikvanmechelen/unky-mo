@@ -22,8 +22,9 @@ func TestRenderDotKnownStatuses(t *testing.T) {
 		{"idle", "●"},
 		{"permission", "●"},
 		{"external", "●"},
+		{"unknown", "◌"}, // live, but the TUI's state is stale
 		{"", "○"},
-		{"unknown", "○"},
+		{"bogus", "○"},
 	}
 	for _, c := range cases {
 		got := renderDot(c.status)
