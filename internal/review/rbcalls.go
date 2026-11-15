@@ -372,6 +372,13 @@ func rbScan(raw, code []string) hFile {
 		if strings.TrimSpace(raw[i]) == "__END__" {
 			break
 		}
+		if len(stack) > rbMaxNesting {
+			// Each nested class or module keeps its full scope name, so a
+			// file of "module A" lines is quadratic in memory; no real file
+			// nests this deep, and one that does isn't read.
+			f.OK = false
+			break
+		}
 		line := code[i]
 		trim := strings.TrimSpace(line)
 		fr := cur()
@@ -820,6 +827,10 @@ func rbStatementEnd(code []string, i int) int {
 	}
 	return stop
 }
+
+// rbMaxNesting is far deeper than real Ruby code nests classes, modules
+// and blocks.
+const rbMaxNesting = 64
 
 // rbMaxStatementLines caps how far rbStatementEnd follows a statement.
 const rbMaxStatementLines = 100

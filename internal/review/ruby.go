@@ -25,6 +25,10 @@ type rubyLang struct {
 	// files maps the same keys to the file defining the constant, "" when
 	// two files do: the call graph's canonical home of a class.
 	files map[string]string
+	// depth is the most segments any key has: lookups never try a longer
+	// prefix, so a constant written A::A::…::A (repository content) costs
+	// at most depth joins, not one per segment of its own length.
+	depth int
 }
 
 func (l *rubyLang) name() string { return "ruby" }
@@ -52,6 +56,7 @@ func (l *rubyLang) detect(idx *index) bool {
 				unit = "" // defined in two units: ambiguous
 			}
 			l.consts[key] = unit
+			l.depth = max(l.depth, strings.Count(key, "/")+1)
 			if _, ok := l.files[key]; ok {
 				l.files[key] = ""
 			} else {
@@ -164,7 +169,11 @@ func (l *rubyLang) lookup(c string, nesting []string) (string, bool) {
 	}
 	segs := strings.Split(squashConst(c), "/")
 	for _, ns := range nesting {
-		for k := len(segs); k > 0; k-- {
+		nsDepth := 0
+		if ns != "" {
+			nsDepth = strings.Count(ns, "/") + 1
+		}
+		for k := min(len(segs), l.maxSegs()-nsDepth); k > 0; k-- {
 			key := strings.Join(segs[:k], "/")
 			if ns != "" {
 				key = ns + "/" + key
@@ -177,13 +186,22 @@ func (l *rubyLang) lookup(c string, nesting []string) (string, bool) {
 	return "", false
 }
 
+// maxSegs is the longest prefix worth trying (depth, or no limit when
+// the maps weren't built by detect).
+func (l *rubyLang) maxSegs() int {
+	if l.depth == 0 {
+		return 1 << 30
+	}
+	return l.depth
+}
+
 // constFile is the file Zeitwerk loads constant c (a full path,
 // "Admin::User") from: its own file, or for a constant nested in a class
 // (User::Error) the class's file. "" when it isn't autoloaded or two files
 // would be.
 func (l *rubyLang) constFile(c string) string {
 	segs := strings.Split(squashConst(strings.TrimPrefix(c, "::")), "/")
-	for k := len(segs); k > 0; k-- {
+	for k := min(len(segs), l.maxSegs()); k > 0; k-- {
 		if f, ok := l.files[strings.Join(segs[:k], "/")]; ok {
 			return f
 		}

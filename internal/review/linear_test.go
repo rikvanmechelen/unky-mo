@@ -1,6 +1,7 @@
 package review
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,11 @@ func linearCases() []linearCase {
 		}, ruby, 1_000},
 		{"ruby nested modules", rep("module A\n"), ruby, 2_000},
 		{"ruby constant path", func(n int) string { return "X = " + strings.Repeat("A::", n) + "A\n" }, ruby, 5_000},
+		{"ruby constant lookup", func(n int) string { return strings.Repeat("A::", n) + "A" }, func(src string) {
+			l := &rubyLang{consts: map[string]string{"a": "app/models", "a/b": "app/models"}, files: map[string]string{"a": "app/models/a.rb"}, depth: 2}
+			l.lookup(src, []string{"x/y", "x", ""})
+			l.constFile(src)
+		}, 20_000},
 		{"erb tags", rep("<%%>"), func(src string) { erbCode(src) }, 20_000},
 		{"python open paren", func(n int) string { return "x = (\n" + strings.Repeat("y\n", n) }, py, 5_000},
 	}
@@ -63,6 +69,15 @@ func timeScan(scan func(string), src string) time.Duration {
 	return best
 }
 
+// allocBytes is how many bytes one scan of src allocates.
+func allocBytes(scan func(string), src string) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	scan(src)
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
 func TestScannersLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
@@ -74,6 +89,10 @@ func TestScannersLinear(t *testing.T) {
 			// 4× the input: linear is ~4×; allow noise, refuse 16×.
 			if big > 9*small+30*time.Millisecond {
 				t.Errorf("n=%d: %v, 4n: %v (%.1f×): not linear", c.n, small, big, float64(big)/float64(small))
+			}
+			smallB, bigB := allocBytes(c.scan, c.gen(c.n)), allocBytes(c.scan, c.gen(4*c.n))
+			if bigB > 9*smallB+(1<<20) {
+				t.Errorf("n=%d: %d bytes, 4n: %d bytes (%.1f×): memory not linear", c.n, smallB, bigB, float64(bigB)/float64(smallB))
 			}
 		})
 	}
