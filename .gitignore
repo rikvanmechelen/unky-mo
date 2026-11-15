@@ -1,3 +1,4 @@
 /mo
 *.exe
 .claude/settings.local.json
+/.bin/

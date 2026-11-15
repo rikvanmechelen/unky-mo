@@ -45,7 +45,6 @@ jobs:
 
       - name: mocks up-to-date
         run: |
-          go install go.uber.org/mock/mockgen@latest
           make mocks
           git diff --exit-code -- '*mock_*.go' || (echo "::error::generated mocks are stale — run 'make mocks' and commit"; exit 1)
 

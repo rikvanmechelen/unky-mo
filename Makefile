@@ -56,12 +56,21 @@ test-expectfail:
 test-integration:
 	go test -tags integration ./internal/tmux/... ./internal/integration/... ./internal/tui/sidebar/...
 
-# Regenerate all gomock mocks. Requires mockgen — `go install go.uber.org/mock/mockgen@latest`.
-# go:generate invokes mockgen by name; put GOBIN on PATH so a `go install`ed
-# mockgen is found even when the shell's PATH lacks it.
-mocks:
-	@PATH="$(GOBIN):$$PATH" command -v mockgen >/dev/null 2>&1 || { echo "mockgen not found — run: go install go.uber.org/mock/mockgen@latest"; exit 1; }
-	PATH="$(GOBIN):$$PATH" go generate ./...
+# Regenerate all gomock mocks. go:generate invokes mockgen by name, so the
+# pinned version (the go.uber.org/mock in go.mod) is installed into .bin/ and
+# put first on PATH: an unpinned `mockgen@latest` would one day write
+# different mocks and fail mocks-check for no reason.
+MOCKGEN_VERSION := $(shell go list -m -f '{{.Version}}' go.uber.org/mock)
+MOCKGEN := $(CURDIR)/.bin/mockgen-$(MOCKGEN_VERSION)
+
+$(MOCKGEN):
+	mkdir -p $(CURDIR)/.bin/tmp
+	GOBIN=$(CURDIR)/.bin/tmp go install go.uber.org/mock/mockgen@$(MOCKGEN_VERSION)
+	mv $(CURDIR)/.bin/tmp/mockgen $(MOCKGEN) && rmdir $(CURDIR)/.bin/tmp
+	ln -sf $(notdir $(MOCKGEN)) $(CURDIR)/.bin/mockgen
+
+mocks: $(MOCKGEN)
+	PATH="$(CURDIR)/.bin:$$PATH" go generate ./...
 
 # CI check: mocks are up-to-date.
 mocks-check: mocks
