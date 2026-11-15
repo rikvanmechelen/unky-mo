@@ -232,8 +232,7 @@ func (s *Server) handleAnswerStartup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One dialog-driving request at a time, like answers and mode changes.
-	s.modeMu.Lock()
-	defer s.modeMu.Unlock()
+	defer s.paneLock(windowID)()
 
 	target := s.claudeTarget(windowID)
 	screen, err := s.deps.ClaudePane.Capture(target)

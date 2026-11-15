@@ -54,13 +54,12 @@ type Server struct {
 	// fetchMu serializes the reviewer view's git fetches of PR branches.
 	fetchMu sync.Mutex
 
-	// modeMu serializes permission-mode changes; modeSettle is the wait
-	// between footer re-reads after each shift+tab (zero in tests).
-	modeMu     sync.Mutex
+	// paneLocks holds one mutex per window (see paneLock); modeSettle is
+	// the wait between screen re-reads after a key (zero in tests).
+	paneLocks  sync.Map
 	modeSettle time.Duration
-	// menuMu serializes key presses into slash-command menus and guards
-	// menuEscOn: per window, the sig of a menu an Esc was pressed on that
-	// Claude hasn't redrawn since (see handleMenuKeys).
+	// menuMu guards menuEscOn: per window, the sig of a menu an Esc was
+	// pressed on that Claude hasn't redrawn since (see handleMenuKeys).
 	menuMu    sync.Mutex
 	menuEscOn map[string]string
 
@@ -299,4 +298,16 @@ func (s *Server) resolveSession(windowID string) (jsonlPath, sessionID, status s
 		}
 	}
 	return "", "", "", false
+}
+
+// paneLock takes the window's lock for pressing keys in Claude's pane and
+// returns its unlock. Everything that types there (prompts, question and
+// permission answers, mode changes, menus, the trust dialog) takes it, so
+// two requests never interleave their keys: a prompt landing in the middle
+// of an answer's walk would pick a row or end up in the wrong box.
+func (s *Server) paneLock(windowID string) func() {
+	m, _ := s.paneLocks.LoadOrStore(windowID, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }

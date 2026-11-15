@@ -23,6 +23,15 @@ func postPrompt(t *testing.T, srv *Server, windowID, body string) *httptest.Resp
 	return rec
 }
 
+// emptyBoxPane is Claude's pane showing an empty message box: what an idle
+// or working session must show before anything is typed into it.
+func emptyBoxPane(t *testing.T, ctrl *gomock.Controller) *mock_web.MockClaudePane {
+	t.Helper()
+	pane := mock_web.NewMockClaudePane(ctrl)
+	pane.EXPECT().Capture(gomock.Any()).Return(readQueueFixture(t, "working-empty.txt"), nil).AnyTimes()
+	return pane
+}
+
 func TestHandlePrompt400OnEmptyText(t *testing.T) {
 	srv := NewServer(Deps{}, 0, "test")
 	rec := postPrompt(t, srv, "@1", `{"text":"   "}`)
@@ -43,7 +52,7 @@ func TestHandlePromptMultilineUsesPaste(t *testing.T) {
 	mockPrompts := mock_web.NewMockPromptSender(ctrl)
 	mockPrompts.EXPECT().SendPastedText("test:@5.0", "line one\nline two").Return(nil)
 
-	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, ctrl), State: mockState, Prompts: mockPrompts}, 0, "test")
 	rec := postPrompt(t, srv, "@5", `{"text":"line one\r\nline two\n"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -100,7 +109,7 @@ func TestHandlePrompt200WhenStatusIsQuestion(t *testing.T) {
 	mockState := mock_web.NewMockStateReader(ctrl)
 	mockState.EXPECT().Read().Return(&state.StateFile{
 		Projects: []state.ProjectState{{WindowID: "@1", SessionID: "s1", Status: "question"}},
-	}, nil)
+	}, nil).AnyTimes()
 	mockPrompts := mock_web.NewMockPromptSender(ctrl)
 	mockPrompts.EXPECT().SendLiteralText("test:@1.0", "1").Return(nil)
 
@@ -137,7 +146,7 @@ func TestHandlePrompt200CallsSendLiteralTextWithResolvedTarget(t *testing.T) {
 	mockPrompts := mock_web.NewMockPromptSender(ctrl)
 	mockPrompts.EXPECT().SendLiteralText("test:@5.0", "hello").Return(nil)
 
-	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, ctrl), State: mockState, Prompts: mockPrompts}, 0, "test")
 	rec := postPrompt(t, srv, "@5", `{"text":"hello"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -153,7 +162,7 @@ func TestHandlePrompt500WhenSendFails(t *testing.T) {
 	mockPrompts := mock_web.NewMockPromptSender(ctrl)
 	mockPrompts.EXPECT().SendLiteralText(gomock.Any(), gomock.Any()).Return(errSendFailed)
 
-	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, ctrl), State: mockState, Prompts: mockPrompts}, 0, "test")
 	rec := postPrompt(t, srv, "@1", `{"text":"hello"}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status: want 500, got %d", rec.Code)
@@ -178,7 +187,7 @@ func TestHandlePromptStripsControlCharacters(t *testing.T) {
 	mockPrompts := mock_web.NewMockPromptSender(ctrl)
 	mockPrompts.EXPECT().SendPastedText("test:@5.0", "> line [201~ rest\n\tindented").Return(nil)
 
-	srv := NewServer(Deps{State: mockState, Prompts: mockPrompts}, 0, "test")
+	srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, ctrl), State: mockState, Prompts: mockPrompts}, 0, "test")
 	rec := postPrompt(t, srv, "@5", `{"text":"> line \u001b[201~ rest\n\tindented\u0007"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -198,7 +207,7 @@ func TestHandlePromptWithAttachmentsSendsResolvedPaths(t *testing.T) {
 	mockPrompts := mock_web.NewMockPromptSender(ctrl)
 	mockPrompts.EXPECT().SendPrompt("test:@5.0", "what is\nthis", []string{pb, pa}).Return(nil)
 
-	srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+	srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, gomock.NewController(t)), State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
 	rec := postPrompt(t, srv, "@5", `{"text":"what is\nthis","attachments":["`+b+`","`+a+`"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -213,7 +222,7 @@ func TestHandlePromptImageOnly(t *testing.T) {
 	mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
 	mockPrompts.EXPECT().SendPrompt("test:@5.0", "", []string{pa}).Return(nil)
 
-	srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+	srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, gomock.NewController(t)), State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
 	rec := postPrompt(t, srv, "@5", `{"text":"  ","attachments":["`+a+`"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d: %s", rec.Code, rec.Body.String())
@@ -246,7 +255,7 @@ func TestHandlePromptWithFiles(t *testing.T) {
 	} {
 		mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
 		c.expect(mockPrompts)
-		srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+		srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, gomock.NewController(t)), State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
 		if rec := postPrompt(t, srv, "@5", c.body); rec.Code != http.StatusOK {
 			t.Errorf("%s: want 200, got %d: %s", c.body, rec.Code, rec.Body.String())
 		}
@@ -262,7 +271,7 @@ func TestHandlePrompt400OnUnknownAttachment(t *testing.T) {
 	for _, id := range []string{other, "../../etc/passwd", "/etc/passwd"} {
 		// No PromptSender expectations: any send fails the test.
 		mockPrompts := mock_web.NewMockPromptSender(gomock.NewController(t))
-		srv := NewServer(Deps{State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
+		srv := NewServer(Deps{ClaudePane: emptyBoxPane(t, gomock.NewController(t)), State: liveState(t, "@5", "idle"), Prompts: mockPrompts, Attachments: store}, 0, "test")
 		rec := postPrompt(t, srv, "@5", `{"text":"hi","attachments":["`+id+`"]}`)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("attachment %q: want 400, got %d", id, rec.Code)
@@ -405,7 +414,7 @@ func TestHandlePromptSendNowSkipsChordWhenNoLongerActive(t *testing.T) {
 // sendNow means nothing for an idle session: no chord, no pane read.
 func TestHandlePromptSendNowIgnoredWhenIdle(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	pane := mock_web.NewMockClaudePane(ctrl)
+	pane := emptyBoxPane(t, ctrl)
 	prompts := mock_web.NewMockPromptSender(ctrl)
 	prompts.EXPECT().SendLiteralText("test:@1.0", "hi").Return(nil)
 	srv := statesServer(t, pane, prompts, "idle")
@@ -432,5 +441,82 @@ func TestHandlePromptSendNowErrorsWhenNeverQueued(t *testing.T) {
 	rec := postPrompt(t, srv, "@1", `{"text":"now please","sendNow":true}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status: want 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// An idle session whose screen shows a dialog instead of the message box
+// (/config here, where Enter toggles a setting) gets nothing typed into it.
+func TestHandlePromptIdleRefusedWithoutMessageBox(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	b, err := os.ReadFile("testdata/menus/config.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane.EXPECT().Capture("test:@1.0").Return(string(b), nil)
+	// No PromptSender expectations: any send fails the test.
+	srv := NewServer(Deps{State: liveState(t, "@1", "idle"), Prompts: mock_web.NewMockPromptSender(ctrl), ClaudePane: pane}, 0, "test")
+	if rec := postPrompt(t, srv, "@1", `{"text":"y"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// Text typed in the terminal's box isn't appended to.
+func TestHandlePromptIdleRefusedWhenBoxHasText(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	pane := mock_web.NewMockClaudePane(ctrl)
+	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-typed.txt"), nil)
+	srv := NewServer(Deps{State: liveState(t, "@1", "idle"), Prompts: mock_web.NewMockPromptSender(ctrl), ClaudePane: pane}, 0, "test")
+	if rec := postPrompt(t, srv, "@1", `{"text":"hi"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// A captured AskUserQuestion takes text from the message box only on its
+// "Type something" row: elsewhere a digit would pick a row.
+func TestHandlePromptQuestionNeedsTypeSomething(t *testing.T) {
+	qs := []questionSpec{spec("Which pet?", false, "Cat", "Dog")}
+	for _, c := range []struct {
+		cursor int
+		code   int
+	}{{1, http.StatusConflict}, {3, http.StatusOK}} {
+		d := newFakeDialog(qs)
+		d.cursor = c.cursor
+		srv := answerServer(t, questionRow(t, qs), d)
+		prompts := mock_web.NewMockPromptSender(gomock.NewController(t))
+		if c.code == http.StatusOK {
+			prompts.EXPECT().SendLiteralText("mo:@4.0", "a parrot").Return(nil)
+		}
+		srv.deps.Prompts = prompts
+		if rec := postPrompt(t, srv, "@4", `{"text":"a parrot"}`); rec.Code != c.code {
+			t.Errorf("cursor on row %d: want %d, got %d: %s", c.cursor, c.code, rec.Code, rec.Body)
+		}
+	}
+}
+
+// A Tab can't be typed (it'd be a key); text with one goes in as a paste.
+func TestHandlePromptTabIsPasted(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	prompts := mock_web.NewMockPromptSender(ctrl)
+	prompts.EXPECT().SendPastedText("test:@1.0", "a\tb").Return(nil)
+	srv := NewServer(Deps{State: liveState(t, "@1", "idle"), Prompts: prompts, ClaudePane: emptyBoxPane(t, ctrl)}, 0, "test")
+	if rec := postPrompt(t, srv, "@1", `{"text":"a\tb"}`); rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// The send-now hint counts only as its own line just above the message
+// box, not quoted in the transcript.
+func TestQueuedHintShown(t *testing.T) {
+	if !queuedHintShown(readQueueFixture(t, "working-queued.txt")) || !queuedHintShown(readQueueFixture(t, "working-queued-two.txt")) {
+		t.Error("the queued captures show the hint")
+	}
+	if queuedHintShown(readQueueFixture(t, "working-empty.txt")) {
+		t.Error("nothing is queued in working-empty")
+	}
+	quoted := "● Read(CLAUDE.md)\n  ⎿  … then presses ctrl+x ctrl+s to send now in Claude's pane …\n" +
+		strings.Repeat("\n", 20) + readQueueFixture(t, "working-empty.txt")
+	if queuedHintShown(quoted) {
+		t.Error("a quoted phrase in the transcript counted")
 	}
 }

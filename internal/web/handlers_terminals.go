@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -240,7 +241,7 @@ func (s *Server) handleTerminalInput(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text string `json:"text"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
 		return
 	}
@@ -248,6 +249,9 @@ func (s *Server) handleTerminalInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("one line at a time"))
 		return
 	}
+	// Control characters are keys, sent through /keys; typed as text, an
+	// escape sequence would act on the shell's line editor.
+	req.Text = strings.ReplaceAll(stripControl(req.Text), "\t", " ")
 	pane, ok := s.ownedTerminal(w, r)
 	if !ok {
 		return

@@ -129,8 +129,7 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 
 	// One change at a time: two interleaved cycles would each see the
 	// other's presses.
-	s.modeMu.Lock()
-	defer s.modeMu.Unlock()
+	defer s.paneLock(windowID)()
 
 	target := s.claudeTarget(windowID)
 	cur, err := s.captureMode(target)

@@ -175,8 +175,7 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.menuMu.Lock()
-	defer s.menuMu.Unlock()
+	defer s.paneLock(windowID)()
 
 	target := s.claudeTarget(windowID)
 	cur, err := s.readMenu(windowID)
@@ -237,7 +236,10 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 		// would land on the empty prompt once the first closes the menu,
 		// and open /rewind: refuse it until the screen changes.
 		esc := keys[len(keys)-1].Name == "Escape"
-		if esc && s.menuEscOn[windowID] == cur.Sig {
+		s.menuMu.Lock()
+		escPending := s.menuEscOn[windowID] == cur.Sig
+		s.menuMu.Unlock()
+		if esc && escPending {
 			writeMenuConflict(w, "Esc was already sent and Claude hasn't redrawn yet", cur)
 			return
 		}
@@ -250,6 +252,7 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
+		s.menuMu.Lock()
 		if esc && cur != nil && cur.Sig == pre {
 			if s.menuEscOn == nil {
 				s.menuEscOn = map[string]string{}
@@ -258,6 +261,7 @@ func (s *Server) handleMenuKeys(w http.ResponseWriter, r *http.Request) {
 		} else {
 			delete(s.menuEscOn, windowID)
 		}
+		s.menuMu.Unlock()
 	}
 	writeJSON(w, map[string]*menuView{"menu": cur})
 }

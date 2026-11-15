@@ -428,8 +428,7 @@ func (s *Server) handleAnswerPermission(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// One dialog-driving request at a time, like mode changes and answers.
-	s.modeMu.Lock()
-	defer s.modeMu.Unlock()
+	defer s.paneLock(windowID)()
 
 	err = s.answerPermission(s.claudeTarget(windowID), a)
 	var bad badAnswerError

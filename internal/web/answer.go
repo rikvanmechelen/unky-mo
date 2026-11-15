@@ -196,8 +196,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	// One dialog-driving request at a time, like mode changes: two
 	// interleaved ones would each see the other's keys.
-	s.modeMu.Lock()
-	defer s.modeMu.Unlock()
+	defer s.paneLock(windowID)()
 
 	if err := s.answerQuestions(s.claudeTarget(windowID), pending.Questions, answers); err != nil {
 		if errors.Is(err, errDialogLost) {

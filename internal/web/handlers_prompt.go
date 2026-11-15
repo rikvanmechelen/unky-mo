@@ -68,13 +68,26 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("session is %s, not idle", status))
 		return
 	}
-	if status == "active" {
-		// Typing into a working session queues the message. It would mix
-		// with anything already typed in the terminal's message box.
-		if err := s.checkInputBoxEmpty(s.claudeTarget(windowID)); err != nil {
-			writeError(w, http.StatusConflict, err)
-			return
+	defer s.paneLock(windowID)()
+	if status == "question" {
+		// A captured AskUserQuestion is answered through its form; text
+		// from the message box only goes to its "Type something" row,
+		// since anywhere else in the dialog digits pick rows and Enter
+		// moves on. An uncaptured question has no form, and the browser
+		// asks for an option number or a reply: that is typed as is.
+		if row, found, err := s.permissionRow(windowID); err == nil && found && row.PendingTool == "AskUserQuestion" {
+			if err := s.checkTypeSomething(s.claudeTarget(windowID)); err != nil {
+				writeError(w, http.StatusConflict, err)
+				return
+			}
 		}
+	} else if err := s.checkInputBoxEmpty(s.claudeTarget(windowID)); err != nil {
+		// Idle or working, the text goes into the message box: it would
+		// mix with text already typed in the terminal, or land in a dialog
+		// (/config, the trust prompt…) the state file knows nothing about,
+		// where Enter changes a setting.
+		writeError(w, http.StatusConflict, err)
+		return
 	}
 
 	var paths, files []string
@@ -97,7 +110,8 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(paths) > 0:
 		err = s.deps.Prompts.SendPrompt(target, text, paths)
-	case strings.ContainsAny(text, "\r\n"):
+	case strings.ContainsAny(text, "\r\n\t"):
+		// A typed Tab would be a key (completion), not text.
 		// Typed newlines would submit at the first line; a bracketed
 		// paste arrives as one block (e.g. a review from the editor tabs).
 		err = s.deps.Prompts.SendPastedText(target, text)
@@ -161,7 +175,7 @@ func (s *Server) sendNow(windowID, target string) error {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(screen, sendNowHint) {
+		if queuedHintShown(screen) {
 			return s.deps.ClaudePane.SendKeys(target, sendNowKeys)
 		}
 		time.Sleep(s.modeSettle)
@@ -200,6 +214,55 @@ func (s *Server) checkInputBoxEmpty(target string) error {
 	}
 	if text != "" {
 		return errInputBoxBusy
+	}
+	return nil
+}
+
+// queuedHintShown reports whether Claude shows a queued message's "send
+// now" hint: a line of its own just above the message box, not the phrase
+// anywhere on screen (the transcript can quote it, e.g. a cat of the docs).
+func queuedHintShown(screen string) bool {
+	lines := strings.Split(cropSidePanel(screen), "\n")
+	rules := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !isBoxRule(lines[i]) {
+			continue
+		}
+		if rules++; rules < 2 {
+			continue
+		}
+		for j := i - 1; j >= max(0, i-queuedHintLines); j-- {
+			if strings.TrimSpace(lines[j]) == sendNowHint {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// queuedHintLines is how far above the message box the hint may sit
+// (queued messages, the hint, a blank line and the spinner between).
+const queuedHintLines = 12
+
+var errNotTypeSomething = fmt.Errorf("answer the question in its banner (the terminal's cursor isn't on \"Type something\")")
+
+// checkTypeSomething refuses to type into an AskUserQuestion dialog unless
+// its cursor is on an empty "Type something" row.
+func (s *Server) checkTypeSomething(target string) error {
+	if s.deps.ClaudePane == nil {
+		return fmt.Errorf("can't read the question")
+	}
+	screen, err := s.deps.ClaudePane.Capture(target)
+	if err != nil {
+		return fmt.Errorf("can't read the question: %w", err)
+	}
+	v := parseDialog(screen)
+	if !v.found {
+		return fmt.Errorf("can't see the question in Claude's terminal")
+	}
+	if row, ok := v.rows[v.cursor]; !ok || strings.TrimRight(row.label, ".") != "Type something" {
+		return errNotTypeSomething
 	}
 	return nil
 }
