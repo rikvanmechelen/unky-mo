@@ -71,6 +71,17 @@ type UsageState struct {
 	AuthError bool      `json:"auth_error,omitempty"`
 }
 
+// A ProjectState's Status, as the TUI writes it and the sidebars and mo
+// web read it.
+const (
+	StatusNone       = "none"
+	StatusActive     = "active"
+	StatusIdle       = "idle"
+	StatusPermission = "permission"
+	StatusQuestion   = "question"
+	StatusExternal   = "external"
+)
+
 // Write atomically writes the state file (write to temp, then rename).
 func Write(path string, s *StateFile) error {
 	s.UpdatedAt = time.Now()

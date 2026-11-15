@@ -351,7 +351,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
 		return
 	}
-	if row.Status != "permission" {
+	if row.Status != state.StatusPermission {
 		writeError(w, http.StatusConflict, fmt.Errorf("no permission prompt is waiting"))
 		return
 	}
@@ -422,7 +422,7 @@ func (s *Server) handleAnswerPermission(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
 		return
 	}
-	if row.Status != "permission" {
+	if row.Status != state.StatusPermission {
 		writeError(w, http.StatusConflict, fmt.Errorf("no permission prompt is waiting"))
 		return
 	}

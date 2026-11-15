@@ -12,6 +12,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/notify"
 	"github.com/rvanmech/unky-mo/internal/project"
+	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/status"
 )
 
@@ -306,17 +307,17 @@ func mergeRefreshedProjects(existing []list.Item, refreshed []project.Project) [
 func statusToString(s SessionStatus) string {
 	switch s {
 	case StatusActive:
-		return "active"
+		return state.StatusActive
 	case StatusIdle:
-		return "idle"
+		return state.StatusIdle
 	case StatusPermission:
-		return "permission"
+		return state.StatusPermission
 	case StatusQuestion:
-		return "question"
+		return state.StatusQuestion
 	case StatusExternal:
-		return "external"
+		return state.StatusExternal
 	default:
-		return "none"
+		return state.StatusNone
 	}
 }
 

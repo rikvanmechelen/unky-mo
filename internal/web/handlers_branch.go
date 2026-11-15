@@ -14,6 +14,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/github"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/review"
+	"github.com/rvanmech/unky-mo/internal/state"
 )
 
 // The reviewer view (/branch?project=&branch= or /branch?project=&pr=)
@@ -145,7 +146,7 @@ func (s *Server) view(t *branchTarget) *targetView {
 	v.Kind, v.Path, v.Head = "checkout", t.dir, ""
 	if st, err := s.deps.State.Read(); err == nil {
 		for _, p := range st.Projects {
-			if p.WindowID != "" && p.SessionID != "" && p.Status != "none" && underDir(p.Path, t.dir) {
+			if p.WindowID != "" && p.SessionID != "" && p.Status != state.StatusNone && underDir(p.Path, t.dir) {
 				v.SessionWindow = p.WindowID
 				break
 			}

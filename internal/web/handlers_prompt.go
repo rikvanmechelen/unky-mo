@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
@@ -64,12 +65,12 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session for window %s", windowID))
 		return
 	}
-	if status != "idle" && status != "question" && status != "active" {
+	if status != state.StatusIdle && status != state.StatusQuestion && status != state.StatusActive {
 		writeError(w, http.StatusConflict, fmt.Errorf("session is %s, not idle", status))
 		return
 	}
 	defer s.paneLock(windowID)()
-	if status == "question" {
+	if status == state.StatusQuestion {
 		// A captured AskUserQuestion is answered through its form; text
 		// from the message box only goes to its "Type something" row,
 		// since anywhere else in the dialog digits pick rows and Enter
@@ -122,7 +123,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to deliver prompt: %w", err))
 		return
 	}
-	if body.SendNow && status == "active" {
+	if body.SendNow && status == state.StatusActive {
 		if err := s.sendNow(windowID, target); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("queued, but couldn't send it now: %w", err))
 			return
@@ -168,7 +169,7 @@ const sendNowTries = 80
 // the keys would land in an idle message box).
 func (s *Server) sendNow(windowID, target string) error {
 	for range sendNowTries {
-		if _, _, status, ok := s.resolveSession(windowID); !ok || status != "active" {
+		if _, _, status, ok := s.resolveSession(windowID); !ok || status != state.StatusActive {
 			return nil
 		}
 		screen, err := s.deps.ClaudePane.Capture(target)

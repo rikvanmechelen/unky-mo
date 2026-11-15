@@ -143,7 +143,7 @@ func observe(row state.ProjectState) observation {
 	return o
 }
 
-func needsInput(status string) bool { return status == "question" || status == "permission" }
+func needsInput(status string) bool { return status == state.StatusQuestion || status == state.StatusPermission }
 
 // observe takes one read of the state file's rows.
 func (t *notifyTracker) observe(rows []state.ProjectState, now time.Time) []notifyEvent {
@@ -158,7 +158,7 @@ func (t *notifyTracker) observe(rows []state.ProjectState, now time.Time) []noti
 		if !ok {
 			// A new session (or the priming read): record, don't notify.
 			tr = &trackedRow{confirmed: o}
-			if o.status == "active" {
+			if o.status == state.StatusActive {
 				tr.activeSince = now
 			}
 			t.rows[key] = tr
@@ -174,7 +174,7 @@ func (t *notifyTracker) observe(rows []state.ProjectState, now time.Time) []noti
 			if kind := transitionKind(from, o, now.Sub(tr.activeSince)); kind != "" {
 				events = append(events, notifyEvent{Kind: kind, Row: row})
 			}
-			if o.status == "active" && from.status != "active" {
+			if o.status == state.StatusActive && from.status != state.StatusActive {
 				tr.activeSince = now
 			}
 		default:
@@ -199,7 +199,7 @@ func transitionKind(from, to observation, activeFor time.Duration) string {
 	switch {
 	case needsInput(to.status) && (from.status != to.status || from.sig != to.sig):
 		return "input"
-	case from.status == "active" && to.status == "idle" && activeFor >= doneMinActive:
+	case from.status == state.StatusActive && to.status == state.StatusIdle && activeFor >= doneMinActive:
 		return "done"
 	}
 	return ""
@@ -268,7 +268,7 @@ func pendingSummary(status, tool string, input json.RawMessage) string {
 	if tool != "" {
 		return tool
 	}
-	if status == "question" {
+	if status == state.StatusQuestion {
 		return "Waiting for your answer"
 	}
 	return "Waiting for permission"
@@ -296,7 +296,7 @@ func pushMessageFor(ev notifyEvent) PushMessage {
 			parts = append(parts, row.Branch)
 		}
 		msg.Body = clip(strings.Join(parts, " · "), maxNotifyBody)
-	case row.Status == "question":
+	case row.Status == state.StatusQuestion:
 		msg.Title = label + " needs you"
 		msg.Body = clip(pendingSummary(row.Status, row.PendingTool, row.PendingInput), maxNotifyBody)
 	default:

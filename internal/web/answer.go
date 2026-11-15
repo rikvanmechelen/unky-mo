@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rvanmech/unky-mo/internal/state"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
@@ -161,7 +162,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	for _, p := range st.Projects {
 		if p.WindowID == windowID && p.SessionID != "" {
 			found = true
-			if p.Status == "question" {
+			if p.Status == state.StatusQuestion {
 				tool, input = p.PendingTool, p.PendingInput
 			}
 			break
