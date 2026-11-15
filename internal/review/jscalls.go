@@ -1338,6 +1338,25 @@ func (l *jsCalls) fileOf(p string, imp hImport) string {
 // (export { a } from, export * from) — followed hops more files deep.
 // external is true when the name comes from a package outside the repo.
 func (l *jsCalls) exportOf(r *hResolver, file, name string, hops int) (ref hDefRef, want []string, external bool) {
+	ref, want, external = l.exportWalk(r, file, name, hops, map[string]bool{})
+	if len(want) > jsMaxWant {
+		want = want[:jsMaxWant]
+	}
+	return ref, want, external
+}
+
+// jsMaxWant caps the ids a removed export is looked for under: a barrel of
+// `export *` lines re-exporting other barrels fans out multiplicatively.
+const jsMaxWant = 64
+
+// exportWalk is exportOf's walk; seen holds the file+name pairs already
+// followed, so the same barrel reached twice isn't walked again.
+func (l *jsCalls) exportWalk(r *hResolver, file, name string, hops int, seen map[string]bool) (ref hDefRef, want []string, external bool) {
+	key := file + "\x00" + name
+	if seen[key] {
+		return hDefRef{}, nil, false
+	}
+	seen[key] = true
 	f := r.files[file]
 	if f == nil {
 		return hDefRef{}, nil, true
@@ -1355,7 +1374,7 @@ func (l *jsCalls) exportOf(r *hResolver, file, name string, hops int) (ref hDefR
 			external = true
 			return false
 		}
-		got, w, ext := l.exportOf(r, target, name, hops-1)
+		got, w, ext := l.exportWalk(r, target, name, hops-1, seen)
 		ref, external = got, ext
 		want = append(want, w...)
 		return got.def != nil
