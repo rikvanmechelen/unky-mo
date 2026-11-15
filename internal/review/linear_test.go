@@ -97,3 +97,35 @@ func TestScannersLinear(t *testing.T) {
 		})
 	}
 }
+
+// FuzzScanners: no input crashes a scanner or takes long. A crash here
+// would take mo web down (scans run on worker goroutines, outside the
+// per-language recover).
+//
+//	go test ./internal/review -run '^$' -fuzz FuzzScanners
+func FuzzScanners(f *testing.F) {
+	for _, s := range []string{
+		"def f(x):\n    return g(x)\n", "class A < B\n  def f; g; end\nend\n", "export function f() { return g() }\n",
+		"fun f() = g()\n", "struct S { func f() { g() } }\n", "/* ", `"""`, "<% x %>", "=begin\n", "(((", "a.b.c(",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, src string) {
+		start := time.Now()
+		(&pyCalls{}).scanFile("x.py", src)
+		pyImports(src)
+		(&rbCalls{}).scanFile("x.rb", src)
+		rubyConstants(rubyCode(src))
+		erbCode(src)
+		(&jsCalls{}).scanFile("x.tsx", src)
+		jsImports(jsCode(src))
+		(&jvmCalls{}).scanFile("X.kt", src)
+		(&jvmCalls{}).scanFile("X.java", src)
+		jvmRefs(src)
+		(&swiftCalls{}).scanFile("x.swift", src)
+		swiftRefs(src)
+		if d := time.Since(start); d > time.Second && len(src) < 4096 {
+			t.Errorf("%d bytes took %v", len(src), d)
+		}
+	})
+}
