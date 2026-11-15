@@ -311,6 +311,18 @@ func (mr *MockTmuxClientMockRecorder) SetWindowOption(target, option, value any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetWindowOption", reflect.TypeOf((*MockTmuxClient)(nil).SetWindowOption), target, option, value)
 }
 
+// SetWindowRemainOnExit mocks base method.
+func (m *MockTmuxClient) SetWindowRemainOnExit(target string, on bool) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetWindowRemainOnExit", target, on)
+}
+
+// SetWindowRemainOnExit indicates an expected call of SetWindowRemainOnExit.
+func (mr *MockTmuxClientMockRecorder) SetWindowRemainOnExit(target, on any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetWindowRemainOnExit", reflect.TypeOf((*MockTmuxClient)(nil).SetWindowRemainOnExit), target, on)
+}
+
 // SplitWindow mocks base method.
 func (m *MockTmuxClient) SplitWindow(target string, cols int, cwd, command string) (string, error) {
 	m.ctrl.T.Helper()
@@ -352,6 +364,18 @@ func (m *MockTmuxClient) SwitchToWindow(target string) error {
 func (mr *MockTmuxClientMockRecorder) SwitchToWindow(target any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchToWindow", reflect.TypeOf((*MockTmuxClient)(nil).SwitchToWindow), target)
+}
+
+// UnsetSessionHook mocks base method.
+func (m *MockTmuxClient) UnsetSessionHook(hookName string) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "UnsetSessionHook", hookName)
+}
+
+// UnsetSessionHook indicates an expected call of UnsetSessionHook.
+func (mr *MockTmuxClientMockRecorder) UnsetSessionHook(hookName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsetSessionHook", reflect.TypeOf((*MockTmuxClient)(nil).UnsetSessionHook), hookName)
 }
 
 // WindowExists mocks base method.

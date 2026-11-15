@@ -57,6 +57,10 @@ type TmuxClient interface {
 	SessionExistsNamed(name string) bool
 	StartPersistentSession(name, cwd, command string) error
 	RespawnPane(target, command string) error
+	// SetWindowRemainOnExit and UnsetSessionHook undo the TUI's home-window
+	// respawn safety nets before an intentional quit.
+	SetWindowRemainOnExit(target string, on bool)
+	UnsetSessionHook(hookName string)
 }
 
 // ClaudeReader is the subset of the internal/claude package that ops reads

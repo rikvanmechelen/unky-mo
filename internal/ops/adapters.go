@@ -55,6 +55,10 @@ func (a *tmuxClientAdapter) RenameWindow(target, newName string) error {
 	return a.c.RenameWindow(target, newName)
 }
 func (a *tmuxClientAdapter) SelectPane(target string) error { return a.c.SelectPane(target) }
+func (a *tmuxClientAdapter) SetWindowRemainOnExit(target string, on bool) {
+	a.c.SetWindowRemainOnExit(target, on)
+}
+func (a *tmuxClientAdapter) UnsetSessionHook(hookName string) { a.c.UnsetSessionHook(hookName) }
 func (a *tmuxClientAdapter) SendKeys(target, keys string) error {
 	return a.c.SendKeys(target, keys)
 }

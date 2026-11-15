@@ -65,7 +65,7 @@ func (m Model) refreshSessions() tea.Cmd {
 				// If the status manager has no state yet for this session,
 				// bootstrap it via a JSONL read and start watching.
 				if st == StatusNone {
-					jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
+					jsonlPath := filepath.Join(claudeClient.ProjectsDirForPath(s.CWD), s.SessionID+".jsonl")
 					if mgr != nil {
 						mgr.ProcessJSONLChange(s.SessionID, jsonlPath)
 						st = mgrStatusToTUI(mgr.Status(s.SessionID))
@@ -79,7 +79,7 @@ func (m Model) refreshSessions() tea.Cmd {
 
 			// Register watcher for JSONL reconciliation.
 			if watcher != nil && !isExternal {
-				jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
+				jsonlPath := filepath.Join(claudeClient.ProjectsDirForPath(s.CWD), s.SessionID+".jsonl")
 				watcher.WatchSession(s.SessionID, jsonlPath)
 			}
 
@@ -94,7 +94,7 @@ func (m Model) refreshSessions() tea.Cmd {
 				// A question or permission prompt the hooks didn't deliver
 				// (TUI restarted while it was open, hook dropped) is read back
 				// from the transcript.
-				jsonlPath := claude.ProjectsDirForPath(s.CWD) + "/" + s.SessionID + ".jsonl"
+				jsonlPath := filepath.Join(claudeClient.ProjectsDirForPath(s.CWD), s.SessionID+".jsonl")
 				v.PendingTool, v.PendingInput, _ = mgr.RecoverPending(s.SessionID,
 					func(st status.SessionStatus) (string, json.RawMessage, bool) {
 						return status.ReadPendingTool(jsonlPath, st == status.StatusQuestion)

@@ -313,13 +313,11 @@ func (m Model) restartSidebars() {
 // disableHomeRespawn turns off the respawn hooks so an intentional quit
 // actually closes the window and (if it's the last one) the session.
 func (m Model) disableHomeRespawn() {
-	if m.rawTmux == nil {
+	if m.tmux == nil {
 		return
 	}
-	session := m.rawTmux.SessionName
-	target0 := session + ":0"
-	m.rawTmux.SetWindowRemainOnExit(target0, false)
-	m.rawTmux.UnsetSessionHook("window-unlinked")
+	m.tmux.SetWindowRemainOnExit(m.tmux.SessionName()+":0", false)
+	m.tmux.UnsetSessionHook("window-unlinked")
 }
 
 // installHomeRespawnHooks sets up two tmux safety nets on window 0:

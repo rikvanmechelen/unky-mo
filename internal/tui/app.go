@@ -234,10 +234,6 @@ type Model struct {
 	usage      usage.Snapshot
 	usageReady bool // false until the first fetch completes (success or cache hit)
 	usageAuth  bool // true once a 401 is seen — surfaces an auth-expired banner
-	// rawTmux is the concrete *ttmux.Client, kept alongside the ops
-	// interface so disableHomeRespawn can call methods that aren't on
-	// the TmuxClient interface (SetWindowRemainOnExit, UnsetSessionHook).
-	rawTmux *ttmux.Client
 	// workspaceDirs + manualProjects are retained so ctrl+r can re-scan for
 	// new projects without restarting the TUI.
 	workspaceDirs  []string
@@ -254,7 +250,6 @@ type Model struct {
 func NewModel(projects []project.Project, tmuxClient *ttmux.Client, notifServer *notify.Server, stateFilePath string, ticketsCfg config.TicketsConfig, agents []config.AgentConfig, workspaceDirs []string, manualProjects []project.Project) Model {
 	opsCtx := ops.NewContext(tmuxClient)
 	m := NewModelWithDeps(projects, opsCtx.Tmux, opsCtx.Claude, opsCtx, notifServer, nil, stateFilePath, ticketsCfg, agents, workspaceDirs, manualProjects)
-	m.rawTmux = tmuxClient
 	return m
 }
 
