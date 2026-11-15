@@ -10,7 +10,7 @@
 // Pure functions over an injected `caches`/`fetch` so jstests/sw.test.js can
 // run them in Node; the listeners are only attached inside a worker.
 
-const SW_VERSION = 2;
+const SW_VERSION = 3;
 
 const META = "mo-meta";
 const POINTER = "/__mo/pointer";
@@ -328,8 +328,13 @@ if (typeof module === "object" && module.exports) {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const same = windows.find((c) => c.url === url.href);
       if (same) return same.focus();
+      // Reuse only a window already showing the launcher or the same page
+      // (another session's chat, say): navigating some other tab away could
+      // lose what's open in it (review comments, a terminal line).
       for (const c of windows) {
-        if (new URL(c.url).origin !== url.origin || !("navigate" in c)) continue;
+        const at = new URL(c.url);
+        if (at.origin !== url.origin || !("navigate" in c)) continue;
+        if (!(at.pathname === url.pathname || at.pathname === "/hub" || at.pathname.startsWith("/hub/"))) continue;
         try {
           const nav = await c.navigate(url.href);
           if (nav) return nav.focus();
