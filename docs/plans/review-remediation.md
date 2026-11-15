@@ -1,6 +1,6 @@
 # Review remediation: security fixes and the big-file refactors
 
-**Status:** built on branch `review-remediation` (81 commits off `0ba174d`), 2026-11-15; not merged, not installed. Every phase is done except the items below. `make install && mo restart` is needed before any of it runs. The findings it works through come from the full architecture, code and security review of `0ba174d` (report kept outside the repo; every finding is restated here with its file and line so this document stands alone).
+**Status:** built on branch `review-remediation` (off `0ba174d`), 2026-11-15; not merged, not installed. Every phase is done except the items below. `make install && mo restart` is needed before any of it runs. The findings it works through come from the full architecture, code and security review of `0ba174d` (report kept outside the repo; every finding is restated here with its file and line so this document stands alone).
 
 **Deviations from the plan as written:**
 - 0.2: a Node syntax test over every static script (`jstests/syntax.test.js`) instead of ESLint, which would have needed npm in CI.
