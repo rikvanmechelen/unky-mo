@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -86,15 +87,40 @@ func webCmd() *cobra.Command {
 			}
 
 			// Loaded before the server is built so /ca.crt can hand out the CA.
-			var cert tls.Certificate
+			// The generated cert is served from a CertSource that re-signs it
+			// when this machine's addresses change; cert_file stays fixed.
+			hosts := func() []string { return web.TLSHosts(addr, cfg.Web.ExtraHosts) }
+			var certs *web.CertSource
+			var fixed tls.Certificate
 			var res *web.TLSResult
 			if !cfg.Web.DisableTLS {
-				if cert, res, err = loadWebTLS(cfg.Web, addr); err != nil {
-					return fmt.Errorf("tls: %w", err)
-				}
-				if res != nil {
+				if cfg.Web.CertFile != "" || cfg.Web.KeyFile != "" {
+					if fixed, _, err = loadWebTLS(cfg.Web, addr); err != nil {
+						return fmt.Errorf("tls: %w", err)
+					}
+				} else {
+					if certs, res, err = web.NewCertSource(webTLSDir(), hosts, nil); err != nil {
+						return fmt.Errorf("tls: %w", err)
+					}
 					deps.CA = res.CA
+					go certs.Run(cmd.Context(), 30*time.Second)
 				}
+			}
+
+			scheme := "https"
+			if cfg.Web.DisableTLS {
+				scheme = "http"
+			}
+			machine, err := web.MachineID(config.DefaultStateDir())
+			if err != nil {
+				return err
+			}
+			hostname, _ := os.Hostname()
+			deps.Hub = &web.HubInfo{
+				Machine: machine,
+				Name:    strings.TrimSuffix(hostname, ".local"),
+				Version: version,
+				Addrs:   func() []string { return web.HubAddrs(scheme, addr, hosts()) },
 			}
 
 			refresh := time.Duration(cfg.Tickets.RefreshSeconds) * time.Second
@@ -114,9 +140,17 @@ func webCmd() *cobra.Command {
 				return http.ListenAndServe(addr, handler)
 			}
 
+			tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+			leaf := func() *x509.Certificate { return fixed.Leaf }
+			if certs != nil {
+				tlsConfig.GetCertificate = certs.GetCertificate
+				leaf = certs.Leaf
+			} else {
+				tlsConfig.Certificates = []tls.Certificate{fixed}
+			}
 			srv := &http.Server{
 				Handler:           handler,
-				TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+				TLSConfig:         tlsConfig,
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			ln, err := net.Listen("tcp", addr)
@@ -131,7 +165,8 @@ func webCmd() *cobra.Command {
 				fmt.Printf("CA sha256 %s\n", web.Fingerprint(res.CA))
 			}
 			return web.ServeTLSOrRedirect(ln, srv, func(host string) bool {
-				return cert.Leaf != nil && cert.Leaf.VerifyHostname(host) == nil
+				l := leaf()
+				return l != nil && l.VerifyHostname(host) == nil
 			})
 		},
 	}

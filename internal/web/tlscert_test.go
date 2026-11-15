@@ -200,10 +200,21 @@ func TestTLSHosts(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := tlsHosts(c.hostname, lan, c.addr); !reflect.DeepEqual(got, c.want) {
+			if got := tlsHosts(c.hostname, lan, c.addr, nil); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("tlsHosts(%q, %q) =\n  %v\nwant\n  %v", c.hostname, c.addr, got, c.want)
 			}
 		})
+	}
+}
+
+func TestTLSHostsExtra(t *testing.T) {
+	lan := []net.IP{net.ParseIP("192.168.86.47").To4()}
+	extra := []string{"Laptop.Tail1234.ts.net", "100.101.102.103", "*.example.com", "bad name", "", "has/slash", "192.168.86.47", "-bad.example", "ok-name"}
+	got := tlsHosts("buttercup", lan, ":7890", extra)
+	want := []string{"localhost", "127.0.0.1", "::1", "buttercup", "buttercup.local", "192.168.86.47",
+		"laptop.tail1234.ts.net", "100.101.102.103", "ok-name"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tlsHosts with extra =\n  %v\nwant\n  %v", got, want)
 	}
 }
 

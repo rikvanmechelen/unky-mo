@@ -147,6 +147,19 @@ Run on Android Chrome (emulator + a real phone), iOS Safari as a Home Screen app
 
 7. **End to end and docs.** The probe devices again, through the real flows: install, change network (home ↔ office, or two emulator networks), app opens and finds the machine, add an address by hand, pair, revoke, (phase B) a notification after an address change opens the right session. CLAUDE.md: architecture paragraph, public paths, devices, `extra_hosts`.
 
+## Step 1 in detail: identity, addresses, a cert that follows the network
+
+- **`config.DefaultStateDir()`**: `$XDG_STATE_HOME/unky-mo`, else `~/.local/state/unky-mo`. **`[web] extra_hosts`** (`WebConfig.ExtraHosts []string`).
+- **`web.MachineID(dir)`** (`hub.go`): reads `<dir>/machine-id` (32 hex characters), or creates it (dir 0700, file 0600, temp + rename). A file that exists but isn't 32 hex characters is an error, never replaced: a new id makes every device see a new machine.
+- **`TLSHosts(listenAddr, extra)`**: `extra` names are lowercased and appended after the interface IPs. Only IPs and plain DNS names (`[a-z0-9-]` labels, no wildcard) are kept; anything else is dropped, so a typo can't break the cert.
+- **`HubAddrs(scheme, listenAddr, hosts)`** (pure): the URLs a device can reach this machine at. Loopback names (`localhost`, `127.0.0.1`, `::1`) are left out, IPv6 is bracketed, the listen port is used. A listen address with an explicit host (not `0.0.0.0`/`::`/empty) gives only that host.
+- **`Deps.Hub *HubInfo`** `{Machine, Name, Version string; Addrs func() []string}`; nil → the routes are 404.
+  - `GET /api/hub/hello`: `{app: "unky-mo", machine, name, version, protocol: 1}`, `Access-Control-Allow-Origin: *`, `Cache-Control: no-store`. A simple GET with no custom headers, so no preflight is needed. (Made public in step 2; until then it sits behind basic auth like everything else.)
+  - `GET /api/hub/addrs`: `{addrs: [...]}`, `no-store`. Stays authenticated.
+- **`CertSource`** (`certsource.go`): built from the TLS dir, a `hosts func() []string` and a clock. `NewCertSource` runs `EnsureTLS` once. `GetCertificate` returns the current cert from an `atomic.Pointer`; `Leaf()` the current leaf. `Refresh()` re-runs `EnsureTLS` (which reuses the leaf when it still covers every host) when the host set differs from the last one or the leaf is within `leafRenewBefore` of expiring, and swaps the pointer. `Run(ctx, every)` calls `Refresh` every 30 s. Only for the generated cert: `cert_file` stays a fixed certificate.
+- `cmd/mo/web.go` serves `TLSConfig.GetCertificate` from the `CertSource`, and the redirect's host check reads `CertSource.Leaf()`.
+- Tests: `MachineID` create/reuse/corrupt/permissions; `tlsHosts` with extra names (valid, invalid dropped, duplicates); `HubAddrs` table; `hello` (shape, CORS, no-store) and `addrs`, both 404 without `Hub`; `CertSource`: a changed host list swaps to a leaf covering the new IP with the same CA, an unchanged one keeps the same cert, a leaf near expiry is renewed, `GetCertificate` returns the swapped cert.
+
 ## Decisions
 
 - **No public host for the shell.** A shell on GitHub Pages would be one stable origin, but code served from a third party would hold tokens that drive agents on my machines, and every request would be public → private (Local Network Access prompts). The shell is served by mo web itself and cached.

@@ -296,6 +296,9 @@ type Deps struct {
 	CA *x509.Certificate
 	// Push sends Web Push notifications; nil with [web] disable_push.
 	Push *PushService
+	// Hub identifies this machine to the installed app; nil leaves the
+	// hub routes out.
+	Hub *HubInfo
 }
 
 // Restarter asks the running TUI to restart itself, every sidebar and this

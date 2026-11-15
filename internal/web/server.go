@@ -178,6 +178,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/boot", s.handleBoot)
 	s.mux.HandleFunc("GET /api/tls", s.handleTLSInfo)
 	s.mux.HandleFunc("GET /ca.crt", s.handleCACert)
+	s.mux.HandleFunc("GET /api/hub/hello", s.handleHubHello)
+	s.mux.HandleFunc("GET /api/hub/addrs", s.handleHubAddrs)
 	s.mux.HandleFunc("GET /api/push", s.handlePushInfo)
 	s.mux.HandleFunc("GET /api/push/subscriptions", s.handlePushLookup)
 	s.mux.HandleFunc("POST /api/push/subscriptions", s.handlePushSubscribe)

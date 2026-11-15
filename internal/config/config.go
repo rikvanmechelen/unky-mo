@@ -50,6 +50,10 @@ type WebConfig struct {
 	// DisablePush turns off Web Push notifications (the phone/desktop
 	// notifications when a session needs input or is done).
 	DisablePush bool `toml:"disable_push"`
+	// ExtraHosts are more names (or IPs) this machine is reachable at, e.g.
+	// a VPN's DNS name: they go into the generated cert and the addresses
+	// the installed app learns.
+	ExtraHosts []string `toml:"extra_hosts"`
 }
 
 // ListenAddr returns Addr, or the default when unset. A method rather than a
@@ -200,6 +204,16 @@ func DefaultConfigDir() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "unky-mo")
+}
+
+// DefaultStateDir holds state that belongs to this machine and must not be
+// shared through a synced config dir (the web's machine id).
+func DefaultStateDir() string {
+	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+		return filepath.Join(dir, "unky-mo")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", "unky-mo")
 }
 
 func DefaultConfigPath() string {

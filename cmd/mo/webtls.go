@@ -33,7 +33,7 @@ func loadWebTLS(w config.WebConfig, addr string) (tls.Certificate, *web.TLSResul
 		cert, err := tls.LoadX509KeyPair(w.CertFile, w.KeyFile)
 		return cert, nil, err
 	}
-	res, err := web.EnsureTLS(webTLSDir(), web.TLSHosts(addr), time.Now())
+	res, err := web.EnsureTLS(webTLSDir(), web.TLSHosts(addr, w.ExtraHosts), time.Now())
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}

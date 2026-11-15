@@ -258,13 +258,14 @@ func Fingerprint(cert *x509.Certificate) string {
 
 // TLSHosts lists the names and IPs the server cert must cover for a listen
 // address: localhost, this machine's hostname (plain and .local), every
-// IPv4 address of an up interface, and an explicit listen host.
-func TLSHosts(listenAddr string) []string {
+// IPv4 address of an up interface, an explicit listen host, and extra
+// names from [web] extra_hosts (a VPN or DNS name).
+func TLSHosts(listenAddr string, extra []string) []string {
 	hostname, _ := os.Hostname()
-	return tlsHosts(hostname, interfaceIPv4s(), listenAddr)
+	return tlsHosts(hostname, interfaceIPv4s(), listenAddr, extra)
 }
 
-func tlsHosts(hostname string, ips []net.IP, listenAddr string) []string {
+func tlsHosts(hostname string, ips []net.IP, listenAddr string, extra []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	add := func(h string) {
@@ -294,7 +295,33 @@ func tlsHosts(hostname string, ips []net.IP, listenAddr string) []string {
 			add(strings.ToLower(host))
 		}
 	}
+	for _, h := range extra {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if net.ParseIP(h) != nil || validDNSName(h) {
+			add(h)
+		}
+	}
 	return out
+}
+
+// validDNSName reports whether name is a plain DNS name: dot-separated
+// labels of letters, digits and inner hyphens. Wildcards and anything else
+// are refused, so a typo in extra_hosts can't break the cert.
+func validDNSName(name string) bool {
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // interfaceIPv4s returns the IPv4 addresses of up, non-loopback interfaces,
