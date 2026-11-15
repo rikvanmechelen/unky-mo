@@ -806,15 +806,23 @@ func rbIdentEnd(name string) bool { return name != "" && isWordByte(name[len(nam
 // runs on while brackets are open or a line ends with a comma.
 func rbStatementEnd(code []string, i int) int {
 	d := 0
-	for k := i; k < len(code); k++ {
+	// Capped: once one line leaves a bracket open, every later macro's
+	// statement would run to the end of the file, and each is read with
+	// regexps line by line, which is quadratic over a file of them. A real
+	// macro call spans a few lines.
+	stop := min(len(code)-1, i+rbMaxStatementLines-1)
+	for k := i; k <= stop; k++ {
 		d += depth(code[k])
 		t := strings.TrimSpace(code[k])
 		if d <= 0 && !strings.HasSuffix(t, ",") && !strings.HasSuffix(t, "\\") {
 			return k
 		}
 	}
-	return len(code) - 1
+	return stop
 }
+
+// rbMaxStatementLines caps how far rbStatementEnd follows a statement.
+const rbMaxStatementLines = 100
 
 // rbCallbackRefs reads a callback macro's method symbols, refs on an
 // instance of the class: the positional ones (except for validates, whose
