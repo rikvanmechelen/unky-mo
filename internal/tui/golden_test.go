@@ -166,14 +166,11 @@ func TestGoldenScreens(t *testing.T) {
 			return m
 		}},
 		{"dashboard_new_menu", func(m Model) Model {
-			m.pendingNewMenuActive = true
-			m.pendingNewPrimaryWin = "alpha"
+			m.newSession = &newSessionPrompt{primaryWin: "alpha"}
 			return m
 		}},
 		{"dashboard_new_menu_resume", func(m Model) Model {
-			m.pendingNewMenuActive = true
-			m.pendingNewPrimaryWin = "alpha"
-			m.pendingNewResumeSession = "22222222-bbbb"
+			m.newSession = &newSessionPrompt{primaryWin: "alpha", resumeSession: "22222222-bbbb"}
 			return m
 		}},
 		{"dashboard_suspend_quit", func(m Model) Model {
@@ -269,8 +266,7 @@ func TestGoldenScreens(t *testing.T) {
 		}},
 		{"detail_new_menu", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingNewMenuActive = true
-			m.pendingNewPrimaryWin = "alpha@feat"
+			m.newSession = &newSessionPrompt{primaryWin: "alpha@feat"}
 			return m
 		}},
 		{"detail_agent_picker", func(m Model) Model {

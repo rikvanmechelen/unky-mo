@@ -197,14 +197,7 @@ type Model struct {
 	// whose primary window is occupied by a different session. Presents
 	// s/p/c/esc options (switch / park+new / concurrent / cancel). Captured
 	// per-field so the menu survives cursor movement without re-querying.
-	pendingNewMenuActive    bool
-	pendingNewProject       string
-	pendingNewBranch        string // "" for main checkout
-	pendingNewCwd           string
-	pendingNewPrimaryWin    string // composed primary window name (no suffix)
-	pendingNewLivePID       int    // claude PID of the session to park on `p`
-	pendingNewLiveID        string // claude session ID of the current primary
-	pendingNewResumeSession string // non-empty ⇒ `p`/`c` launch `claude --resume <id>` instead of fresh
+	newSession *newSessionPrompt
 	// Agent picker menu: shown when shift+enter is pressed on a branch row.
 	pendingAgentPickerActive bool
 	pendingAgentPickerBranch *project.Branch
@@ -577,13 +570,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// New-session menu captures all input while active.
-		if m.pendingNewMenuActive {
+		if m.newSession != nil {
 			// Multi-option menu. Primary = switch (least destructive: no kill,
 			// no spawn). enter fires the primary; n/N/esc cancel.
 			switch msg.String() {
 			case "s", "S", "enter":
-				primary := m.pendingNewPrimaryWin
-				m.clearPendingNewMenu()
+				primary := m.newSession.primaryWin
+				m.newSession = nil
 				return m, func() tea.Msg {
 					if existed, err := m.focusIfExists(primary); existed {
 						if err != nil {
@@ -594,21 +587,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return statusMsgEvent("No primary window to switch to")
 				}
 			case "p", "P":
-				pid := m.pendingNewLivePID
-				primary := m.pendingNewPrimaryWin
-				cwd := m.pendingNewCwd
-				resumeID := m.pendingNewResumeSession
-				m.clearPendingNewMenu()
+				pid := m.newSession.livePID
+				primary := m.newSession.primaryWin
+				cwd := m.newSession.cwd
+				resumeID := m.newSession.resumeSession
+				m.newSession = nil
 				return m, m.parkAndLaunchPrimary(pid, primary, cwd, resumeID)
 			case "c", "C":
-				resumeID := m.pendingNewResumeSession
-				project := m.pendingNewProject
-				branch := m.pendingNewBranch
-				cwd := m.pendingNewCwd
-				m.clearPendingNewMenu()
+				resumeID := m.newSession.resumeSession
+				project := m.newSession.project
+				branch := m.newSession.branch
+				cwd := m.newSession.cwd
+				m.newSession = nil
 				return m, m.launchSiblingSession(project, branch, cwd, resumeID)
 			case "n", "N", "esc", "escape":
-				m.clearPendingNewMenu()
+				m.newSession = nil
 				return m, nil
 			}
 			return m, nil
@@ -882,14 +875,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if existing == nil || existing.SessionID == selectedID {
 						return m, m.resumeInDir(selectedID, row.path, windowName)
 					}
-					m.pendingNewMenuActive = true
-					m.pendingNewProject = m.detailProject.Name
-					m.pendingNewBranch = branchName
-					m.pendingNewCwd = row.path
-					m.pendingNewPrimaryWin = windowName
-					m.pendingNewLivePID = existing.PID
-					m.pendingNewLiveID = existing.SessionID
-					m.pendingNewResumeSession = selectedID
+					m.newSession = &newSessionPrompt{
+						project:       m.detailProject.Name,
+						branch:        branchName,
+						cwd:           row.path,
+						primaryWin:    windowName,
+						livePID:       existing.PID,
+						liveID:        existing.SessionID,
+						resumeSession: selectedID,
+					}
 					return m, nil
 				case "branch", "br-empty":
 					if row.branch == nil {
@@ -963,13 +957,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if existing == nil {
 					return m, m.launchSession()
 				}
-				m.pendingNewMenuActive = true
-				m.pendingNewProject = project
-				m.pendingNewBranch = branch
-				m.pendingNewCwd = cwd
-				m.pendingNewPrimaryWin = primaryWin
-				m.pendingNewLivePID = existing.PID
-				m.pendingNewLiveID = existing.SessionID
+				m.newSession = &newSessionPrompt{
+					project:    project,
+					branch:     branch,
+					cwd:        cwd,
+					primaryWin: primaryWin,
+					livePID:    existing.PID,
+					liveID:     existing.SessionID,
+				}
 				return m, nil
 			}
 
@@ -2054,7 +2049,7 @@ func (m Model) dashboardView() string {
 	if m.pendingCleanupActive {
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
-	} else if m.pendingNewMenuActive {
+	} else if m.newSession != nil {
 		footer = m.renderPrompt(m.newMenuPromptText(), withCancel([]footerBinding{
 			{"s", "switch"},
 			{"p", "park+new"},
@@ -3473,7 +3468,7 @@ func (m Model) projectDetailView() string {
 	case m.pendingCleanupActive:
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
-	case m.pendingNewMenuActive:
+	case m.newSession != nil:
 		footer = m.renderPrompt(m.newMenuPromptText(), []footerBinding{
 			{"s", "switch"},
 			{"p", "park+new"},
@@ -4228,26 +4223,14 @@ func (m Model) cleanupPrompt() (string, []footerBinding) {
 // If the menu was opened to resume a specific historical session, the
 // prompt mentions that too so `p` / `c` semantics are unambiguous.
 func (m Model) newMenuPromptText() string {
-	target := m.pendingNewPrimaryWin
+	target := m.newSession.primaryWin
 	if target == "" {
 		target = "this target"
 	}
-	if m.pendingNewResumeSession != "" {
+	if m.newSession.resumeSession != "" {
 		return fmt.Sprintf("A different session is running in %s — how should the selected session be resumed?", target)
 	}
 	return fmt.Sprintf("A session is already running in %s — what would you like to do?", target)
-}
-
-// clearPendingNewMenu resets all pendingNew* fields so the menu is dismissed.
-func (m *Model) clearPendingNewMenu() {
-	m.pendingNewMenuActive = false
-	m.pendingNewProject = ""
-	m.pendingNewBranch = ""
-	m.pendingNewCwd = ""
-	m.pendingNewPrimaryWin = ""
-	m.pendingNewLivePID = 0
-	m.pendingNewLiveID = ""
-	m.pendingNewResumeSession = ""
 }
 
 func (m *Model) clearAgentPicker() {

@@ -234,7 +234,7 @@ func TestMouseClickDuringNewMenuIsNoop(t *testing.T) {
 		{Name: "bravo", Path: "/ws/bravo"},
 	}
 	m := newDashModel(projects, nil)
-	m.pendingNewMenuActive = true
+	m.newSession = &newSessionPrompt{}
 
 	m, cmd := sendMouseClick(t, m, 5, 5)
 

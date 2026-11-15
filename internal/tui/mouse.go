@@ -252,7 +252,7 @@ func (m Model) estimatePRDetailLines(width int) int {
 // active in the main TUI. Mouse clicks should be suppressed during these.
 func (m Model) isModalActive() bool {
 	return m.pendingCleanupActive ||
-		m.pendingNewMenuActive ||
+		m.newSession != nil ||
 		m.pendingImportSessionID != "" ||
 		m.pendingWTExistsActive ||
 		m.lift != nil ||

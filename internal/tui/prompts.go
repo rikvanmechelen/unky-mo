@@ -30,3 +30,16 @@ type liftPrompt struct {
 	branch       string // the new branch, once entered
 	dirty        bool
 }
+
+// newSessionPrompt is the switch / park+new / concurrent menu shown when a
+// session is already running at the target (n, or enter on a historical
+// session whose primary window is busy).
+type newSessionPrompt struct {
+	project       string
+	branch        string // "" for the main checkout
+	cwd           string
+	primaryWin    string // the primary window's name (no suffix)
+	livePID       int    // the claude to park on p
+	liveID        string // its session id
+	resumeSession string // set: p and c resume this session instead of starting fresh
+}

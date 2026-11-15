@@ -36,8 +36,8 @@ func routedPrompts() []routedPrompt {
 			func(m *Model) { m.lift = &liftPrompt{dirty: true, branch: "x"} },
 			func(m Model) bool { return m.lift != nil && m.lift.dirty }},
 		{"pendingNewMenu", "newSession",
-			func(m *Model) { m.pendingNewMenuActive = true; m.pendingNewPrimaryWin = "alpha" },
-			func(m Model) bool { return m.pendingNewMenuActive }},
+			func(m *Model) { m.newSession = &newSessionPrompt{primaryWin: "alpha"} },
+			func(m Model) bool { return m.newSession != nil }},
 		{"pendingCleanup", "cleanup",
 			func(m *Model) {
 				m.pendingCleanupActive = true
