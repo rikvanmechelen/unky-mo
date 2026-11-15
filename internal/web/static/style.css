@@ -1155,6 +1155,12 @@ textarea.permission-choice__text { flex-basis: 100%; resize: vertical; border: 1
   background: var(--ink); color: var(--paper); font-size: 15px; cursor: pointer; border-radius: 50%;
 }
 .attachment__remove:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.attachment--file { width: auto; max-width: 240px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; }
+.attachment__glyph { flex: none; font-size: 22px; line-height: 1; }
+.attachment__info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.attachment__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--ink); }
+.attachment__meta { font-size: 11px; color: var(--ink-3); }
+.attachment--file.is-uploading .attachment__info { opacity: 0.5; }
 /* Images in a user message, and the full-size viewer they open. */
 .msg-user__images { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
 .msg-user__image { all: unset; cursor: zoom-in; display: block; border: 1px solid var(--line); }

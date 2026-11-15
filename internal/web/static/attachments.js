@@ -1,11 +1,26 @@
-// Image attachments for the chat composer. An image added by the 📎 button,
-// a paste (e.g. a screenshot on the clipboard) or a drop uploads right away
-// to /api/sessions/{windowID}/attachments. The server keeps the file and
-// returns an id; /prompt then names the ids and the server pastes each
-// file's path into Claude's pane, which turns it into "[Image #N]".
+// Attachments for the chat composer. A file added by the 📎 button, a paste
+// (e.g. a screenshot on the clipboard) or a drop uploads right away to
+// /api/sessions/{windowID}/attachments. The server keeps the file and
+// returns an id and its kind; /prompt then names the ids. An image's path is
+// pasted into Claude's pane, which turns it into "[Image #N]"; any other
+// file is named in the prompt as a path for Claude to read.
 
-// The image types Claude Code attaches (the server sniffs them too).
+// The image types Claude Code attaches. The server decides by sniffing the
+// content; this only picks the chip shown while the upload runs.
 const ATTACHABLE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+// The server's caps (maxImageBytes, maxFileBytes), checked before uploading.
+const MAX_IMAGE_BYTES = 20 << 20;
+const MAX_FILE_BYTES = 50 << 20;
+
+// An image's id carries its extension; a file's is bare hex.
+const isImageAttachmentID = (id) => /\.(png|jpg|gif|webp)$/.test(id || "");
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1 << 20) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1 << 20)).toFixed(1)} MB`;
+}
 
 // openImageViewer shows one image full size in a modal. Clicking anywhere or
 // pressing Escape closes it.
@@ -24,11 +39,11 @@ function openImageViewer(src, alt) {
 // added in: detach and restore move a set between the strip and a session's
 // draft, uploads still running included.
 function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID, onChange, onError }) {
-  // Each item: {file, name, url, windowID, id, state: "uploading" | "ready" | "error", ctrl}.
-  // An image restored from a stored draft has no file; its url is the server's copy.
+  // Each item: {file, name, kind: "image" | "file", url, windowID, id, state: "uploading" | "ready" | "error", ctrl}.
+  // An item restored from a stored draft has no file; an image's url is the server's copy.
   let items = [];
 
-  const picker = el("input", { type: "file", accept: ATTACHABLE_TYPES.join(","), multiple: "", hidden: "" });
+  const picker = el("input", { type: "file", multiple: "", hidden: "" });
   button.after(picker);
   button.addEventListener("click", () => picker.click());
   picker.addEventListener("change", () => {
@@ -37,7 +52,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
   });
 
   pasteTarget.addEventListener("paste", (e) => {
-    const files = imageFiles(e.clipboardData?.files);
+    const files = Array.from(e.clipboardData?.files || []);
     if (!files.length) return;
     // A screenshot on the clipboard has no text; an image copied from a
     // page may come with some, which still pastes as usual.
@@ -61,18 +76,21 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     add(e.dataTransfer.files);
   });
 
-  function imageFiles(list) {
-    return Array.from(list || []).filter((f) => f.type.startsWith("image/"));
-  }
-
   function add(fileList) {
-    const files = Array.from(fileList || []);
-    const rejected = files.filter((f) => !ATTACHABLE_TYPES.includes(f.type));
-    if (rejected.length) onError(`Can't attach ${rejected.map((f) => f.name || f.type).join(", ")}: only PNG, JPEG, GIF and WebP images`);
-    for (const file of files) {
-      if (ATTACHABLE_TYPES.includes(file.type)) {
-        upload({ file, name: file.name, url: URL.createObjectURL(file), windowID: getWindowID(), id: null, state: "uploading" });
+    const tooBig = [];
+    for (const file of Array.from(fileList || [])) {
+      const image = ATTACHABLE_TYPES.includes(file.type);
+      if (file.size > (image ? MAX_IMAGE_BYTES : MAX_FILE_BYTES)) {
+        tooBig.push(file.name || file.type || "file");
+        continue;
       }
+      upload({
+        file, name: file.name, kind: image ? "image" : "file",
+        url: image ? URL.createObjectURL(file) : null, windowID: getWindowID(), id: null, state: "uploading",
+      });
+    }
+    if (tooBig.length) {
+      onError(`Can't attach ${tooBig.join(", ")}: images up to ${MAX_IMAGE_BYTES >> 20} MB, other files up to ${MAX_FILE_BYTES >> 20} MB`);
     }
   }
 
@@ -81,15 +99,25 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     item.ctrl = new AbortController();
     render();
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(item.windowID)}/attachments`, {
+      const name = encodeURIComponent(item.name || "");
+      const res = await fetch(`/api/sessions/${encodeURIComponent(item.windowID)}/attachments?name=${name}`, {
         method: "POST",
-        headers: { "Content-Type": item.file.type },
+        headers: { "Content-Type": item.file.type || "application/octet-stream" },
         body: item.file,
         signal: item.ctrl.signal,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `upload failed (${res.status})`);
       item.id = data.id;
+      // The server sniffed the content: an image that isn't one is a file
+      // (and the other way round, a screenshot without a type).
+      if (data.kind === "file" && item.kind === "image") {
+        URL.revokeObjectURL(item.url);
+        item.url = null;
+      } else if (data.kind === "image" && item.kind === "file") {
+        item.url = URL.createObjectURL(item.file);
+      }
+      item.kind = data.kind || item.kind;
       item.state = "ready";
     } catch (err) {
       if (err.name === "AbortError") return;
@@ -111,7 +139,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
   // drop forgets an item; deleteOnServer also removes a stored upload.
   function drop(item, deleteOnServer) {
     item.ctrl?.abort();
-    if (item.file) URL.revokeObjectURL(item.url);
+    if (item.file && item.url) URL.revokeObjectURL(item.url);
     if (deleteOnServer && item.id) {
       fetch(`/api/sessions/${encodeURIComponent(item.windowID)}/attachments/${encodeURIComponent(item.id)}`, { method: "DELETE" })
         .catch(() => {});
@@ -121,6 +149,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
   function render() {
     strip.hidden = items.length === 0;
     strip.replaceChildren(...items.map((item) => {
+      if (item.kind === "file") return fileChip(item);
       const name = item.name || "pasted image";
       const img = el("img", { src: item.url, alt: "" });
       // A restored image that has expired on the server is gone for good.
@@ -138,6 +167,22 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
       return el("div", { class: `attachment is-${item.state}`, title: item.error || name }, [thumb, removeBtn]);
     }));
     onChange();
+  }
+
+  // A file has no preview: a document glyph, its name and its size.
+  function fileChip(item) {
+    const name = item.name || "file";
+    const removeBtn = el("button", { type: "button", class: "attachment__remove", title: "Remove", "aria-label": `Remove ${name}`, text: "×" });
+    removeBtn.addEventListener("click", () => remove(item));
+    const meta = item.file ? formatBytes(item.file.size) : "attached";
+    return el("div", { class: `attachment attachment--file is-${item.state}`, title: item.error || name }, [
+      el("span", { class: "attachment__glyph", "aria-hidden": "true", text: "📄" }),
+      el("span", { class: "attachment__info" }, [
+        el("span", { class: "attachment__name", text: name }),
+        el("span", { class: "attachment__meta", text: meta }),
+      ]),
+      removeBtn,
+    ]);
   }
 
   return {
@@ -165,13 +210,17 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
       items = list.slice();
       render();
     },
-    // fromStored turns a stored draft's [{id, name}] back into items, shown
-    // from the server's copy.
+    // fromStored turns a stored draft's [{id, name}] back into items, an
+    // image shown from the server's copy. (A file that has expired since is
+    // only found out on send.)
     fromStored(windowID, list) {
-      return list.map(({ id, name }) => ({
-        file: null, name, windowID, id, state: "ready",
-        url: authURL(`/api/sessions/${encodeURIComponent(windowID)}/attachments/${encodeURIComponent(id)}`),
-      }));
+      return list.map(({ id, name }) => {
+        const image = isImageAttachmentID(id);
+        return {
+          file: null, name, windowID, id, state: "ready", kind: image ? "image" : "file",
+          url: image ? authURL(`/api/sessions/${encodeURIComponent(windowID)}/attachments/${encodeURIComponent(id)}`) : null,
+        };
+      });
     },
     // discard forgets detached images whose prompt was sent elsewhere.
     discard(list) {

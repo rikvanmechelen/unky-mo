@@ -1654,11 +1654,11 @@ function main() {
     if (!windowID) return;
     const text = promptInput.value.trim();
     if (attachments.pending()) {
-      sendError.textContent = "Still uploading images…";
+      sendError.textContent = "Still uploading attachments…";
       return;
     }
     if (attachments.failed()) {
-      sendError.textContent = "Remove the images that failed to upload first.";
+      sendError.textContent = "Remove the attachments that failed to upload first.";
       return;
     }
     const ids = attachments.ids();
