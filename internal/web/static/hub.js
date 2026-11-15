@@ -18,7 +18,14 @@
   // its own origin (docs/plans/pwa.md step 4). ?embed=1 tries it in a tab.
   const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   const shell = standalone || params.has("embed");
-  const target = safeNext(params.get("next")) || targetPath(location);
+  let target = safeNext(params.get("next")) || targetPath(location);
+  // A notification delivered through the shell names its machine
+  // (?machine=<id>&next=<page>, docs/plans/pwa.md step 6).
+  const wanted = requestedMachine(params, hub);
+  if (wanted) {
+    target = wanted.next;
+    hub = { ...hub, last: wanted.id };
+  }
   const env = {
     fetch: (u, o) => fetch(u, o),
     setTimeout: (f, ms) => setTimeout(f, ms),
@@ -303,6 +310,10 @@
       case "mo-path":
         framePath = m.path;
         if (m.title) document.title = m.title;
+        presenceTick();
+        break;
+      case "mo-notify":
+        openNotify(id, frameOrigin);
         break;
       case "mo-unauthorized": {
         const base = frameOrigin;
@@ -362,6 +373,173 @@
       return "open";
     }
   }
+
+  // ── Notifications through the shell ─────────────────────────────────
+  // One worker registration per machine, subscribed with that machine's
+  // key; the machine keeps the subscription as for any device.
+  const pushSupported = window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+  function machineFetch(id, base, path, method = "GET", body) {
+    const headers = { Authorization: "Bearer " + (loadTokens(storage)[id] || "") };
+    if (body) headers["Content-Type"] = "application/json";
+    return fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined, credentials: "omit", cache: "no-store" });
+  }
+
+  async function machineJSON(id, base, path, method, body) {
+    const res = await machineFetch(id, base, path, method, body);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+    return data;
+  }
+
+  async function pushRegistration(id, create) {
+    const scope = new URL(pushScope(id), location.origin).href;
+    let reg = await navigator.serviceWorker.getRegistration(scope);
+    if (reg && reg.scope !== scope) reg = null; // the app's own registration
+    if (!reg && create) reg = await navigator.serviceWorker.register("/sw.js", { scope: pushScope(id) });
+    if (!reg) return null;
+    const worker = reg.installing || reg.waiting;
+    if (!reg.active && worker) {
+      await new Promise((resolve) => worker.addEventListener("statechange", () => worker.state === "activated" && resolve()));
+    }
+    return reg;
+  }
+
+  async function pushSubscription(id) {
+    const reg = await pushRegistration(id, false);
+    return reg ? reg.pushManager.getSubscription() : null;
+  }
+
+  // pushState: "on" (with the machine's entry), "off", "blocked",
+  // "unsupported", or "disabled" (the machine has push off).
+  async function pushState(id, base) {
+    if (!pushSupported) return { kind: "unsupported" };
+    const info = await machineJSON(id, base, "/api/push");
+    if (!info.enabled) return { kind: "disabled" };
+    if (Notification.permission === "denied") return { kind: "blocked", info };
+    const sub = await pushSubscription(id);
+    if (!sub || !sameKeyBytes(sub.options.applicationServerKey, info.publicKey)) return { kind: "off", info };
+    const entry = await machineJSON(id, base, `/api/push/subscriptions?endpoint=${encodeURIComponent(sub.endpoint)}`);
+    return entry.subscribed ? { kind: "on", info, events: entry.events, sub } : { kind: "off", info };
+  }
+
+  async function pushOn(id, base, info, events) {
+    if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications aren't allowed for this app.");
+    const reg = await pushRegistration(id, true);
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && !sameKeyBytes(sub.options.applicationServerKey, info.publicKey)) {
+      await sub.unsubscribe(); // made with an older key of this machine
+      sub = null;
+    }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(info.publicKey) });
+    await machineJSON(id, base, "/api/push/subscriptions", "POST", { subscription: sub.toJSON(), events, label: hubDeviceLabel(navigator.userAgent, standalone) });
+  }
+
+  async function pushOff(id, base) {
+    const sub = await pushSubscription(id);
+    if (!sub) return;
+    await machineJSON(id, base, "/api/push/subscriptions", "DELETE", { endpoint: sub.endpoint });
+    await sub.unsubscribe();
+  }
+
+  const PUSH_TEXT = {
+    on: "On for this device.",
+    off: "Off for this device.",
+    blocked: "Notifications are blocked for this app. Allow them in the system or browser settings, then come back here.",
+    unsupported: "This app can't receive push notifications here.",
+    disabled: "This machine has notifications turned off ([web] disable_push).",
+  };
+
+  async function openNotify(id, base) {
+    const dialog = $("notify-dialog");
+    const name = hub.machines[id].name || "this machine";
+    const render = async (msg) => {
+      let st;
+      try {
+        st = await pushState(id, base);
+      } catch (e) {
+        st = { kind: "off", error: e.message };
+      }
+      dialog.textContent = "";
+      dialog.append(el("h2", "hub__heading", `Notifications from ${name}`));
+      dialog.append(el("p", "hub-dialog__text", "Get a notification when a session on this machine needs you, even with the app closed. Tapping it opens the session."));
+      dialog.append(el("p", "hub-dialog__state", PUSH_TEXT[st.kind] || ""));
+      const row = el("div", "hub-dialog__actions");
+      const button = (label, cls, fn) => {
+        const b = el("button", "btn" + (cls ? " " + cls : ""), label);
+        b.type = "button";
+        b.addEventListener("click", async () => {
+          for (const x of row.querySelectorAll("button")) x.disabled = true;
+          try {
+            await render({ ok: await fn() });
+          } catch (e) {
+            await render({ error: e.message });
+          }
+        });
+        row.append(b);
+      };
+      if (st.kind === "on" || st.kind === "off") {
+        const events = st.events || { input: true, done: false };
+        const check = (label, on) => {
+          const l = el("label", "hub-dialog__check");
+          const i = document.createElement("input");
+          i.type = "checkbox";
+          i.checked = on;
+          l.append(i, el("span", "", label));
+          dialog.append(l);
+          return i;
+        };
+        const input = check("A session needs input (a question or a permission prompt)", events.input);
+        const done = check("A session is done (turns longer than 15 s)", events.done);
+        const chosen = () => ({ input: input.checked, done: done.checked });
+        if (st.kind === "on") {
+          button("Send test", "btn--quiet", async () => {
+            await machineJSON(id, base, "/api/push/test", "POST", { endpoint: st.sub.endpoint });
+            return "Sent. It should show up in a few seconds.";
+          });
+          button("Turn off", "btn--quiet", async () => { await pushOff(id, base); return "Turned off."; });
+          button("Save", "", async () => { await pushOn(id, base, st.info, chosen()); return "Saved."; });
+        } else {
+          button("Turn on", "", async () => { await pushOn(id, base, st.info, chosen()); return "Turned on. Send a test to check it."; });
+        }
+      }
+      const close = el("button", "btn btn--quiet", "Close");
+      close.type = "button";
+      close.addEventListener("click", () => dialog.close());
+      row.prepend(close);
+      const text = (msg && (msg.ok || msg.error)) || st.error;
+      if (text) dialog.append(el("p", msg && msg.ok ? "hub-dialog__ok" : "add__error", text));
+      dialog.append(row);
+    };
+    if (!dialog.open) dialog.showModal();
+    await render();
+  }
+
+  // Presence: while the frame shows a session and the app is in front,
+  // tell that machine every 15 s, so this device isn't buzzed about the
+  // session it's looking at.
+  let presence = { machine: null, window: "", at: 0 };
+  async function presenceTick() {
+    if (!pushSupported || !frame) return;
+    const id = frameMachine;
+    const base = frameOrigin;
+    const shown = document.visibilityState === "visible"
+      ? new URLSearchParams(framePath.split("?")[1] || "").get("window") || ""
+      : "";
+    const now = Date.now();
+    if (presence.machine === id && shown === presence.window && (shown === "" || now - presence.at < 15000)) return;
+    const sub = await pushSubscription(id).catch(() => null);
+    if (!sub) return;
+    presence = { machine: id, window: shown, at: now };
+    machineFetch(id, base, "/api/push/presence", "POST", { endpoint: sub.endpoint, window: shown }).catch(() => {});
+    if (shown) {
+      const reg = await pushRegistration(id, false);
+      const tag = `${id.slice(0, 8)}-mo-${shown}`;
+      for (const n of reg ? await reg.getNotifications({ tag }) : []) n.close();
+    }
+  }
+  setInterval(presenceTick, 5000);
+  document.addEventListener("visibilitychange", presenceTick);
 
   // showLogin asks for the login of a machine: this address's (base "",
   // which sets the cookie) or another one the shell frames (which answers
@@ -438,6 +616,19 @@
     found[own.machine] = location.origin;
     save();
     render();
+    if (wanted && wanted.id !== own.machine) {
+      // A notification from another machine: find it and open the page.
+      hub = { ...hub, last: wanted.id };
+      probing.add(wanted.id);
+      render();
+      const url = await findMachine(wanted.id, hub.machines[wanted.id], env);
+      probing.delete(wanted.id);
+      found[wanted.id] = url;
+      render();
+      if (url) return openMachine(wanted.id, url, wanted.next);
+      setStatus(`${hub.machines[wanted.id].name || "That machine"} doesn't answer on this network.`);
+      return;
+    }
     if ((await whoami()) === "out") return showLogin({ id: own.machine, name: own.name, base: "", done: () => openHere(own) });
     return openHere(own);
   }

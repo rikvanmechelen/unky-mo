@@ -232,6 +232,35 @@ async function cleanup(caches) {
   }
 }
 
+// machineFromScope is the machine a registration delivers pushes for: the
+// shell registers one per machine under /hub/push/<id>/ (docs/plans/pwa.md
+// step 6). null for the app's own registration.
+function machineFromScope(scope) {
+  const m = /\/hub\/push\/([0-9a-f]{32})\/$/.exec(new URL(scope).pathname);
+  return m ? m[1] : null;
+}
+
+// notificationFor turns a push payload into showNotification's arguments.
+// A machine's push (through the shell) opens the shell at that machine,
+// and its tag is the machine's, so two machines' windows never replace
+// each other. Never silent: "done" and "needs you" both buzz.
+function notificationFor(msg, scope) {
+  msg = msg && typeof msg === "object" ? msg : {};
+  const path = typeof msg.url === "string" && msg.url.startsWith("/") && !msg.url.startsWith("//") ? msg.url : "/";
+  const machine = machineFromScope(scope);
+  const options = {
+    body: typeof msg.body === "string" ? msg.body : "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/badge.png",
+    data: { url: machine ? `/hub?machine=${machine}&next=${encodeURIComponent(path)}` : path, window: msg.window || "" },
+  };
+  if (msg.tag) {
+    options.tag = machine ? `${machine.slice(0, 8)}-${msg.tag}` : String(msg.tag);
+    options.renotify = true; // a replacing notification buzzes again
+  }
+  return { title: typeof msg.title === "string" && msg.title ? msg.title : "Unky Mo", options };
+}
+
 // installFromOrigin installs the own origin's core when the app has none.
 async function installFromOrigin(env) {
   const p = await readPointer(env.caches);
@@ -241,7 +270,7 @@ async function installFromOrigin(env) {
 }
 
 if (typeof module === "object" && module.exports) {
-  module.exports = { SW_VERSION, handleFetch, handlesRequest, cleanup, installCore, readPointer };
+  module.exports = { SW_VERSION, handleFetch, handlesRequest, cleanup, installCore, readPointer, notificationFor, machineFromScope };
 } else if (typeof ServiceWorkerGlobalScope !== "undefined" && self instanceof ServiceWorkerGlobalScope) {
   const env = () => ({
     caches: self.caches,
@@ -276,17 +305,7 @@ if (typeof module === "object" && module.exports) {
     } catch {
       msg = {};
     }
-    const title = msg.title || "Unky Mo";
-    const options = {
-      body: msg.body || "",
-      icon: "/icons/icon-192.png",
-      badge: "/icons/badge.png",
-      data: { url: msg.url || "/", window: msg.window || "" },
-    };
-    if (msg.tag) {
-      options.tag = msg.tag;
-      options.renotify = true; // a replacing notification buzzes again
-    }
+    const { title, options } = notificationFor(msg, self.registration.scope);
     event.waitUntil(self.registration.showNotification(title, options));
   });
 

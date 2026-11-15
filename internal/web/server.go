@@ -116,7 +116,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		hdr.Set("Access-Control-Allow-Origin", origin)
 		hdr.Add("Vary", "Origin")
 		if r.Method == http.MethodOptions {
-			hdr.Set("Access-Control-Allow-Methods", "GET, POST")
+			hdr.Set("Access-Control-Allow-Methods", "GET, POST, DELETE")
 			hdr.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			hdr.Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)

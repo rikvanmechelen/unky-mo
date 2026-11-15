@@ -274,7 +274,7 @@ function dropToken(storage, id) {
   }
 }
 
-const FRAME_MESSAGES = new Set(["mo-ready", "mo-path", "mo-lost", "mo-unauthorized", "mo-machines"]);
+const FRAME_MESSAGES = new Set(["mo-ready", "mo-path", "mo-lost", "mo-unauthorized", "mo-machines", "mo-notify"]);
 
 // frameMessage returns a message the embedded machine sent, or null for
 // anything from another window or origin, or that the shell doesn't know.
@@ -325,11 +325,38 @@ function protocolCheck(theirs) {
   return "ok";
 }
 
+// keyBytes decodes a VAPID public key (base64url) for pushManager.subscribe.
+function keyBytes(b64) {
+  const s = (b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+}
+
+function sameKeyBytes(a, b64) {
+  if (!a) return false;
+  const x = new Uint8Array(a);
+  const y = keyBytes(b64);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+// pushScope is where the shell registers the worker that receives a
+// machine's pushes (docs/plans/pwa.md step 6).
+function pushScope(id) {
+  return `/hub/push/${id}/`;
+}
+
+// requestedMachine reads ?machine=<id>&next=<path>, which a notification
+// delivered through the shell opens. null unless the machine is known.
+function requestedMachine(params, hub) {
+  const id = params.get("machine");
+  if (!isMachineID(id) || !hub.machines[id]) return null;
+  return { id, next: safeNext(params.get("next")) || "/" };
+}
+
 if (typeof module === "object" && module.exports) {
   module.exports = {
     CORE_RELEASE, normalizeAddress, loadHub, saveHub, learnMachine, mergeAddrs, addManual, markFailed,
     orderCandidates, probe, findMachine, targetPath, forwardDecision, isMachineID, safeNext, hubDeviceLabel,
     loadTokens, saveToken, dropToken, frameMessage, shouldEmbed,
-    coreUpdate, baseWarning, protocolCheck, HUB_PROTOCOL,
+    coreUpdate, baseWarning, protocolCheck, HUB_PROTOCOL, pushScope, requestedMachine, keyBytes, sameKeyBytes,
   };
 }

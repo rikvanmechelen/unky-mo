@@ -95,3 +95,15 @@ body.is-embedded .hub { display: none; }
 }
 .hub-base[hidden] { display: none; }
 .hub-base .btn--quiet { color: var(--on-yellow); border-color: var(--on-yellow); }
+
+/* The shell's notifications dialog, for the framed machine. */
+.hub-dialog {
+  width: min(480px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--ink);
+  background: var(--paper); color: var(--ink); font-family: var(--font-sans);
+}
+.hub-dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+.hub-dialog__text { font-size: 14px; color: var(--ink-2); margin: 0 0 12px; }
+.hub-dialog__state { font-size: 14px; font-weight: 700; margin: 0 0 12px; }
+.hub-dialog__check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; margin: 0 0 8px; }
+.hub-dialog__ok { font-size: 14px; color: var(--ink-2); }
+.hub-dialog__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 12px; }

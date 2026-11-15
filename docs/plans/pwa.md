@@ -1,6 +1,6 @@
 # mo web as an installed app that finds its machine
 
-**Status:** steps 1–5 built on main, 2026-11-14.
+**Status:** steps 1–6 built on main, 2026-11-14; step 7's device checks are open.
 
 ## Goal
 
@@ -243,6 +243,19 @@ The worker's half (install, rollback, recovery page) was built in step 2. This s
 - **Protocol.** `HUB_PROTOCOL` in `hub-model.js` must equal the server's `HubProtocol` (a Go test reads it). A machine whose `hello.protocol` is more than one away from the launcher's isn't embedded: "Update mo on <machine>" (it's older) or "This launcher is too old for <machine>" (it's newer; its core update usually fixes that first). Nothing else depends on the protocol yet. The server checks nothing until there's a protocol 2.
 - Tests: `coreUpdate`, `baseWarning`, `protocolCheck` in Node; the Go test that the two protocol constants agree.
 - **Built as planned, plus:** before anything is sent to an address (the token's `whoami` check included), the shell probes it and requires `hello` to name the expected machine. Checked in headless Chrome with machine B built at release 2 / worker 2 / manifest 2: the shell (release 1) took B's launcher while its own address answered (no warning), then, with its own address down, started release 2, confirmed it, framed B and showed the base warning.
+
+## Step 6 in detail: push through the shell
+
+- **One worker registration per machine.** The shell registers the same `/sw.js` under the scope `/hub/push/<machine id>/` (no page lives there, so it never answers a navigation) and subscribes it with that machine's VAPID key (`GET <machine>/api/push`). The subscription goes to the machine as today (`POST <machine>/api/push/subscriptions`, with the token). All registrations share one Cache Storage, so they see the same core; `installFromOrigin` does nothing once a core exists.
+- **The notification opens the shell.** The server keeps building `url: "/chat?window=@3"`. A worker whose scope is `/hub/push/<id>/` (`machineFromScope`) rewrites it to `/hub?machine=<id>&next=<url>` and prefixes the tag with the machine id, so two machines' `@3` don't replace each other. The rest of the payload is unchanged. Nothing is ever `silent`: both "done" and "needs you" buzz (decision above). `notificationFor(msg, scope)` is the pure part.
+- **The launcher opens `?machine=&next=`:** that machine (found as usual) at `next`. The own machine opens directly, another one in the frame.
+- **Server:** CORS (with `DELETE` in the preflight) on `/api/push`, `/api/push/subscriptions`, `/api/push/test`, `/api/push/presence`, so the shell can reach them with its token.
+- **The dialog:** inside the frame, the dashboard's "Notifications" button posts `mo-notify` instead of opening its own dialog, and `notify.js` registers no worker there. The shell opens its dialog for the framed machine: on/off for this device, the two events, Send test. Same wording as the dashboard's.
+- **Presence:** while the frame shows a chat (`mo-path` with `window=`) and the shell is visible, the shell posts `presence` for that machine's subscription every 15 s and on changes, so the device looking at the session isn't buzzed.
+- Tests:
+  - Node: `notificationFor` (own scope unchanged; a machine scope rewrites url and tag; never silent; `renotify` with a tag; malformed payloads still show something), `machineFromScope`, the launcher's `?machine=&next=` parsing, and `mo-notify` accepted from the frame.
+  - Go: the push routes' CORS and preflight.
+- **Built as planned.** Checked in headless Chrome: a `?machine=&next=` link opens that machine's chat in the frame; the frame's Notifications button opens the shell's dialog; Turn on registers `/hub/push/<id>/`, subscribes with the machine's key and the machine records it; Send test is accepted by the push service. Not checked: delivery (headless Chrome keeps no push connection) and a tap on a delivered notification. Those are device checks (step 7).
 
 ## Decisions
 

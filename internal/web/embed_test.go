@@ -200,3 +200,26 @@ func TestFrameAncestors(t *testing.T) {
 		t.Errorf("CSP = %q", got)
 	}
 }
+
+func TestPushCORS(t *testing.T) {
+	h, _, _ := newLoginServer(t)
+	shell := "https://192.168.1.20:7890"
+	for _, p := range []string{"/api/push", "/api/push/subscriptions", "/api/push/test", "/api/push/presence"} {
+		rec := loginDo(h, http.MethodOptions, p, "", func(r *http.Request) {
+			r.Header.Set("Origin", shell)
+			r.Header.Set("Access-Control-Request-Method", "DELETE")
+		})
+		if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != shell ||
+			!strings.Contains(rec.Header().Get("Access-Control-Allow-Methods"), "DELETE") {
+			t.Errorf("preflight %s: %d %v", p, rec.Code, rec.Header())
+		}
+	}
+	token, _ := pair(t, h)
+	rec := loginDo(h, http.MethodGet, "/api/push", "", func(r *http.Request) {
+		r.Header.Set("Origin", shell)
+		r.Header.Set("Authorization", "Bearer "+token)
+	})
+	if rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != shell {
+		t.Errorf("GET /api/push cross-origin: %d %q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}

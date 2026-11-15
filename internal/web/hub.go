@@ -117,9 +117,13 @@ func HubAddrs(scheme, listenAddr string, hosts []string) []string {
 // Without credentials mode, so cookies never cross; the shell sends its
 // own token.
 var hubCORSPaths = map[string]bool{
-	"/api/hub/pair":   true,
-	"/api/hub/whoami": true,
-	"/api/hub/addrs":  true,
+	"/api/hub/pair":           true,
+	"/api/hub/whoami":         true,
+	"/api/hub/addrs":          true,
+	"/api/push":               true, // push through the shell (step 6)
+	"/api/push/subscriptions": true,
+	"/api/push/test":          true,
+	"/api/push/presence":      true,
 }
 
 var originRE = regexp.MustCompile(`^https?://[a-z0-9.\-]+(:\d{1,5})?$|^https?://\[[0-9a-f:.]+\](:\d{1,5})?$`)

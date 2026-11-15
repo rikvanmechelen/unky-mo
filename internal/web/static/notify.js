@@ -7,7 +7,10 @@ const notify = (() => {
   const ua = navigator.userAgent;
   const ios = isIOS(ua, navigator.maxTouchPoints);
   const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  const supported = window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  // Inside the installed app's shell (embed.js), the shell owns push: the
+  // button asks it for its dialog, and no worker is registered here.
+  const embedded = typeof moEmbed === "object" && moEmbed !== null && moEmbed.embedded;
+  const supported = !embedded && window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 
   let info = null; // GET /api/push
   const registration = supported
@@ -185,7 +188,7 @@ const notify = (() => {
     if (!info.enabled) return;
     for (const btn of document.querySelectorAll("[data-notify-settings]")) {
       btn.hidden = false;
-      btn.addEventListener("click", () => openDialog());
+      btn.addEventListener("click", () => (embedded ? moEmbed.post({ type: "mo-notify" }) : openDialog()));
     }
     if (supported && location.pathname === "/chat") startPresence();
   })();

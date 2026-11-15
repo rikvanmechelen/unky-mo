@@ -263,3 +263,30 @@ test("protocolCheck", () => {
   assert.equal(protocolCheck(HUB_PROTOCOL - 2), "machine-old");
   assert.equal(protocolCheck(undefined), "machine-old");
 });
+
+test("requestedMachine reads a notification's ?machine=&next=", () => {
+  const { requestedMachine, pushScope } = require("../static/hub-model.js");
+  const hub = learnMachine({ machines: {}, last: null }, { machine: ID, name: "b" }, "https://a:1", 1);
+  const p = (q) => new URLSearchParams(q);
+  assert.deepEqual(requestedMachine(p(`machine=${ID}&next=%2Fchat%3Fwindow%3D%403`), hub), { id: ID, next: "/chat?window=@3" });
+  assert.deepEqual(requestedMachine(p(`machine=${ID}`), hub), { id: ID, next: "/" });
+  assert.equal(requestedMachine(p(`machine=${OTHER}&next=/`), hub), null, "unknown machine");
+  assert.deepEqual(requestedMachine(p(`machine=${ID}&next=//evil.example`), hub), { id: ID, next: "/" });
+  assert.equal(requestedMachine(p(""), hub), null);
+  assert.equal(pushScope(ID), `/hub/push/${ID}/`);
+});
+
+test("the frame may ask for the notifications dialog", () => {
+  const { frameMessage } = require("../static/hub-model.js");
+  const frame = {};
+  assert.deepEqual(frameMessage({ source: frame, origin: "https://m:1", data: { type: "mo-notify" } }, frame, "https://m:1"), { type: "mo-notify" });
+});
+
+test("keyBytes decodes a base64url VAPID key", () => {
+  const { keyBytes, sameKeyBytes } = require("../static/hub-model.js");
+  const b64 = Buffer.from([1, 2, 250, 251, 255]).toString("base64url");
+  assert.deepEqual([...keyBytes(b64)], [1, 2, 250, 251, 255]);
+  assert.equal(sameKeyBytes(new Uint8Array([1, 2, 250, 251, 255]).buffer, b64), true);
+  assert.equal(sameKeyBytes(new Uint8Array([1, 2]).buffer, b64), false);
+  assert.equal(sameKeyBytes(null, b64), false);
+});

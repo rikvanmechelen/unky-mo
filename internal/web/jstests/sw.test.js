@@ -185,3 +185,28 @@ test("a navigation inside a frame is left alone", async () => {
   assert.equal(sw.handlesRequest(req("/api/state")), false);
   assert.equal(sw.handlesRequest(req("/__mo/state")), true);
 });
+
+test("notificationFor: own pages as before, a machine's through the shell, never silent", () => {
+  const { notificationFor, machineFromScope } = sw;
+  const id = "0123456789abcdef0123456789abcdef";
+  const own = notificationFor({ title: "app needs you", body: "q?", tag: "mo-@3", url: "/chat?window=@3", window: "@3" }, ORIGIN + "/");
+  assert.equal(own.title, "app needs you");
+  assert.equal(own.options.data.url, "/chat?window=@3");
+  assert.equal(own.options.tag, "mo-@3");
+  assert.equal(own.options.renotify, true);
+  assert.equal("silent" in own.options, false);
+
+  const viaShell = notificationFor({ title: "app is done", tag: "mo-@3", url: "/chat?window=@3" }, ORIGIN + "/hub/push/" + id + "/");
+  assert.equal(viaShell.options.data.url, "/hub?machine=" + id + "&next=%2Fchat%3Fwindow%3D%403");
+  assert.equal(viaShell.options.tag, id.slice(0, 8) + "-mo-@3");
+  assert.equal("silent" in viaShell.options, false);
+
+  const odd = notificationFor(null, ORIGIN + "/");
+  assert.equal(odd.title, "Unky Mo");
+  assert.equal(odd.options.data.url, "/");
+  assert.equal(notificationFor({ url: "https://evil.example/" }, ORIGIN + "/").options.data.url, "/", "only paths");
+
+  assert.equal(machineFromScope(ORIGIN + "/hub/push/" + id + "/"), id);
+  assert.equal(machineFromScope(ORIGIN + "/"), null);
+  assert.equal(machineFromScope(ORIGIN + "/hub/push/nothex/"), null);
+});
