@@ -23,7 +23,7 @@ Claude hooks → status-hook.sh → Unix socket → status.Manager → Main TUI 
 
 ## State file schema
 
-`internal/state/state.go` defines the shared JSON state written by the main TUI and polled by each sidebar every 1s. Path configurable via `Config.StateFilePath`, default `/tmp/unky-mo-state.json`.
+`internal/state/state.go` defines the shared JSON state written by the main TUI and polled by each sidebar every 1s. Path configurable via `Config.StateFilePath`, default `<state dir>/state.json` (`config.DefaultStateFilePath`; the state dir is `$XDG_STATE_HOME/unky-mo` or `~/.local/state/unky-mo`, 0700). The file is 0600.
 
 - **`StateFile`**: `tmux_session` (string), `projects` ([]ProjectState), `updated_at` (time), `usage` (*UsageState, optional).
 - **`ProjectState`** — one entry **per live Claude session**, plus one placeholder per zero-session known project. Concurrent siblings / renamed primaries produce separate entries, distinguished by `WindowID` (stable) / `WindowName` + `SessionID`. Key fields: `name`, `path`, `window_name`, `window_id` (stable tmux id, e.g. `@5` — survives renames), `status` (`"none"` | `"active"` | `"idle"` | `"permission"` | `"question"` | `"external"`), `pending_tool`/`pending_input` (the call a `question` or `permission` waits on, when known), `parent`, `section` (`"projects"` | `"external"`), `session_id`, `index` (0 = primary, 2+ = sibling ordinal, -1 = custom-title window).

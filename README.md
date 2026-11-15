@@ -531,8 +531,9 @@ workspace_dirs = ["/Users/you/workspace", "/Users/you/personal"]
 # tmux session name (default: "mo")
 tmux_session = "mo"
 
-# Unix socket path for notifications (default: "/tmp/unky-mo.sock")
-socket_path = "/tmp/unky-mo.sock"
+# Unix socket path for hook events (default: <state dir>/hook.sock, where the
+# state dir is $XDG_STATE_HOME/unky-mo or ~/.local/state/unky-mo)
+# socket_path = "/home/you/.local/state/unky-mo/hook.sock"
 
 # Auto-scan workspace dirs on startup (default: true)
 scan_on_startup = true
@@ -616,11 +617,11 @@ When you run `mo hooks install` (or start the TUI), Unky Mo installs hooks into 
 - **Notification** — Fires on `idle_prompt` or `permission_prompt`
 - **SessionStart** / **SessionEnd** — Session lifecycle tracking
 
-All hooks send a JSON message to Unky Mo's Unix socket (`/tmp/unky-mo.sock`). A central `status.Manager` processes these events as a state machine — status transitions happen in real time with no polling delay.
+All hooks send a JSON message to Unky Mo's Unix socket (`~/.local/state/unky-mo/hook.sock`, only this user's). A central `status.Manager` processes these events as a state machine — status transitions happen in real time with no polling delay.
 
 As a reconciliation layer, Unky Mo also watches session JSONL files via `fsnotify`. If a hook is missed (socket unavailable, `nc` error), the next JSONL write triggers a re-read that corrects the status. PID liveness checks on a 5-second tick clean up dead sessions.
 
-Sidebar instances read a shared state file (`/tmp/unky-mo-state.json`) written by the TUI. If Unky Mo isn't running, the hooks exit silently with no effect on Claude.
+Sidebar instances read a shared state file (`~/.local/state/unky-mo/state.json`) written by the TUI. If Unky Mo isn't running, the hooks exit silently with no effect on Claude.
 
 To remove the hooks:
 
@@ -777,9 +778,7 @@ unky-mo/
 │       ├── keys.go         # Key bindings
 │       ├── styles.go       # Lipgloss theme (dark background ~#14191E)
 │       └── sidebar/        # Compact sidebar TUI for tmux panes
-├── scripts/
-│   ├── notify-hook.sh      # Claude Code notification hook (V1 legacy)
-│   └── stop-hook.sh        # Claude Code stop hook (V1 legacy)
+├── docs/                 # reference.md and the feature plans
 ├── Makefile
 └── CLAUDE.md
 ```
