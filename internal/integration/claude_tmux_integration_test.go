@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/status"
 	"github.com/rvanmech/unky-mo/internal/tmux"
 )
 
@@ -212,7 +213,7 @@ func TestClaudeSessionIdleDetectionOnSpawnedSession(t *testing.T) {
 
 	// Wait for session + JSONL to be fully written. Just checking os.Stat
 	// isn't enough — there's a race between file creation and content being
-	// flushed, and IsSessionIdle needs parseable content.
+	// flushed, and ReadJSONLStatus needs parseable content.
 	waitFor(t, 5*time.Second, "session JSONL to appear with content", func() bool {
 		sessions, _ := claude.LiveSessions()
 		for _, s := range sessions {
@@ -237,7 +238,8 @@ func TestClaudeSessionIdleDetectionOnSpawnedSession(t *testing.T) {
 	}
 
 	// fake-claude's JSONL ends with stop_reason=end_turn → idle.
-	if !claude.IsSessionIdle(projectDir, sess.SessionID) {
+	jsonl := filepath.Join(claude.ProjectsDirForPath(projectDir), sess.SessionID+".jsonl")
+	if status.ReadJSONLStatus(jsonl) != status.StatusIdle {
 		t.Errorf("session with stop_reason=end_turn should be reported idle")
 	}
 
