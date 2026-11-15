@@ -466,6 +466,14 @@ func TestAnswerPermissionRefusals(t *testing.T) {
 	}{
 		{"stale sig", "permission", newFakeBash, nil,
 			func(string) permissionAnswer { return permissionAnswer{Sig: "old", Row: 1} }, http.StatusConflict},
+		// The browser saw one Bash prompt; the terminal user answered it and
+		// Claude asked for another command, with the same question and rows.
+		{"another command, same rows", "permission", newFakeBash, nil,
+			func(string) permissionAnswer {
+				shown := newFakeBash()
+				shown.preview = "echo something else"
+				return permissionAnswer{Sig: sigOf(shown), Row: 1}
+			}, http.StatusConflict},
 		{"not a permission prompt", "active", newFakeBash, nil,
 			func(sig string) permissionAnswer { return permissionAnswer{Sig: sig, Row: 1} }, http.StatusConflict},
 		{"no dialog on screen", "permission", newFakeBash, func(d *fakePermission) { d.answer = "1" },

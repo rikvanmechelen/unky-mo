@@ -103,11 +103,17 @@ func (v permView) row(n int) (permRowView, bool) {
 	return permRowView{}, false
 }
 
-// sig names this dialog as shown: its question and rows. Typing into a
-// row changes its label, and so the sig.
+// sig names this dialog as shown: its title, what it shows of the call
+// (the command, the file, the URL, the plan), its question and rows.
+// Typing into a row changes its label, and so the sig. The call has to be
+// in it: every Bash prompt in a project asks the same question with the
+// same rows, so without it an answer meant for one command would approve
+// the next one if the first was answered in the terminal meanwhile.
 func (v permView) sig() string {
 	h := sha256.New()
-	io.WriteString(h, v.question)
+	io.WriteString(h, v.title)
+	io.WriteString(h, "\x00"+v.shown)
+	io.WriteString(h, "\x00"+v.question)
 	for _, r := range v.rows {
 		fmt.Fprintf(h, "\x00%d\x00%s", r.N, r.Label)
 	}
