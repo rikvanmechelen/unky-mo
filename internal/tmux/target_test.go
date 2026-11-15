@@ -18,14 +18,14 @@ func TestSafeTargetFallsBackForUnknown(t *testing.T) {
 		{ID: "@1", Name: "alpha"},
 	}
 	got := SafeTarget("mo", "beta", windows)
-	if got != "mo:beta" {
-		t.Errorf("unknown name should fall back to name-based target, got %q", got)
+	if got != "mo:=beta" {
+		t.Errorf("an unknown name must be an exact-name target, never a prefix match, got %q", got)
 	}
 }
 
 func TestSafeTargetEmptyWindowList(t *testing.T) {
 	got := SafeTarget("mo", "moma.org.cubed", nil)
-	if got != "mo:moma.org.cubed" {
+	if got != "mo:=moma.org.cubed" {
 		t.Errorf("nil windows should fall back, got %q", got)
 	}
 }

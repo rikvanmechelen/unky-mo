@@ -4272,12 +4272,9 @@ func (m Model) safeWindowTarget(name, windowID string) string {
 	if windowID != "" {
 		return session + ":" + windowID
 	}
-	if !ttmux.NeedsSafeTarget(name) {
-		return session + ":" + name
-	}
 	windows, err := m.tmux.ListWindows()
 	if err != nil {
-		return session + ":" + name
+		return ttmux.ExactTarget(session, name)
 	}
 	return ttmux.SafeTarget(session, name, windows)
 }

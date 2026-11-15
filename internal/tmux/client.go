@@ -344,7 +344,7 @@ func (c *Client) DetachClient() error {
 
 // ListWindows returns the names of windows in the session.
 func (c *Client) ListWindows() ([]Window, error) {
-	cmd := c.tmuxCmd("list-windows", "-t", c.SessionName, "-F", "#{window_id}:#{window_index}:#{window_name}:#{@mo_instance_id}:#{@mo_agent}:#{pane_current_path}")
+	cmd := c.tmuxCmd("list-windows", "-t", c.SessionName, "-F", windowListFormat)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))

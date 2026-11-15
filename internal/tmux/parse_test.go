@@ -234,3 +234,14 @@ func TestParsePIDSetEmpty(t *testing.T) {
 		t.Errorf("empty input: got %v", got)
 	}
 }
+
+// Fields are split on 0x1f, so a window titled with colons keeps its name,
+// instance id and cwd.
+func TestParseWindowListUnitSeparator(t *testing.T) {
+	in := []byte("@3\x1f2\x1falpha [fix: auth: tokens]\x1fabcdef012345\x1fg\x1f/ws/a:b\n")
+	got := parseWindowList(in)
+	want := Window{ID: "@3", Index: "2", Name: "alpha [fix: auth: tokens]", InstanceID: "abcdef012345", AgentKey: "g", CWD: "/ws/a:b"}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("got %+v", got)
+	}
+}

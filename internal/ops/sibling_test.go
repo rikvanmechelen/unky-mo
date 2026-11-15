@@ -92,7 +92,8 @@ func TestParkAndLaunchKillsPrimaryWindowFirst(t *testing.T) {
 	// No real PID → SignalAndWaitExit should be a no-op (but claude.IsAlive
 	// is invoked when PID > 0; for PID=0 it isn't). Use PID=0 here.
 	tmux.EXPECT().SessionName().Return("mo")
-	tmux.EXPECT().KillWindow("mo:alpha").Return(nil)
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@9", Name: "alpha"}, {ID: "@8", Name: "alpha-apps"}}, nil)
+	tmux.EXPECT().KillWindow("mo:@9").Return(nil)
 	// Then LaunchSession ceremony.
 	tmux.EXPECT().CreateWindow("alpha", "/ws/alpha").Return("mo:@1", nil)
 	expectInstanceID(tmux)
@@ -119,4 +120,16 @@ func TestSignalAndWaitExitNoopOnZeroPID(t *testing.T) {
 	// No mocks expected — should simply return.
 	SignalAndWaitExit(ctx, 0)
 	SignalAndWaitExit(ctx, -5)
+}
+
+// Parking "alpha" after its window already closed must not kill
+// "alpha-apps": tmux matches a bare name against the start of other
+// windows' names, so the target is exact.
+func TestParkAndLaunchGoneWindowIsExactTarget(t *testing.T) {
+	ctx, tmux, _ := newTestContext(t)
+	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@8", Name: "alpha-apps"}}, nil)
+	tmux.EXPECT().KillWindow("mo:=alpha").Return(errors.New("can't find window"))
+	tmux.EXPECT().CreateWindow(gomock.Any(), gomock.Any()).Return("", errors.New("stop here"))
+	_, _ = ParkAndLaunch(ctx, ParkParams{PrimaryWindowName: "alpha", Cwd: "/ws/alpha"})
 }

@@ -43,7 +43,8 @@ func TestLaunchSiblingNoSwitch(t *testing.T) {
 func TestParkAndLaunchNoSwitch(t *testing.T) {
 	ctx, tmux, _ := newTestContext(t)
 	tmux.EXPECT().SessionName().Return("mo")
-	tmux.EXPECT().KillWindow("mo:alpha").Return(nil)
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@9", Name: "alpha"}, {ID: "@8", Name: "alpha-apps"}}, nil)
+	tmux.EXPECT().KillWindow("mo:@9").Return(nil)
 	expectLaunchCeremonyNoSwitch(tmux, "alpha", "mo:@3", "claude --resume sess-1")
 
 	res, err := ParkAndLaunch(ctx, ParkParams{

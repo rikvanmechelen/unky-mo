@@ -1,6 +1,7 @@
 package ops
 
 import (
+	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,8 @@ func TestLiftSessionToWorktreeLiveDirtyStash(t *testing.T) {
 	ctx, tmux, cl := newTestContext(t)
 	cl.EXPECT().IsAlive(4242).Return(false).AnyTimes()
 	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
-	tmux.EXPECT().KillWindow("mo:alpha").Return(nil)
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@9", Name: "alpha"}, {ID: "@8", Name: "alpha-apps"}}, nil)
+	tmux.EXPECT().KillWindow("mo:@9").Return(nil)
 	cl.EXPECT().ProjectsDirForPath(repo).Return(srcEnc)
 	// CreateNewBranchWorktree derives the path at runtime; we match against
 	// "anything that ends with .worktrees/feat-x" via gomock.Any() and verify
@@ -95,7 +97,8 @@ func TestLiftSessionToWorktreeLiveClean(t *testing.T) {
 	ctx, tmux, cl := newTestContext(t)
 	cl.EXPECT().IsAlive(1234).Return(false).AnyTimes()
 	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
-	tmux.EXPECT().KillWindow("mo:alpha").Return(nil)
+	tmux.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@9", Name: "alpha"}, {ID: "@8", Name: "alpha-apps"}}, nil)
+	tmux.EXPECT().KillWindow("mo:@9").Return(nil)
 	cl.EXPECT().ProjectsDirForPath(repo).Return(srcEnc)
 	cl.EXPECT().ProjectsDirForPath(gomock.Any()).Return(dstEnc)
 
@@ -134,6 +137,7 @@ func TestLiftSessionToWorktreeLiveDirtyLeave(t *testing.T) {
 	ctx, tmux, cl := newTestContext(t)
 	cl.EXPECT().IsAlive(999).Return(false).AnyTimes()
 	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
+	tmux.EXPECT().ListWindows().Return(nil, nil)
 	tmux.EXPECT().KillWindow(gomock.Any()).Return(nil)
 	cl.EXPECT().ProjectsDirForPath(repo).Return(srcEnc)
 	cl.EXPECT().ProjectsDirForPath(gomock.Any()).Return(dstEnc)
