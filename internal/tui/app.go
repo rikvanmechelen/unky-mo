@@ -5160,8 +5160,11 @@ func Run(projects []project.Project, tmuxSession, socketPath, stateFilePath stri
 	// Start notification server
 	ns := notify.NewServer(socketPath)
 	if err := ns.Start(); err != nil {
-		// Non-fatal: continue without notifications
+		// Not fatal, but not quiet either: without the socket no hook event
+		// arrives, and status falls back to slower signals.
 		ns = nil
+		startupNotice = strings.TrimSpace(fmt.Sprintf("hook socket %s: %v — session status will lag. %s", socketPath, err, startupNotice))
+		startupSticky = true
 	}
 	if ns != nil {
 		defer ns.Stop()

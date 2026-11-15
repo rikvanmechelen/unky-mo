@@ -19,7 +19,7 @@ func TestRealFetch(t *testing.T) {
 	if os.Getenv("USAGE_SMOKE") == "" {
 		t.Skip("set USAGE_SMOKE=1 to exercise the real endpoint")
 	}
-	_ = os.Remove(cachePath)
+	_ = os.Remove(cachePath())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

@@ -260,3 +260,30 @@ func indexOf(hay, needle string) int {
 	}
 	return -1
 }
+
+// The state file is the owner's only, and a file someone put at the old
+// predictable temp name neither blocks nor redirects the write.
+func TestWriteIsPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".tmp", []byte("squatted"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(path, &StateFile{TmuxSession: "mo"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v (%v)", info.Mode().Perm(), err)
+	}
+	if got, err := Read(path); err != nil || got.TmuxSession != "mo" {
+		t.Errorf("read back %+v, %v", got, err)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 2 { // state.json and the untouched squatter
+		t.Errorf("left behind: %v", entries)
+	}
+}

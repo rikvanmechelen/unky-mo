@@ -6,17 +6,23 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/rvanmech/unky-mo/internal/config"
 )
 
 const (
-	cacheTTL       = 60 * time.Second
-	cooldownOn429  = 5 * time.Minute
-	cachePath      = "/tmp/mo-claude-usage.json"
-	cacheTmpSuffix = ".tmp"
+	cacheTTL      = 60 * time.Second
+	cooldownOn429 = 5 * time.Minute
 )
 
-// cached is the on-disk representation at /tmp/mo-claude-usage.json.
+// cachePath is the usage cache: in the state dir, the owner's only (it used
+// to be world-readable in /tmp, where another user could also squat its
+// name and show their numbers).
+func cachePath() string { return filepath.Join(config.DefaultStateDir(), "claude-usage.json") }
+
+// cached is the on-disk representation at cachePath.
 type cached struct {
 	// Body is the last successful API response. On 429 it remains unchanged
 	// and CooldownUntil is bumped; on 401 we don't touch the cache.
@@ -33,7 +39,7 @@ type cacheStore interface {
 type cacheOnDisk struct{}
 
 func (cacheOnDisk) load() (cached, bool, error) {
-	b, err := os.ReadFile(cachePath)
+	b, err := os.ReadFile(cachePath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cached{}, false, nil
@@ -52,11 +58,24 @@ func (cacheOnDisk) save(c cached) error {
 	if err != nil {
 		return err
 	}
-	tmp := cachePath + cacheTmpSuffix
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	path := cachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.Rename(tmp, cachePath)
+	f, err := os.CreateTemp(filepath.Dir(path), "claude-usage.*.tmp")
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // tokenReader returns an OAuth access token. The real implementation reads

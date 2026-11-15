@@ -32,7 +32,7 @@ func installStatusHooks(cfg *config.Config) (script string, changed bool, err er
 	if err != nil {
 		return "", false, fmt.Errorf("locating mo binary: %w", err)
 	}
-	script, scriptChanged, err := claude.EnsureStatusHookScript(hookScriptDir(), moBin)
+	script, scriptChanged, err := claude.EnsureStatusHookScript(hookScriptDir(), moBin, cfg.SocketPath)
 	if err != nil {
 		return "", false, fmt.Errorf("writing hook script: %w", err)
 	}

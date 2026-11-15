@@ -387,7 +387,7 @@ func TestEnsureHooksV2_PreservesForeignHooks(t *testing.T) {
 
 func TestEnsureStatusHookScript_WritesOnceExecutable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "hooks")
-	path, changed, err := EnsureStatusHookScript(dir, "/opt/mo")
+	path, changed, err := EnsureStatusHookScript(dir, "/opt/mo", "/run/mo.sock")
 	if err != nil || !changed {
 		t.Fatalf("first write: changed=%v err=%v", changed, err)
 	}
@@ -395,29 +395,32 @@ func TestEnsureStatusHookScript_WritesOnceExecutable(t *testing.T) {
 	if err != nil || info.Mode().Perm()&0111 == 0 {
 		t.Fatalf("script should exist and be executable: %v %v", info, err)
 	}
-	if _, changed, _ := EnsureStatusHookScript(dir, "/opt/mo"); changed {
+	if _, changed, _ := EnsureStatusHookScript(dir, "/opt/mo", "/run/mo.sock"); changed {
 		t.Error("identical script should not be rewritten")
 	}
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n# stale\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if _, changed, _ := EnsureStatusHookScript(dir, "/opt/mo"); !changed {
+	if _, changed, _ := EnsureStatusHookScript(dir, "/opt/mo", "/run/mo.sock"); !changed {
 		t.Error("stale script should be replaced")
 	}
-	if got, _ := os.ReadFile(path); string(got) != string(StatusHookScript("/opt/mo")) {
+	if got, _ := os.ReadFile(path); string(got) != string(StatusHookScript("/opt/mo", "/run/mo.sock")) {
 		t.Error("script content should match the embedded copy")
 	}
-	if _, changed, _ := EnsureStatusHookScript(dir, "/elsewhere/mo"); !changed {
+	if _, changed, _ := EnsureStatusHookScript(dir, "/elsewhere/mo", "/run/mo.sock"); !changed {
 		t.Error("a different mo binary should rewrite the script")
 	}
 }
 
 func TestStatusHookScriptEmbedsQuotedBinary(t *testing.T) {
-	got := string(StatusHookScript("/home/o'neil/bin/mo"))
+	got := string(StatusHookScript("/home/o'neil/bin/mo", "/home/o'neil/.local/state/unky-mo/hook.sock"))
 	if !strings.Contains(got, `MO_BIN='/home/o'\''neil/bin/mo'`) {
 		t.Errorf("mo path not embedded/quoted correctly:\n%s", got)
 	}
-	if strings.Contains(got, "__MO_BIN__") {
+	if !strings.Contains(got, `SOCKET='/home/o'\''neil/.local/state/unky-mo/hook.sock'`) {
+		t.Errorf("socket path not embedded/quoted correctly:\n%s", got)
+	}
+	if strings.Contains(got, "__MO_BIN__") || strings.Contains(got, "__MO_SOCKET__") {
 		t.Error("placeholder left in script")
 	}
 }

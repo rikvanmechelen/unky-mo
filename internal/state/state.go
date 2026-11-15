@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -78,11 +79,38 @@ func Write(path string, s *StateFile) error {
 		return err
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	return writeAtomic(path, data)
+}
+
+// writeAtomic writes data to path through a fresh temp file in the same
+// directory and a rename. The file is the owner's only: it carries pending
+// tool input (a Write prompt's whole file), paths and session ids. The temp
+// name is random and created exclusively, so a file someone else put at a
+// predictable name can't redirect or block the write.
+func writeAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Read reads and parses the state file.

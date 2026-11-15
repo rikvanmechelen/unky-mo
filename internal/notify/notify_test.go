@@ -305,3 +305,93 @@ func TestSendLoggedAppendsMessages(t *testing.T) {
 		t.Errorf("log:\n%s\nwant:\n%s", data, want)
 	}
 }
+
+// The socket is the owner's alone, in a directory only the owner can enter,
+// and a stale socket from an earlier run is replaced.
+func TestServerSocketIsPrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	sock := filepath.Join(dir, "hook.sock")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	stale.Close()
+
+	s := NewServer(sock)
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	if info, _ := os.Stat(sock); info.Mode().Perm() != 0o600 {
+		t.Errorf("socket mode %v", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(dir); info.Mode().Perm() != 0o700 {
+		t.Errorf("dir mode %v", info.Mode().Perm())
+	}
+	// Our own connections still get through.
+	if err := Send(sock, strings.NewReader(`{"type":"idle","session_id":"s1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-s.Messages():
+		if n.SessionID != "s1" {
+			t.Errorf("got %+v", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("message from this user not delivered")
+	}
+}
+
+// A regular file at the socket path isn't removed to make room.
+func TestServerLeavesNonSocketAlone(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "hook.sock")
+	if err := os.WriteFile(sock, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(sock)
+	if err := s.Start(); err == nil {
+		s.Stop()
+		t.Fatal("started over a regular file")
+	}
+	if b, _ := os.ReadFile(sock); string(b) != "x" {
+		t.Error("the file was replaced")
+	}
+}
+
+// SendHook builds the envelope itself, so no character in a path breaks
+// it (the hook script's printf version dropped every event of a checkout
+// whose path had a quote or a backslash), and invalid stdin becomes null.
+func TestSendHookEnvelope(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "hook.sock")
+	s := NewServer(sock)
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	hc := HookContext{Event: "Stop", SessionID: "env-id", Cwd: `/ws/it"s \back`, Pane: "%3"}
+	for _, in := range []string{`{"session_id":"s1","hook_event_name":"Stop"}`, "not json"} {
+		if err := SendHook(sock, strings.NewReader(in), hc, ""); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case n := <-s.Messages():
+			var env struct {
+				HookInput   json.RawMessage `json:"hook_input"`
+				ProjectPath string          `json:"project_path"`
+				Event       string          `json:"hook_event_name"`
+			}
+			if err := json.Unmarshal(n.Raw, &env); err != nil || env.ProjectPath != hc.Cwd || env.Event != "Stop" || n.TmuxPane != "%3" {
+				t.Errorf("%q: %s (%v)", in, n.Raw, err)
+			}
+			if in == "not json" && string(env.HookInput) != "null" {
+				t.Errorf("invalid input forwarded: %s", env.HookInput)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%q: not delivered", in)
+		}
+	}
+}

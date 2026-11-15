@@ -3,10 +3,14 @@ package notify
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"net"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/rvanmech/unky-mo/internal/config"
 )
 
 // Server listens on a Unix domain socket for notifications from Claude Code hooks.
@@ -17,6 +21,7 @@ type Server struct {
 	done       chan struct{}
 	wg         sync.WaitGroup
 	stopOnce   sync.Once
+	slots      chan struct{}
 }
 
 // NewServer creates a notification server.
@@ -25,28 +30,45 @@ func NewServer(socketPath string) *Server {
 		socketPath: socketPath,
 		msgChan:    make(chan Notification, 64),
 		done:       make(chan struct{}),
+		slots:      make(chan struct{}, maxConns),
 	}
 }
 
-// Start begins listening for notifications.
+// Start begins listening for notifications. The socket's directory must be
+// one only this user can enter (config.PrivateStateDir), the socket itself
+// is the owner's only, and on Linux a connection from another user is
+// closed unread: hook events steer session status and carry prompts and
+// tool input, so nobody else may send them, or take the path first to
+// receive them.
 func (s *Server) Start() error {
-	// Clean up stale socket
-	os.Remove(s.socketPath)
+	if err := config.PrivateStateDir(filepath.Dir(s.socketPath)); err != nil {
+		return fmt.Errorf("socket directory: %w", err)
+	}
+	// A stale socket from a previous run is removed; anything else at the
+	// path is left alone and Listen reports it.
+	if info, err := os.Lstat(s.socketPath); err == nil && info.Mode()&os.ModeSocket != 0 {
+		os.Remove(s.socketPath)
+	}
 
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return err
 	}
 	s.listener = ln
-
-	// Make socket writable by anyone (hooks run as the same user, but be safe)
-	os.Chmod(s.socketPath, 0666)
+	if err := os.Chmod(s.socketPath, 0o600); err != nil {
+		ln.Close()
+		return err
+	}
 
 	s.wg.Add(1)
 	go s.acceptLoop()
 
 	return nil
 }
+
+// maxConns caps the connections handled at once: hooks connect, write a
+// line and hang up, so more than this is a flood.
+const maxConns = 64
 
 // Stop shuts down the server and cleans up. Safe to call more than once
 // (the TUI stops it explicitly before re-exec'ing on restart, and again via
@@ -80,8 +102,21 @@ func (s *Server) acceptLoop() {
 				continue
 			}
 		}
+		if !samePeer(conn) {
+			conn.Close()
+			continue
+		}
+		select {
+		case s.slots <- struct{}{}:
+		default:
+			conn.Close() // flooded: drop it rather than queue goroutines
+			continue
+		}
 		s.wg.Add(1)
-		go s.handleConn(conn)
+		go func() {
+			defer func() { <-s.slots }()
+			s.handleConn(conn)
+		}()
 	}
 }
 

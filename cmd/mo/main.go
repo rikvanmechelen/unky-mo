@@ -916,19 +916,32 @@ func hooksCmd() *cobra.Command {
 	})
 
 	var socket string
+	var hc notify.HookContext
 	sendCmd := &cobra.Command{
 		Use:    "send",
-		Short:  "Forward one hook message from stdin to the TUI's socket (used by the hook script)",
+		Short:  "Forward one hook event from stdin to the TUI's socket (used by the hook script)",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if socket == "" {
+				socket = config.DefaultSocketPath()
+			}
 			// MO_HOOK_DEBUG_LOG=<file> also appends every message to that
 			// file — set it in a Claude session's environment (e.g. via
 			// `tmux set-environment -g` before launching one) to see the raw
 			// hook events Claude Code fires.
-			return notify.SendLogged(socket, os.Stdin, os.Getenv("MO_HOOK_DEBUG_LOG"))
+			logPath := os.Getenv("MO_HOOK_DEBUG_LOG")
+			if !cmd.Flags().Changed("event") {
+				// An older hook script sends the whole envelope itself.
+				return notify.SendLogged(socket, os.Stdin, logPath)
+			}
+			return notify.SendHook(socket, os.Stdin, hc, logPath)
 		},
 	}
-	sendCmd.Flags().StringVar(&socket, "socket", "/tmp/unky-mo.sock", "TUI notification socket")
+	sendCmd.Flags().StringVar(&socket, "socket", "", "TUI notification socket (default: the configured one)")
+	sendCmd.Flags().StringVar(&hc.Event, "event", "", "the hook event's name")
+	sendCmd.Flags().StringVar(&hc.SessionID, "session", "", "the session id from the environment")
+	sendCmd.Flags().StringVar(&hc.Cwd, "cwd", "", "the hook's working directory")
+	sendCmd.Flags().StringVar(&hc.Pane, "pane", "", "the tmux pane")
 	cmd.AddCommand(sendCmd)
 
 	cmd.AddCommand(&cobra.Command{

@@ -21,9 +21,9 @@ var statusHookScript []byte
 // is the mo binary the script delivers messages through (`mo hooks send`);
 // it's written into the script, so a moved binary rewrites it on next start.
 // Returns the script path and whether it was (re)written.
-func EnsureStatusHookScript(dir, moBin string) (path string, changed bool, err error) {
+func EnsureStatusHookScript(dir, moBin, socket string) (path string, changed bool, err error) {
 	path = filepath.Join(dir, "status-hook.sh")
-	script := StatusHookScript(moBin)
+	script := StatusHookScript(moBin, socket)
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, script) {
 		return path, false, nil
 	}
@@ -43,9 +43,10 @@ func EnsureStatusHookScript(dir, moBin string) (path string, changed bool, err e
 
 // StatusHookScript renders the embedded hook script for moBin, quoted for a
 // single-quoted shell string.
-func StatusHookScript(moBin string) []byte {
-	quoted := strings.ReplaceAll(moBin, "'", `'\''`)
-	return bytes.Replace(statusHookScript, []byte("__MO_BIN__"), []byte(quoted), 1)
+func StatusHookScript(moBin, socket string) []byte {
+	quote := func(s string) []byte { return []byte(strings.ReplaceAll(s, "'", `'\''`)) }
+	out := bytes.Replace(statusHookScript, []byte("__MO_BIN__"), quote(moBin), 1)
+	return bytes.Replace(out, []byte("__MO_SOCKET__"), quote(socket), 1)
 }
 
 const hookMarker = "unky-mo"

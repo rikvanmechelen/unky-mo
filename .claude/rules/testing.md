@@ -16,7 +16,7 @@ Interfaces carry `//go:generate mockgen ...` directives. Generated mocks live un
 
 ## Expected-to-fail tests
 
-Guarded by `//go:build expectfail` — encode CLAUDE.md claims that may have drifted from the code. Run with `make test-expectfail` (non-blocking in CI). A failure here means either the code or the docs need to change — do not silence these without making that decision explicit. Current drift: `config.Load()`'s missing-file branch skips `StateFilePath` and `Tickets.*` defaults (see `internal/config/config_expectfail_test.go`).
+Guarded by `//go:build expectfail` — encode CLAUDE.md claims that may have drifted from the code. Run with `make test-expectfail` (non-blocking in CI). A failure here means either the code or the docs need to change — do not silence these without making that decision explicit. No drift is recorded at the moment (the last one, `config.Load()` skipping defaults without a config file, was fixed and its tests moved into `config_test.go`).
 
 ## Real-git tests
 

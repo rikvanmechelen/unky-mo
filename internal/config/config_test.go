@@ -16,8 +16,8 @@ func isolateConfig(t *testing.T) string {
 	return dir
 }
 
-func TestLoadMissingFileReturnsPartialDefaults(t *testing.T) {
-	isolateConfig(t)
+func TestLoadMissingFileReturnsDefaults(t *testing.T) {
+	home := isolateConfig(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load missing file: %v", err)
@@ -25,8 +25,8 @@ func TestLoadMissingFileReturnsPartialDefaults(t *testing.T) {
 	if cfg.TmuxSession != "mo" {
 		t.Errorf("TmuxSession default: want %q, got %q", "mo", cfg.TmuxSession)
 	}
-	if cfg.SocketPath != "/tmp/unky-mo.sock" {
-		t.Errorf("SocketPath default: want %q, got %q", "/tmp/unky-mo.sock", cfg.SocketPath)
+	if want := filepath.Join(home, ".local", "state", "unky-mo", "hook.sock"); cfg.SocketPath != want {
+		t.Errorf("SocketPath default: want %q, got %q", want, cfg.SocketPath)
 	}
 	if !cfg.ScanOnStartup {
 		t.Error("ScanOnStartup default should be true")
@@ -34,17 +34,42 @@ func TestLoadMissingFileReturnsPartialDefaults(t *testing.T) {
 	if !cfg.NotifySound {
 		t.Error("NotifySound default should be true")
 	}
-	// Note: the missing-file branch returns before filling defaults for
-	// StateFilePath and ticket-panel values. This test locks in the current
-	// behavior so drift shows up; see the expectfail variant for the
-	// stricter assertion.
-	if cfg.StateFilePath != "" {
-		t.Logf("StateFilePath on missing file: %q (currently unset — see config.go:83)", cfg.StateFilePath)
+	// Without a config file every default still applies (this used to
+	// return early, leaving the state file path and ticket values unset).
+	if want := filepath.Join(home, ".local", "state", "unky-mo", "state.json"); cfg.StateFilePath != want {
+		t.Errorf("StateFilePath default: want %q, got %q", want, cfg.StateFilePath)
+	}
+	if cfg.Tickets.RefreshSeconds != 300 || cfg.Tickets.PerBucketLimit != 5 {
+		t.Errorf("ticket defaults: %+v", cfg.Tickets)
+	}
+	if len(cfg.Agents) == 0 {
+		t.Error("agents default missing")
+	}
+}
+
+// PrivateStateDir makes the socket's and state file's directory private,
+// tightening an existing one.
+func TestPrivateStateDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrivateStateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(dir); info.Mode().Perm() != 0o700 {
+		t.Errorf("mode %v", info.Mode().Perm())
+	}
+	f := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(f, nil, 0o600)
+	if err := PrivateStateDir(f); err == nil {
+		t.Error("a file was accepted as the state dir")
 	}
 }
 
 func TestLoadPartialTOMLMergesDefaults(t *testing.T) {
 	dir := isolateConfig(t)
+	stateDir := filepath.Join(dir, ".local", "state", "unky-mo")
 	path := filepath.Join(dir, ".config", "unky-mo", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
@@ -66,10 +91,10 @@ tmux_session = "custom-mo"
 	if len(cfg.WorkspaceDirs) != 2 {
 		t.Errorf("WorkspaceDirs: want 2, got %d", len(cfg.WorkspaceDirs))
 	}
-	if cfg.SocketPath != "/tmp/unky-mo.sock" {
+	if cfg.SocketPath != filepath.Join(stateDir, "hook.sock") {
 		t.Errorf("SocketPath default should apply: got %q", cfg.SocketPath)
 	}
-	if cfg.StateFilePath != "/tmp/unky-mo-state.json" {
+	if cfg.StateFilePath != filepath.Join(stateDir, "state.json") {
 		t.Errorf("StateFilePath default (file-present branch): got %q", cfg.StateFilePath)
 	}
 	if cfg.Tickets.RefreshSeconds != 300 {

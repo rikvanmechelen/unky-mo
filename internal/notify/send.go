@@ -48,6 +48,39 @@ func SendLogged(socketPath string, r io.Reader, logPath string) error {
 	return writeLine(socketPath, line.Bytes())
 }
 
+// HookContext is what the hook script knows about the session an event
+// came from, besides Claude's own JSON.
+type HookContext struct {
+	Event, SessionID, Cwd, Pane string
+}
+
+// SendHook wraps one hook event's JSON (read from r, Claude's stdin) in the
+// envelope the server reads, and sends it. Claude's JSON goes in as is
+// when it's valid, else as null; the rest is encoded here, so no character
+// in a path can break the message.
+func SendHook(socketPath string, r io.Reader, hc HookContext, logPath string) error {
+	data, err := io.ReadAll(io.LimitReader(r, maxMessageSize))
+	if err != nil {
+		return fmt.Errorf("read hook input: %w", err)
+	}
+	input := json.RawMessage("null")
+	if trimmed := bytes.TrimSpace(data); json.Valid(trimmed) && len(trimmed) > 0 {
+		input = trimmed
+	}
+	msg, err := json.Marshal(struct {
+		HookInput     json.RawMessage `json:"hook_input"`
+		HookEventName string          `json:"hook_event_name"`
+		SessionID     string          `json:"session_id"`
+		ProjectPath   string          `json:"project_path"`
+		TmuxPane      string          `json:"tmux_pane"`
+		Timestamp     string          `json:"timestamp"`
+	}{input, hc.Event, hc.SessionID, hc.Cwd, hc.Pane, time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		return err
+	}
+	return SendLogged(socketPath, bytes.NewReader(msg), logPath)
+}
+
 // ErrTUINotRunning means nothing is listening on the socket.
 var ErrTUINotRunning = errors.New("the mo TUI isn't running")
 

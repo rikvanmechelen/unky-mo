@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/BurntSushi/toml"
 	"github.com/rvanmech/unky-mo/internal/project"
 )
 
 const defaultTmuxSession = "mo"
-const defaultSocketPath = "/tmp/unky-mo.sock"
-const defaultStateFilePath = "/tmp/unky-mo-state.json"
 const defaultTicketsRefreshSeconds = 300
 const defaultTicketsPerBucketLimit = 5
 
@@ -216,6 +215,54 @@ func DefaultStateDir() string {
 	return filepath.Join(home, ".local", "state", "unky-mo")
 }
 
+// DefaultSocketPath is where the TUI listens for hook events: in the state
+// dir, which only this user can enter (see PrivateStateDir). It used to be
+// /tmp/unky-mo.sock, world-writable: any local user could send the TUI
+// forged events, or take the path first and receive every hook's prompt
+// and tool input.
+func DefaultSocketPath() string {
+	p := filepath.Join(DefaultStateDir(), "hook.sock")
+	if len(p) < maxSocketPath {
+		return p
+	}
+	// A unix socket path is limited to ~104-108 bytes; a long home dir
+	// would pass that.
+	return filepath.Join(os.TempDir(), fmt.Sprintf("unky-mo-%d", os.Getuid()), "hook.sock")
+}
+
+// maxSocketPath stays under every platform's sun_path size.
+const maxSocketPath = 100
+
+// DefaultStateFilePath is the shared state file the TUI writes for the
+// sidebars and mo web: in the state dir, since it carries pending tool
+// input (a Write prompt's whole file) and paths.
+func DefaultStateFilePath() string {
+	return filepath.Join(DefaultStateDir(), "state.json")
+}
+
+// PrivateStateDir creates dir (the directory of the socket or state file)
+// if needed and makes sure only this user can enter it: refused if
+// someone else owns it.
+func PrivateStateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s belongs to another user", dir)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return os.Chmod(dir, 0o700)
+	}
+	return nil
+}
+
 func DefaultConfigPath() string {
 	return filepath.Join(DefaultConfigDir(), "config.toml")
 }
@@ -223,18 +270,16 @@ func DefaultConfigPath() string {
 func Load() (*Config, error) {
 	cfg := &Config{
 		TmuxSession:   defaultTmuxSession,
-		SocketPath:    defaultSocketPath,
 		ScanOnStartup: true,
 		NotifySound:   true,
 	}
 
 	path := DefaultConfigPath()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		cfg.Agents = DefaultAgents()
-		return cfg, nil
-	}
-
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	if _, err := os.Stat(path); err == nil {
+		if _, err := toml.DecodeFile(path, cfg); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
 
@@ -242,10 +287,10 @@ func Load() (*Config, error) {
 		cfg.TmuxSession = defaultTmuxSession
 	}
 	if cfg.SocketPath == "" {
-		cfg.SocketPath = defaultSocketPath
+		cfg.SocketPath = DefaultSocketPath()
 	}
 	if cfg.StateFilePath == "" {
-		cfg.StateFilePath = defaultStateFilePath
+		cfg.StateFilePath = DefaultStateFilePath()
 	}
 	if cfg.Tickets.RefreshSeconds <= 0 {
 		cfg.Tickets.RefreshSeconds = defaultTicketsRefreshSeconds
