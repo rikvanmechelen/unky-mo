@@ -191,8 +191,7 @@ func TestGoldenScreens(t *testing.T) {
 			return m
 		}},
 		{"dashboard_new_project", func(m Model) Model {
-			m.newProjectInput = newInput("delta")
-			m.newProjectParentDir = "/ws"
+			m.newProject = &newProjectPrompt{input: *newInput("delta"), parentDir: "/ws"}
 			return m
 		}},
 		{"detail", withDetail},

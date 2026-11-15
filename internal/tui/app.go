@@ -237,10 +237,9 @@ type Model struct {
 	// entries: one entry per live Claude session. Populated by
 	// updateProjectStatuses from the poll result (status manager is source of truth).
 	sessionViews []sessionView
-	// newProjectInput is non-nil when the user is entering a folder name for a
-	// new project (N key on dashboard). While set, key events route to the input.
-	newProjectInput     *textinput.Model
-	newProjectParentDir string // first workspace dir; set when the prompt opens
+	// newProject is non-nil while the user enters a folder name for a new
+	// project (N on the dashboard); key events route to it.
+	newProject *newProjectPrompt
 	// worktreeInput is non-nil when the user is entering a branch name for a
 	// new worktree. While set, key events route to the text input.
 	worktreeInput *textinput.Model
@@ -501,21 +500,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// New-project input captures all input while active (dashboard, N key).
-		if m.newProjectInput != nil {
+		if m.newProject != nil {
 			switch msg.String() {
 			case "enter":
-				name := strings.TrimSpace(m.newProjectInput.Value())
-				m.newProjectInput = nil
+				name := strings.TrimSpace(m.newProject.input.Value())
+				parentDir := m.newProject.parentDir
+				m.newProject = nil
 				if name == "" {
 					return m, nil
 				}
-				return m, m.doCreateProject(name)
+				return m, m.doCreateProject(parentDir, name)
 			case "esc", "escape":
-				m.newProjectInput = nil
+				m.newProject = nil
 				return m, nil
 			}
-			updated, cmd := m.newProjectInput.Update(msg)
-			m.newProjectInput = &updated
+			p := *m.newProject
+			var cmd tea.Cmd
+			p.input, cmd = p.input.Update(msg)
+			m.newProject = &p
 			return m, cmd
 		}
 
@@ -985,8 +987,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ti := textinput.New()
 				ti.Placeholder = "folder-name"
 				ti.Focus()
-				m.newProjectInput = &ti
-				m.newProjectParentDir = m.workspaceDirs[0]
+				m.newProject = &newProjectPrompt{input: ti, parentDir: m.workspaceDirs[0]}
 				return m, nil
 			}
 
@@ -2074,9 +2075,9 @@ func (m Model) dashboardView() string {
 		footer = m.renderPrompt(question, yesNoBindings("import"))
 	} else if m.pendingAgentPickerActive {
 		footer = m.renderPrompt("Launch with:", withCancel(m.agentPickerBindings()))
-	} else if m.newProjectInput != nil {
-		question := fmt.Sprintf("New project in %s — folder name:", m.newProjectParentDir)
-		footer = m.renderInputPrompt(question, m.newProjectInput.View(), []footerBinding{
+	} else if m.newProject != nil {
+		question := fmt.Sprintf("New project in %s — folder name:", m.newProject.parentDir)
+		footer = m.renderInputPrompt(question, m.newProject.input.View(), []footerBinding{
 			{"enter", "create"},
 			{"esc", "cancel"},
 		})
@@ -4171,8 +4172,7 @@ func (m Model) focusIfExists(windowName string) (bool, error) {
 
 // doCreateProject creates the project folder + git repo in the background and
 // returns a newProjectCreatedMsg on success or a statusMsgEvent on failure.
-func (m Model) doCreateProject(name string) tea.Cmd {
-	parentDir := m.newProjectParentDir
+func (m Model) doCreateProject(parentDir, name string) tea.Cmd {
 	return func() tea.Msg {
 		res, err := ops.CreateProject(ops.CreateProjectParams{
 			ParentDir:  parentDir,

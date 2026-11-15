@@ -24,8 +24,8 @@ func routedPrompts() []routedPrompt {
 	input := func() *textinput.Model { ti := textinput.New(); ti.Focus(); return &ti }
 	return []routedPrompt{
 		{"newProjectInput", "newProject",
-			func(m *Model) { m.newProjectInput = input(); m.newProjectParentDir = "/ws" },
-			func(m Model) bool { return m.newProjectInput != nil }},
+			func(m *Model) { m.newProject = &newProjectPrompt{input: *input(), parentDir: "/ws"} },
+			func(m Model) bool { return m.newProject != nil }},
 		{"worktreeInput", "worktree",
 			func(m *Model) { m.worktreeInput = input() },
 			func(m Model) bool { return m.worktreeInput != nil }},
@@ -136,9 +136,9 @@ func TestTicketPickerFirst(t *testing.T) {
 	m := goldenModel(t)
 	m.screen = ScreenTicket
 	m.startProjectPicker("jira", "OP")
-	m.newProjectInput = func() *textinput.Model { ti := textinput.New(); return &ti }()
+	m.newProject = &newProjectPrompt{input: textinput.New()}
 	m = pressKey(m, escKey())
-	if m.newProjectInput == nil {
+	if m.newProject == nil {
 		t.Errorf("esc went to the new-project input instead of the ticket picker")
 	}
 }
