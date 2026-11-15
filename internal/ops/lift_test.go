@@ -44,6 +44,13 @@ func TestLiftSessionToWorktreeLiveDirtyStash(t *testing.T) {
 	}
 	srcEnc, dstEnc := liftDirs(t)
 	seedJSONL(t, srcEnc, "sess-abc")
+	sub := filepath.Join(srcEnc, "sess-abc", "subagents")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "agent-1.jsonl"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, tmux, cl := newTestContext(t)
 	cl.EXPECT().IsAlive(4242).Return(false).AnyTimes()
@@ -79,6 +86,12 @@ func TestLiftSessionToWorktreeLiveDirtyStash(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dstEnc, "sess-abc.jsonl")); err != nil {
 		t.Errorf("dest JSONL should exist, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstEnc, "sess-abc", "subagents", "agent-1.jsonl")); err != nil {
+		t.Errorf("the session's subagents folder should move with it, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(srcEnc, "sess-abc")); !os.IsNotExist(err) {
+		t.Errorf("source session folder should be gone, err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(res.NewWorktreePath, "carry.txt")); err != nil {
 		t.Errorf("carry.txt should have popped into new worktree, got %v", err)

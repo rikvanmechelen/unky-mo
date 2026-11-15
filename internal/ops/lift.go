@@ -123,6 +123,21 @@ func LiftSessionToWorktree(ctx *Context, p LiftParams) (*LiftResult, error) {
 			}
 			res.MovedJSONL = true
 		}
+		// The session's folder (subagent transcripts, tool results) sits
+		// next to its JSONL and has to move with it, or the resumed session
+		// loses its subagents. A folder already at the target is left alone.
+		oldSide := filepath.Join(oldDir, p.SessionID)
+		newSide := filepath.Join(newDir, p.SessionID)
+		if fi, err := os.Lstat(oldSide); err == nil && fi.IsDir() {
+			if _, err := os.Lstat(newSide); os.IsNotExist(err) {
+				if err := os.MkdirAll(newDir, 0755); err != nil {
+					return res, fmt.Errorf("mkdir new session dir: %w", err)
+				}
+				if err := os.Rename(oldSide, newSide); err != nil {
+					return res, fmt.Errorf("move session folder: %w", err)
+				}
+			}
+		}
 	}
 
 	res.Status = fmt.Sprintf("Session moved to %s@%s — press enter to resume", p.ProjectName, p.NewBranch)
