@@ -42,83 +42,7 @@ func (m Model) View() tea.View {
 	}
 
 	for i := m.viewportStart; i < end; i++ {
-		item := m.items[i]
-		isSelected := i == m.cursor
-
-		// Cursor
-		cursor := "  "
-		if isSelected {
-			cursor = "▸ "
-		}
-
-		var line string
-		if item.IsHeader {
-			// Section header — not selectable; rendered as a full-width
-			// centered title with extending rule like the top "Sessions".
-			b.WriteString(renderSectionHeader(item.Name, m.width) + "\n")
-			continue
-		} else if item.IsTerminal {
-			// Terminal item: "  1: term-1 ◀"
-			name := truncateName(item.Name, maxNameLen-2)
-			var styledName string
-			if item.IsActive {
-				styledName = termActiveStyle.Render(name) + " " + termActiveStyle.Render("◀")
-			} else {
-				styledName = normalStyle.Render(name)
-			}
-			line = cursor + styledName
-		} else if item.IsHome {
-			name := truncateName("☗ "+item.Name, maxNameLen)
-			line = cursor + homeStyle.Render(name)
-		} else {
-			dot := renderDot(item.Status)
-			isCurrent := itemMatchesOwnWindow(item, m.instanceID, m.windowID, m.windowName)
-
-			// Worktree entries are indented under their parent project
-			indent := ""
-			nameMaxLen := maxNameLen - 2
-			if item.Parent != "" {
-				indent = "  "
-				nameMaxLen -= 2
-			}
-			name := truncateName(item.Name, nameMaxLen)
-
-			// Style the name — current window always gets bold purple + underline
-			var styledName string
-			if isCurrent {
-				styledName = currentStyle.Render(name)
-			} else {
-				styledName = normalStyle.Render(name)
-			}
-
-			// Append agent tag for non-default agents.
-			suffix := ""
-			if item.IsTeamLead {
-				suffix = " " + normalStyle.Render("[team]")
-			} else if tag := agentTag(item.AgentKey); tag != "" {
-				suffix = " " + normalStyle.Render(tag)
-			}
-			if item.Status == "idle" {
-				suffix += " " + dotIdle.Render("idle")
-			} else if item.Status == "permission" {
-				suffix += " " + dotPermission.Render("perm")
-			} else if item.Status == "external" {
-				suffix += " " + dotExternal.Render("ext")
-			}
-			// Git-backed strays carry branch info; show it so the row is
-			// distinguishable from other repos of the same basename.
-			if item.Branch != "" {
-				info := item.Branch
-				if item.Dirty > 0 {
-					info += fmt.Sprintf(" *%d", item.Dirty)
-				}
-				suffix = " " + normalStyle.Render(info) + suffix
-			}
-
-			line = cursor + dot + " " + indent + styledName + suffix
-		}
-
-		b.WriteString(line + "\n")
+		b.WriteString(m.renderItem(m.items[i], i == m.cursor, maxNameLen) + "\n")
 	}
 
 	// Scroll indicators
@@ -292,7 +216,94 @@ func (m Model) View() tea.View {
 		b.WriteString(rule + "\n")
 	}
 
-	// Footer — context-sensitive
+	b.WriteString(m.renderFooter())
+
+	v := tea.NewView(b.String())
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// renderItem is one row of the sessions list: a section header, a
+// terminal tab, Home, or a session with its status, agent and branch.
+func (m Model) renderItem(item SidebarItem, isSelected bool, maxNameLen int) string {
+	// Cursor
+	cursor := "  "
+	if isSelected {
+		cursor = "▸ "
+	}
+
+	var line string
+	if item.IsHeader {
+		// Section header — not selectable; rendered as a full-width
+		// centered title with extending rule like the top "Sessions".
+		return renderSectionHeader(item.Name, m.width)
+	} else if item.IsTerminal {
+		// Terminal item: "  1: term-1 ◀"
+		name := truncateName(item.Name, maxNameLen-2)
+		var styledName string
+		if item.IsActive {
+			styledName = termActiveStyle.Render(name) + " " + termActiveStyle.Render("◀")
+		} else {
+			styledName = normalStyle.Render(name)
+		}
+		line = cursor + styledName
+	} else if item.IsHome {
+		name := truncateName("☗ "+item.Name, maxNameLen)
+		line = cursor + homeStyle.Render(name)
+	} else {
+		dot := renderDot(item.Status)
+		isCurrent := itemMatchesOwnWindow(item, m.instanceID, m.windowID, m.windowName)
+
+		// Worktree entries are indented under their parent project
+		indent := ""
+		nameMaxLen := maxNameLen - 2
+		if item.Parent != "" {
+			indent = "  "
+			nameMaxLen -= 2
+		}
+		name := truncateName(item.Name, nameMaxLen)
+
+		// Style the name — current window always gets bold purple + underline
+		var styledName string
+		if isCurrent {
+			styledName = currentStyle.Render(name)
+		} else {
+			styledName = normalStyle.Render(name)
+		}
+
+		// Append agent tag for non-default agents.
+		suffix := ""
+		if item.IsTeamLead {
+			suffix = " " + normalStyle.Render("[team]")
+		} else if tag := agentTag(item.AgentKey); tag != "" {
+			suffix = " " + normalStyle.Render(tag)
+		}
+		if item.Status == "idle" {
+			suffix += " " + dotIdle.Render("idle")
+		} else if item.Status == "permission" {
+			suffix += " " + dotPermission.Render("perm")
+		} else if item.Status == "external" {
+			suffix += " " + dotExternal.Render("ext")
+		}
+		// Git-backed strays carry branch info; show it so the row is
+		// distinguishable from other repos of the same basename.
+		if item.Branch != "" {
+			info := item.Branch
+			if item.Dirty > 0 {
+				info += fmt.Sprintf(" *%d", item.Dirty)
+			}
+			suffix = " " + normalStyle.Render(info) + suffix
+		}
+
+		line = cursor + dot + " " + indent + styledName + suffix
+	}
+	return line
+}
+
+// renderFooter is the key hints for the focused section (shells, files
+// in either mode, or sessions with the sync state).
+func (m Model) renderFooter() string {
+	var b strings.Builder
 	if m.focusSection == "shells" && len(m.activeShells) > 0 {
 		b.WriteString(footerStyle.Render(" ↑↓ nav   ⏎ view output") + "\n")
 		b.WriteString(footerStyle.Render(" ` popup  s sync  o open") + "\n")
@@ -329,10 +340,7 @@ func (m Model) View() tea.View {
 		b.WriteString(footerStyle.Render(" ` popup") + syncLabel + "\n")
 		b.WriteString(footerStyle.Render(" ^r refresh"))
 	}
-
-	v := tea.NewView(b.String())
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
+	return b.String()
 }
 
 // renderSectionHeader renders "────── Label ──────" centered in width,
