@@ -6,8 +6,8 @@ import (
 
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
-	"github.com/rvanmech/unky-mo/internal/project"
 	mock_ops "github.com/rvanmech/unky-mo/internal/ops/mocks"
+	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/status"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 	"go.uber.org/mock/gomock"
