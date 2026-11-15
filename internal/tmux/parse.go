@@ -16,6 +16,7 @@ import (
 //   - 6-field: id:index:name:instanceID:agentKey:cwd  (current)
 //   - 5-field: id:index:name:instanceID:cwd           (pre-agent windows)
 //   - 4-field: id:index:name:cwd                      (pre-instance-ID)
+//
 // windowListFormat separates list-windows fields with the unit separator
 // (0x1f), which no window name or path contains: a /rename title with a ":"
 // shifted the colon-separated fields, misreading its name, instance id and
