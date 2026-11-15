@@ -99,7 +99,7 @@ type Model struct {
 	// Full project file tree
 	fileTreeMode       fileTreeMode // changed-only vs full tree
 	dirTree            *dirNode     // cached full directory tree
-	dirTreeRaw         string       // cached git ls-files output for change detection
+	dirTreeRaw         string       // cached tree listing for change detection
 	dirTreeRefreshTick int          // counter for 5s cadence (refresh every 5 ticks)
 	// Focus section: "sessions", "shells", or "files"
 	focusSection  string

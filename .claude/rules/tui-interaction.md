@@ -60,5 +60,5 @@ Backtick (`` ` ``) opens a floating popup that attaches a nested tmux client to 
 - **Per-session token counter** — `usage.SessionTokens` against live session's JSONL.
 - **Active shells** — `claude.ActiveShellsForSession` lists Claude's Bash-tool subprocesses.
 - **Changed files** — `git status --porcelain` + `git diff --numstat` populates the Files section (changed-only mode). Also feeds `gitStatusMap` for status markers in full-tree mode.
-- **Full file tree** — `git ls-files` on a 5s cadence (every 5th tick) builds a `dirNode` tree with expand/collapse state preserved across rebuilds. Toggled with `.` key.
+- **Full file tree** — `gitfiles.Tree` (tracked + untracked-not-ignored files, root-relative, the same list as the web's Files panel) on a 5s cadence (every 5th tick) builds a `dirNode` tree with expand/collapse state preserved across rebuilds. Toggled with `.` key.
 - **Sync status** — read once on init via `moSync.ListLocal` (no network), re-checked after a local push.

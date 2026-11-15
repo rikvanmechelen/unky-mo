@@ -36,7 +36,7 @@ func (m *Model) gitReader() GitReader {
 }
 
 // refreshDirTree refreshes the full project directory tree on a 5s cadence
-// (every 5th tick). It runs `git ls-files` and rebuilds the tree only when
+// (every 5th tick). It reads the checkout's tree (tracked + untracked, not ignored) and rebuilds it only when
 // the output has changed, preserving expand/collapse state across rebuilds.
 func (m *Model) refreshDirTree() {
 	if m.windowPath == "" {
@@ -79,7 +79,7 @@ type fileTreeMode int
 
 const (
 	fileTreeModeChanged fileTreeMode = iota // current behavior: git status only
-	fileTreeModeFull                        // full project tree from git ls-files
+	fileTreeModeFull                        // full project tree (tracked + untracked files)
 )
 
 // dirNode represents a directory or file in the full project tree.

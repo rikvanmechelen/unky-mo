@@ -8,6 +8,8 @@
 - 2.x: `internal/tui` coverage reached 55%, not 60%. `app.go` is 575 lines (from 5,199). The sidebar's `Update` was split by section but not into one handler per message. Popups still run through `exec`, now with shell-quoted arguments and escaped titles.
 - 2.x: the TUI still records `branch` only for strays; `mo web` fills it in for live rows as before.
 - 4.1 (a shared comment/string blanker), 4.3 (an `rbScan` struct) and 4.6 (a shared class resolver) are not built. The scanners were made linear in 1.4 instead, which was the finding's real cost. 4.5 found no regexps compiled inside functions: the review's claim was wrong.
+- 3.1: the sidebar's full file tree (`.`) now comes from `gitfiles.Tree`, so it lists untracked files too, like the web's Files panel, where `git ls-files` listed only tracked ones. A visible change the commit (1afb94a) didn't name.
+- 1.1, found in the verification review: the cross-site exemption for the launcher's CORS paths (`hubCORSPaths`) applied to every request, so a cross-site page could register or drop push subscriptions. It now applies only to pairing and to requests carrying the shell's Bearer token.
 - 6.3: `markFailed`/`lastFail` in `hub-model.js` stay. Removing them changes a launcher core file, which forces a core release on every installed app for no change in behaviour. The two V1 hook scripts in `scripts/` were deleted as well.
 - 7.1: the detailed feature text moved to `docs/reference.md` (corrected where it was stale) rather than into new per-feature plan docs. CLAUDE.md is ~1,700 words.
 

@@ -66,17 +66,17 @@ Probe one menu per fresh session: in `/config`, Enter toggles the row under the 
 
 Each line names the part and where its full description is.
 
-- **Session status, hooks, pending questions** — `.claude/rules/session-detection.md`; reference "Architecture".
+- **Session status, hooks, pending questions** — `.claude/rules/session-detection.md`; the reference's Architecture section.
 - **Multi-session, cleanup, lift** — `.claude/rules/session-lifecycle.md`. A lift moves the JSONL and the session's folder (subagents).
 - **TUI keys and prompts** — `.claude/rules/tui-interaction.md`. Every prompt is yes/no (`[y/N]`, enter cancels), a menu (`withCancel`), or free text.
-- **Startup checks, web TLS, the installed app** — reference "Architecture"; `docs/plans/pwa.md`.
-- **Chat view, composer, attachments, queued messages** — reference "Web dashboard" and the chat view paragraphs; `docs/plans/composer-drafts.md`, `file-attachments.md`, `queued-messages.md`, `transcript-load.md`, `message-envelopes.md`.
-- **Editor tabs, review comments** — reference, "The chat view's middle column is tabbed"; `docs/plans/web-editor.md`.
-- **Overview, reviewer view, Git log selection** — reference, `internal/web/`; `docs/plans/change-overview.md`, `overview-explorer.md`, `commit-selection.md`, `inspector-full-file.md`.
-- **Architecture checks and call graph** — reference, "Engine" to "Shared rules"; `docs/plans/architecture-languages.md`, `call-graph.md`, `rails.md`.
-- **Terminal drawer** — reference, the terminal bullets under `internal/web/`; `.claude/rules/tui-interaction.md`.
-- **Permission and question banners, slash menus, mode and model chips** — reference; `docs/plans/permission-answers.md`, `slash-menus.md`.
-- **Bash-call diffs** — reference, `internal/bashsnap/`; `docs/plans/bash-diffs.md`.
+- **Startup checks, web TLS, the installed app** — the reference's Architecture bullets; `docs/plans/pwa.md`.
+- **Chat view, composer, attachments, queued messages** — the reference's "Web dashboard" bullet and its "Composer" section; `docs/plans/composer-drafts.md`, `file-attachments.md`, `queued-messages.md`, `transcript-load.md`, `message-envelopes.md`.
+- **Editor tabs, review comments** — the reference's "Editor tabs" section; `docs/plans/web-editor.md`.
+- **Overview, reviewer view, Git log selection** — the reference's `internal/web/` entry under Key Packages; `docs/plans/change-overview.md`, `overview-explorer.md`, `commit-selection.md`, `inspector-full-file.md`.
+- **Architecture checks and call graph** — the sub-bullets of that entry, "Engine" to "Shared rules"; `docs/plans/architecture-languages.md`, `call-graph.md`, `rails.md`.
+- **Terminal drawer** — the same entry's terminal bullets; `.claude/rules/tui-interaction.md`.
+- **Permission and question banners, slash menus, mode and model chips** — the reference's "Slash commands" and "Slash-command menus" sections; `docs/plans/permission-answers.md`, `slash-menus.md`.
+- **Bash-call diffs** — the reference's `internal/bashsnap/` entry; `docs/plans/bash-diffs.md`.
 - **Push notifications** — `docs/plans/notifications.md`.
 - **The review behind the security rules above** — `docs/plans/review-remediation.md`.
 
