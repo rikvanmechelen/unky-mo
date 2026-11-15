@@ -1,0 +1,164 @@
+# mo web as an installed app that finds its machine
+
+**Status:** plan only, 2026-11-14. Nothing built.
+
+## Goal
+
+Install mo web once on the phone (and desktop) and have it work wherever I am. Today the address is the problem: the laptop is `192.168.1.20` at home, something else at the office, and the dashboard is bookmarked by IP. I want to:
+
+- **Detect** which known address of a machine answers right now, and go there without typing.
+- **Add** a new address by hand when none of the known ones answer.
+- **Not type the password** on every launch, every address and every machine. All machines use the same login.
+- Keep notifications working when the address changes. Today a notification tap opens the origin that subscribed, which is dead once the IP changed.
+
+Out of scope: reaching a machine from outside its network (cellular). That's a VPN's job; see "Stable names".
+
+## The constraint that shapes everything: an app is an origin
+
+A PWA belongs to an **origin**: scheme + host + port. `https://192.168.1.20:7890` and `https://10.1.4.7:7890` are two unrelated apps to the browser, even when they're the same laptop. Per origin, separately:
+
+- the install (home screen icon, manifest, standalone window),
+- the service worker and its cache,
+- localStorage / IndexedDB (drafts, editor tabs, rails, review ticks: everything mo web keeps in the browser),
+- the push subscription,
+- the basic-auth login the browser remembers.
+
+So "the app switches IP" can't mean "the same page moves to another IP". There are three ways around it, and they combine:
+
+1. **A stable name** for each machine, so the origin never changes. The cert already covers `<hostname>.local` (`TLSHosts`). Installing from `https://laptop.local:7890` fixes everything here **if** mDNS works on every network I use. Home networks: usually. Office Wi-Fi: often not (client isolation, multicast filtered). A VPN with its own DNS (Tailscale MagicDNS: `laptop.<tailnet>.ts.net` on a fixed `100.x` address, reachable from cellular too) fixes it everywhere, and needs only that the cert covers its name.
+2. **Jump between origins.** The installed app, opened on a dead address, finds a live one and navigates there. Cheap, but in a standalone window an out-of-scope navigation opens the browser's in-app tab (Android: a Custom Tab with a URL bar; iOS: a Safari sheet), and the new origin has none of the old one's storage or push.
+3. **A shell that stays put.** The installed app's own origin (wherever it was installed from) keeps serving its pages from the service worker cache, even when that address is unreachable. Those pages are a small shell that finds the machine and shows mo web **in an iframe** from the address that answers. The app never leaves its origin, so the icon, the window, the push subscription and the stored login stay one thing. This is the only option that delivers "one app" without a stable name, and it costs the most.
+
+**Recommendation:** build it in phases, each useful alone, and stop as soon as it's good enough.
+
+- **Phase A (steps 1–3): the server knows who it is, its cert follows the network, the app opens to a launcher that finds the machine, and logging in is a form with a per-device token instead of the basic-auth prompt.** Option 2 plus groundwork for 3. Fixes the immediate pain (finding the IP, the password prompts, the iOS Home Screen basic-auth risk and the emulator being stuck on the prompt in `notifications.md` step 5).
+- **Phase B (steps 4–6): the shell + iframe, the shell's updates from whichever machine answers, and push through it.** Option 3. Only after the probes below come back fine, and only if phase A plus a stable name still leaves the "several apps" problem in practice.
+- Whatever the phases: also do option 1 (`[web] extra_hosts`), it's a few lines.
+
+## Credentials: what the app may store
+
+Same login on every machine makes it tempting to keep the password in the app. Don't store the password; store **per-device tokens**:
+
+- Pairing: the app sends username + password once to a machine (`POST /api/hub/pair`), the machine answers with a random 256-bit token for this device. The app keeps the token, never the password.
+- The machine stores only `sha256(token)`, with a label ("Pixel 9 — Chrome"), created and last-used times, in `<config dir>/web-devices.json` (0600, like `web-auth.toml`). `mo web devices list|revoke` and a "Devices" dialog in the dashboard revoke one device on one machine without touching the others or the password.
+- Tokens expire after 90 days unused. A token is full access, like the password: the web is a full TUI stand-in.
+- Why not the password: the app's storage is readable by any script that ever runs in its origin (an XSS in the transcript renderer is the realistic path, and the transcript is untrusted text). A stolen password opens **every** machine, and anything else that shares it, until it's changed everywhere. A stolen token opens one machine until it's revoked or expires.
+- Cost: the password is typed once per machine per device. With two or three machines that's a handful of times, ever.
+- **Opt-in "remember password to pair my other machines"** is possible in phase B only (in phase A each origin is its own storage, so there's nothing to share). If wanted: an AES-GCM key generated with WebCrypto as **non-extractable**, kept in IndexedDB, wrapping the password. That stops someone copying the storage off the device (a backup, a profile copy), not a script running in the origin, since that script can ask the key to decrypt. Default off, and the dialog says exactly that. Open question below.
+- The Credential Management API (`PasswordCredential`) would hand the password to the browser's password manager instead, which is better, but it's Chrome-only and doesn't help on iOS. Not worth a second path.
+
+## Detecting which address answers
+
+What the browser can and can't know:
+
+- It can't see the network (no SSID, no subnet; WebRTC hides local IPs behind mDNS names). So no guessing a `/24`, and no scanning: slow, noisy, and nothing to scan with.
+- It can `fetch` a candidate with a short timeout. A failure looks the same whether the host is down, the port is closed, or **the cert isn't trusted on this device**. The launcher says "not answering (or its certificate isn't trusted here)" and offers "Open in browser" so the real error shows.
+- Another device can answer on the same address at another location (the office's `192.168.1.20` isn't my laptop). So every probe checks a **machine id**, and nothing is sent to an address (no token, no password) before its `hello` names the expected machine over HTTPS. The local CA protects this: a stranger can't present a cert this phone trusts.
+
+The probe:
+
+- `GET /api/hub/hello` (public, `Access-Control-Allow-Origin: *`, no credentials): `{app: "unky-mo", machine: <id>, name: <hostname>, version}`. Minimal on purpose: it's readable by anyone on the network (the hostname already is, over mDNS).
+- `GET /api/hub/addrs` (authenticated): the URLs the machine can be reached at right now (`TLSHosts` + port, plus `extra_hosts`), so the app learns new addresses while connected.
+- Candidates per machine: `{url, source: reported | manual | learned, lastOk, lastFail}`. Order: last address that worked, then the stable names (`.local`, `extra_hosts`), then reported IPs, then the rest.
+- Race: the last good address gets a 600 ms head start, then all candidates in parallel, each with a 2.5 s timeout (`AbortController`). First matching `hello` wins. Re-probe on the `online` event, when the app comes back to the foreground, and when the page loses its connection (phase B: the frame reports it).
+- Manual add: host or IP, optional port (default 7890), https only. It's probed at once and kept only if it answers as a machine (a new machine is added, a known one gains the address).
+
+## Probes before building (phase B gates on these)
+
+Run on Android Chrome (emulator + a real phone), iOS Safari as a Home Screen app (if a device is available), desktop Chrome:
+
+1. **Install from a private IP / `.local` name with the local CA.** Does Android Chrome mint a real WebAPK (no Chrome badge), or fall back to a shortcut? Does the manifest `id` keep one install when `start_url` changes?
+2. **Offline start.** An installed app whose origin is unreachable, with a fetch handler serving `/hub` from cache: does it open (Android, iOS, desktop), or does the browser show its own offline page first?
+3. **iOS Home Screen + basic auth** (from `notifications.md` step 5): is the login kept? If not, step 3 is required, not optional.
+4. **Cross-origin iframe of a private address from a private origin.** Chrome's Local Network Access permission applies to requests from a *less* private context; private → private shouldn't prompt. Check it doesn't, and what `allow=` the iframe needs if it does.
+5. **Storage and service workers inside the iframe** are partitioned by the top-level site. Check the frame's localStorage works and survives restarts (Safari: partitioned storage in a Home Screen app's iframe).
+6. **Third-party cookies in the iframe:** Safari blocks them, partitioned or not (to confirm); Chrome allows `Partitioned` (CHIPS). This decides whether the frame can use a cookie or must send a header (the plan assumes the header).
+7. **Push from several registrations** in one origin, each subscribed with a different VAPID key (one per machine), on Android and iOS.
+8. **A core written with `cache.put` from cross-origin bytes** is served by the service worker after a cold start with the install origin unreachable (Android, iOS Home Screen, desktop), and survives a few days of not opening the app.
+9. **Notification vibration on Android:** whether `vibrate: [...]` has any effect (Android 8+ fixes vibration per notification channel, and Chrome has one channel per origin, so the pattern is most likely ignored), and that both a "done" and a "needs you" notification buzz with the channel's setting (a replacing notification too, via `renotify`).
+
+## Steps
+
+### Phase A
+
+1. **Server identity, addresses, a cert that follows the network.**
+   - `machine-id`: 128 random bits, hex, created once in `$XDG_STATE_HOME/unky-mo/` (not the config dir: dotfiles sync would give two machines the same id).
+   - `GET /api/hub/hello` (public, CORS `*`, `Cache-Control: no-store`) and `GET /api/hub/addrs` (authenticated).
+   - `[web] extra_hosts = ["laptop.tail1234.ts.net", …]`: added to `TLSHosts`' list, so a VPN or DNS name gets into the cert and into `addrs`.
+   - **The cert follows the network.** Today the leaf is signed at startup for the interfaces of that moment and served from a fixed `tls.Config.Certificates`, so a laptop that moves from home to office without restarting mo has a cert without its new IP: a TLS error by IP. Serve it through `GetCertificate` from an `atomic.Pointer`, and every 30 s compare `interfaceIPv4s()` with the leaf's IPs; on a difference, `EnsureTLS` re-signs (the CA is on disk and never changes, so every trusting device keeps trusting) and the pointer swaps. The HTTP→HTTPS redirect's host check reads the same pointer.
+   - Tests: `hello` shape and CORS, `addrs` behind auth, `extra_hosts` in the cert, the swap on a changed interface list (injected interface lister and clock), the redirect accepting a host only after the swap covers it.
+
+2. **The offline launcher.**
+   - **Public paths.** `BasicAuth` (and later the token check) lets through, unauthenticated, only: `/manifest.json`, `/sw.js`, `/icons/*`, `/favicon/*`, `/hub` and its own script/style, `/api/hub/hello`. Static code, no data. Everything else stays behind auth.
+   - **Manifest:** `id: "/hub"`, `start_url: "/hub"`, `scope: "/"`. Drop `crossorigin="use-credentials"` once the manifest is public.
+   - **Service worker fetch handler** (today's `sw.js` deliberately has none): `/hub` and the static files it needs are cache-first with a background revalidate (the server's content-hash ETags make that cheap). A navigation that fails (offline / unreachable) gets the cached `/hub`. `/api/*` and SSE are never cached: the dashboard stays live. The cache is versioned by a hash of the static file list (`GET /api/hub/assets`, public), so an update can't mix versions.
+   - **`/hub`** (`static/hub.html`, `hub.js`, pure logic in `hub-model.js`, Node-tested): the machines this app knows (name, the address that answered, status square), "Add address", and per machine "Open". Opening it on a reachable origin that is the last-used machine goes straight to the dashboard (`/`) unless "stay on launcher" was the reason it opened. On an unreachable origin: probe, show what answers, and **jump** (top-level navigation) to the dashboard at the address found.
+   - Storage: IndexedDB `mo-hub` (machines, candidates, last used). Per origin in this phase, so each origin learns on its own; `addrs` fills it in quickly.
+   - Tests (`jstests/hub_model.test.js`): candidate ordering, merging `addrs` into known machines, the race with fake fetch/timers (head start, timeouts, a wrong machine id ignored, the first match wins), URL validation for manual entry (https only, no path/user info, port range).
+
+3. **Login with device tokens.**
+   - `POST /api/hub/pair` `{username, password, label}`: verify (the PBKDF2 cost is the brake), rate-limited to 5 failures per minute per client IP; answers `{token, deviceId}` and, for a first-party request, also sets the token as a cookie `mo_device` (`HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age` 90 days).
+   - The auth middleware accepts, in order: the `mo_device` cookie, `Authorization: Bearer <token>`, basic auth (curl and existing setups keep working). A browser navigation (`Accept: text/html`) with none gets the login page with 401 and **no** `WWW-Authenticate` header, so there's no native prompt. API calls keep the 401 with the basic challenge only when the request didn't come from our page (no `X-Mo-Client` header), so `curl -u` still works.
+   - `web-devices.json`: `{id, hash, label, created, lastUsed}`, `lastUsed` written at most hourly. Lookup by hash in a map; comparison constant-time.
+   - `mo web devices list|revoke <id>`; a "Devices" dialog in the dashboard header listing them, marking "this device", with Revoke. "Log out" revokes this device's token and clears the cookie.
+   - `mo web` without a login still refuses a non-loopback address. Tokens exist only when a login does.
+   - Tests: pair success/failure, the rate limit, each credential kind, expiry, revocation taking effect at once, the HTML-vs-API 401 split, the public paths reachable without credentials and nothing else.
+
+### Phase B (after the probes)
+
+4. **The shell: one app, the machine in an iframe.**
+   - `/hub` becomes the app's home for good: after finding the machine it shows `https://<found>/?embed=1` (or `/chat?window=…&embed=1`) in a full-window iframe instead of navigating. The shell's origin is wherever the app was installed from, and its pages come from its service worker, so it doesn't matter whether that address answers today.
+   - **Token handoff:** the frame posts `{type: "mo-ready"}` to its parent; the shell checks `event.origin` is the address it opened and answers `{type: "mo-auth", token}` with that exact `targetOrigin`. The frame keeps the token in sessionStorage (partitioned under the shell, which is what we want).
+   - **Requests from the frame carry the token as a header.** Assumes probe 6 (no third-party cookies on Safari). `common.js` wraps `fetch` once to add `Authorization: Bearer` in embed mode. What can't send headers: `EventSource` (transcript, subagents) and URL loads (`<img>` thumbnails and tool images, attachment previews, `/ca.crt`, links opening `/branch` in a new tab). These get a short-lived signed **URL ticket** (`POST /api/hub/ticket` → HMAC over device id + expiry, 10 min, accepted only on GETs of an allowlist of routes), appended by one helper `authURL(u)`. The step starts with an inventory of every URL the static files build (`grep` for `fetch(`, `EventSource`, `.src =`, `href`, `window.open`).
+   - **Framing is restricted:** `Content-Security-Policy: frame-ancestors 'self' <origins>` on every page, where `<origins>` are the shell origins devices paired from (recorded from the pair request's `Origin`). Without it, any page could frame the destructive UI.
+   - **Frame → shell messages** carry nothing sensitive: the title, the most urgent status (for the shell's favicon/badge), "connection lost" (re-probe), "switch machine". Sent to the parent origin the auth message came from, never `*`.
+   - A machine not yet paired from this shell: the shell asks for the password once, pairs, keeps the token (and the password too only with the opt-in above).
+   - The frame's own push UI hides in embed mode and asks the shell instead (step 6).
+   - Tests: the handoff model (wrong origin ignored, wrong source ignored), `authURL`, the ticket (expiry, route allowlist, POST refused, another device's ticket after revoke), the CSP header, the fetch wrapper only in embed mode.
+
+5. **The core updates from whichever machine answers.**
+   The app has two layers with different update rules:
+
+   | Layer | Updated by |
+   |---|---|
+   | The service worker script (`sw.js`) and the manifest (name, icons) | Only the install origin. The browser re-checks them on launch; when that address doesn't answer, the check fails silently and the old ones stay. |
+   | The **core** (the shell's HTML/JS/CSS in Cache Storage) | Any page in the app's origin, with bytes fetched from any machine. |
+
+   - **The service worker stays dumb so it rarely needs an update.** It answers navigations from the cache the "current core" pointer names (a small record in Cache Storage), and otherwise serves a recovery page written inline in the script. All logic lives in the core. The pointer format, cache names and the recovery page are the **SW contract**; changing any of them is a new `SW_VERSION`.
+   - **Fetching a core:** after connecting, the core asks the machine `GET /api/hub/core` (CORS, token-authenticated): `{version, swVersion, manifestVersion, protocol, files: {path: {etag, type}}}`. If `version` is newer than the running core, it downloads the files into a new cache `core-<version>` (`cache.put` under the app's own URLs), then moves the pointer. It takes effect on the next launch, or now with a "Reload" toast. Rules:
+     - Only from a machine whose `hello` matched its id, over HTTPS, with a valid token from this device: a machine already trusted to drive agents. Never from a machine merely answering.
+     - Only a newer version. Never downgrade.
+     - (Later, if wanted: an Ed25519 signature over the bundle, verified with WebCrypto against a key in the core.)
+   - **Rollback:** the previous core is kept. A new core must post "booted" to the service worker within 5 s, or the service worker moves the pointer back and marks that version bad (not retried).
+   - **Recovery page** (inline in `sw.js`, so it exists even when every cache is broken): "Use the core this app was installed with" (a copy kept in `core-installed`) and "Fetch the core from address …".
+   - **The "base is outdated" warning.** `sw.js` carries `SW_VERSION` and the manifest a `manifestVersion` (in its `id`-stable fields, e.g. a `version` key the core reads). The machine reports the ones it ships. If either is newer than what's installed, the core shows a dismissible strip: "This app's base is older than <machine>'s (v3 → v5). Open it once from <install address>, or reinstall from <current address>." Before showing it, the core calls `registration.update()` whenever the install origin itself answers a probe, so the warning only appears when an automatic update really can't happen. Reinstalling from another address makes that address the new install origin (a fresh app: paired tokens and stored machines start over, which the strip says).
+   - **What then updates without reinstalling:** everything inside the iframe (served live by the machine, as today), and the core (above). **What doesn't:** the service worker contract, and the app's name/icons/shortcuts (iOS never refreshes those after install; Android only from the install origin).
+   - **Compatibility across versions.** Machines won't all run the same build. `protocol` (the hello/pair/core/ticket API and the postMessage messages) is versioned. A core works with machines one protocol version older and newer than its own, and a machine accepts cores one version older. A machine too old for the core gets "update mo on <machine>" instead of a broken frame.
+   - Tests: the version comparison and update decision in `hub-model.js` (newer only, bad versions skipped, untrusted machine refused, warning conditions), the service worker's routing and rollback as pure functions over a fake cache (Node), `/api/hub/core`'s listing matching the embedded files.
+
+6. **Push through the shell.**
+   - Each machine has its own VAPID key, and a push subscription is bound to one key. The shell registers one service worker **per machine**, under its own scope (`/hub/push/<machine-id>/`), subscribes it with that machine's key (`GET /api/push` from the machine) and gives the subscription to that machine (`POST /api/push/subscriptions`, as today).
+   - The push itself goes machine → FCM/Apple → phone, so it works whatever the machine's LAN address is. A notification's URL now names the machine and window (`/hub?machine=<id>&window=@3`), and a tap opens the shell, which finds the machine's current address and opens that session.
+   - Presence (don't buzz the device looking at the session) moves to the frame unchanged; it talks to its own machine.
+   - (Alternative: one shared VAPID key copied between machines, `mo web push export|import`, and one subscription. Simpler in the browser, but a key copied around is a key that leaks. Per-machine registrations first.)
+   - **Telling "done" from "needs you" by feel** (Android; iOS has no web vibration at all). A per-notification `vibrate` pattern is most likely ignored on Android 8+ (probe 9): vibration belongs to the notification channel, and Chrome has one channel per origin, configurable under Android's app notification settings for Chrome. So one pattern for both events, set by hand. **Decision: both "done" and "needs you" always buzz** (never `silent`), so a buzz always means "look at the phone"; the title tells them apart. If probe 9 shows patterns do work, add two patterns on top (short for done, long-long for needs you); either way both buzz. `navigator.vibrate()` from an open page needs a recent tap and doesn't run in a service worker, so it can't help here.
+   - If distinct patterns turn out to matter a lot: a native app with its own channels (e.g. ntfy, which mo web would publish to) can have one channel per event, each with its own vibration. Out of scope here, as in `notifications.md`.
+   - Tests: the registration bookkeeping in `hub-model.js`, the notification URL builder on the server, the click routing, no event's payload ever `silent`.
+
+7. **End to end and docs.** The probe devices again, through the real flows: install, change network (home ↔ office, or two emulator networks), app opens and finds the machine, add an address by hand, pair, revoke, (phase B) a notification after an address change opens the right session. CLAUDE.md: architecture paragraph, public paths, devices, `extra_hosts`.
+
+## Decisions
+
+- **No public host for the shell.** A shell on GitHub Pages would be one stable origin, but code served from a third party would hold tokens that drive agents on my machines, and every request would be public → private (Local Network Access prompts). The shell is served by mo web itself and cached.
+- **No password in the app** by default. Tokens per device per machine.
+- **Machine id checked before anything is sent** to an address.
+- **Static code becomes public, data never.** The list of public paths is fixed in code and tested.
+- **The cert keeps its CA forever,** as today. Only the leaf follows the network.
+- **Phase A works without phase B,** and phase B only starts if the probes pass.
+- **The service worker is a stable contract, the core is not.** The core updates from any paired machine; only a contract change asks for a reinstall, and the app says so.
+
+## Open questions
+
+- **Is a VPN (Tailscale or similar) allowed on the machines and phone?** If so, `extra_hosts` plus installing from its name may make phase B unnecessary, and it also works off the LAN.
+- **Does mDNS (`.local`) resolve on the office network?** Quick check from the phone: `https://<hostname>.local:7890/api/hub/hello` after step 1.
+- **Remember the password to pair new machines** (phase B, opt-in, with the stated limits): wanted, or is typing it once per machine fine?
