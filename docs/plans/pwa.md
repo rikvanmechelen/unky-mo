@@ -1,6 +1,6 @@
 # mo web as an installed app that finds its machine
 
-**Status:** steps 1–6 built on main, 2026-11-14; step 7's device checks are open.
+**Status:** steps 1–6 built on main and checked in headless Chrome, 2026-11-14. Step 7: docs done; the device checks are open (see Step 7).
 
 ## Goal
 
@@ -256,6 +256,27 @@ The worker's half (install, rollback, recovery page) was built in step 2. This s
   - Node: `notificationFor` (own scope unchanged; a machine scope rewrites url and tag; never silent; `renotify` with a tag; malformed payloads still show something), `machineFromScope`, the launcher's `?machine=&next=` parsing, and `mo-notify` accepted from the frame.
   - Go: the push routes' CORS and preflight.
 - **Built as planned.** Checked in headless Chrome: a `?machine=&next=` link opens that machine's chat in the frame; the frame's Notifications button opens the shell's dialog; Turn on registers `/hub/push/<id>/`, subscribes with the machine's key and the machine records it; Send test is accepted by the push service. Not checked: delivery (headless Chrome keeps no push connection) and a tap on a delivered notification. Those are device checks (step 7).
+
+## Step 7: end to end
+
+**Done here (headless Chrome on Linux, scratch servers with their own config and state dirs):**
+- Probe 8 on desktop: a core installed from another machine's bytes serves after a full browser restart with the install address down.
+- Probes 4–6 on desktop: a cross-site iframe of the other machine works with the token and tickets (no cookies needed).
+- Every flow in steps 2–6 (see each step's "Built" note). CLAUDE.md and `.claude/rules/testing.md` are updated.
+
+**Open: device checks.** These need a phone and can't be done from here. On each device, trust the CA first (dashboard → "Trust on another device"), then:
+1. **Android Chrome (probes 1, 2, 7, 9):**
+   - Install from `https://<host>.local:7890`, or the IP, and check it's a real app (no Chrome badge).
+   - Log in through the form (the basic-auth prompt that stopped the emulator in `notifications.md` is gone).
+   - Switch the phone to another network, or stop `mo web`, and open the app: the launcher should show, find the machine, or offer "Add address".
+   - With two machines, open the second inside the shell, then turn on its notifications from the frame's "Notifications" button. Send test: it must buzz. Tap it: the shell opens that machine's chat.
+   - A real "done" and a real "needs input" must both buzz.
+2. **iOS Home Screen app (probes 1–3, 5–7):** the same, from Safari's Add to Home Screen.
+   - Check that storage survives in the frame, and that streams over tickets work without third-party cookies.
+   - Check that pushes arrive for a second machine's registration.
+3. **Desktop Chrome installed app:** install, then close it with the install address unreachable and reopen.
+
+If a device fails the shell (frame) part, the launcher's top-level jump (phase A) still works. Report what failed and the shell can be made opt-in per device.
 
 ## Decisions
 
