@@ -231,3 +231,44 @@ func TestOpenBranchInMainRefusesDirty(t *testing.T) {
 		t.Error("should NOT launch on dirty repo without Stash")
 	}
 }
+
+// WorktreeFromRemote fetches the branch from origin and leaves the
+// worktree at what origin has, ahead of the local branch; without a remote
+// it still creates the worktree, at the local branch, and says why.
+func TestWorktreeFromRemote(t *testing.T) {
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	origin := newGitRepo(t)
+	git(origin, "checkout", "-q", "-b", "pr-branch")
+	git(origin, "commit", "-q", "--allow-empty", "-m", "first")
+	git(origin, "checkout", "-q", "main")
+	clone := filepath.Join(t.TempDir(), "clone")
+	git(origin, "clone", "-q", origin, clone)
+	git(clone, "branch", "-q", "pr-branch", "origin/pr-branch")
+	// origin moves on after the clone.
+	git(origin, "checkout", "-q", "pr-branch")
+	git(origin, "commit", "-q", "--allow-empty", "-m", "second")
+	want, _ := exec.Command("git", "-C", origin, "rev-parse", "HEAD").Output()
+
+	wt, warning, err := WorktreeFromRemote(&Context{}, clone, "pr-branch")
+	if err != nil || warning != "" {
+		t.Fatalf("err %v, warning %q", err, warning)
+	}
+	got, _ := exec.Command("git", "-C", wt, "rev-parse", "HEAD").Output()
+	if string(got) != string(want) {
+		t.Errorf("worktree at %s, want origin's %s", got, want)
+	}
+
+	// No origin: the worktree is made from the local branch, with a warning.
+	lone := newGitRepo(t)
+	git(lone, "branch", "-q", "feat")
+	if _, warning, err := WorktreeFromRemote(&Context{}, lone, "feat"); err != nil || !strings.Contains(warning, "couldn't fetch") {
+		t.Errorf("no remote: err %v, warning %q", err, warning)
+	}
+}

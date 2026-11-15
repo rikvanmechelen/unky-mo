@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -2946,11 +2945,8 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 			return statusMsgEvent("tmux not available")
 		}
 
-		// Fetch the PR branch from the remote first, then create worktree
-		_ = exec.Command("git", "-C", p.Path, "fetch", "origin", pr.Branch).Run()
-
-		// Create the worktree for the PR branch
-		wtPath, err := project.CreateWorktree(p.Path, pr.Branch)
+		// The worktree at what origin has for the PR's branch.
+		wtPath, warning, err := ops.WorktreeFromRemote(m.ops, p.Path, pr.Branch)
 		if err != nil {
 			var existsErr *project.ErrWorktreeExists
 			if errors.As(err, &existsErr) {
@@ -2962,9 +2958,6 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 			}
 			return statusMsgEvent(fmt.Sprintf("Worktree failed: %v", err))
 		}
-
-		// Reset the worktree to the remote branch to ensure it's up to date
-		_ = exec.Command("git", "-C", wtPath, "reset", "--hard", "origin/"+pr.Branch).Run()
 
 		windowName := p.Name + "@" + pr.Branch
 		var status string
@@ -2986,6 +2979,9 @@ func (m Model) createWorktreeFromPR(pr gh.PullRequest) tea.Cmd {
 			if se, ok := launch.(statusMsgEvent); ok {
 				status = string(se)
 			}
+		}
+		if warning != "" {
+			status = warning + ". " + status
 		}
 		return worktreeCreatedMsg{status: status}
 	}
@@ -3239,15 +3235,15 @@ func (m Model) removeAndRecreateWorktree(projectPath, projectName, branch string
 		if err := project.RemoveWorktree(projectPath, branch); err != nil {
 			return statusMsgEvent(fmt.Sprintf("Remove failed: %v", err))
 		}
+		var wtPath, warning string
+		var err error
 		if prBranch {
-			_ = exec.Command("git", "-C", projectPath, "fetch", "origin", branch).Run()
+			wtPath, warning, err = ops.WorktreeFromRemote(m.ops, projectPath, branch)
+		} else {
+			wtPath, err = project.CreateWorktree(projectPath, branch)
 		}
-		wtPath, err := project.CreateWorktree(projectPath, branch)
 		if err != nil {
 			return statusMsgEvent(fmt.Sprintf("Recreate failed: %v", err))
-		}
-		if prBranch {
-			_ = exec.Command("git", "-C", wtPath, "reset", "--hard", "origin/"+branch).Run()
 		}
 		windowName := projectName + "@" + branch
 		var status string
@@ -3268,6 +3264,9 @@ func (m Model) removeAndRecreateWorktree(projectPath, projectName, branch string
 			if se, ok := launch.(statusMsgEvent); ok {
 				status = string(se)
 			}
+		}
+		if warning != "" {
+			status = warning + ". " + status
 		}
 		return worktreeCreatedMsg{status: status}
 	}

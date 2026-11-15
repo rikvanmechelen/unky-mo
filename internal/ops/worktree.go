@@ -1,11 +1,14 @@
 package ops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
+	moexec "github.com/rvanmech/unky-mo/internal/exec"
 	"github.com/rvanmech/unky-mo/internal/project"
 )
 
@@ -290,4 +293,44 @@ func requireContext(ctx *Context) error {
 		return fmt.Errorf("ops: nil Tmux")
 	}
 	return nil
+}
+
+// remoteTimeout bounds a fetch from origin.
+const remoteTimeout = 60 * time.Second
+
+// WorktreeFromRemote creates a worktree for branch (a PR's, typically) at
+// what origin has: fetch the branch, create the worktree, reset it to
+// origin/<branch>. A fetch or reset that fails leaves the worktree at the
+// local branch and says so in warning; only a worktree that can't be
+// created is an error (a *project.ErrWorktreeExists when one already is).
+func WorktreeFromRemote(ctx *Context, projectPath, branch string) (wtPath, warning string, err error) {
+	run := func(dir string, args ...string) error {
+		c, cancel := context.WithTimeout(context.Background(), remoteTimeout)
+		defer cancel()
+		cmd := ctx.Cmd
+		if cmd == nil {
+			cmd = moexec.DefaultCommander
+		}
+		out, err := cmd.CombinedOutput(c, dir, "git", args...)
+		if err != nil {
+			if msg := strings.TrimSpace(string(out)); msg != "" {
+				return fmt.Errorf("%s", msg)
+			}
+		}
+		return err
+	}
+	fetchErr := run(projectPath, "fetch", "origin", "--", branch)
+	wtPath, err = project.CreateWorktree(projectPath, branch)
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case fetchErr != nil:
+		warning = fmt.Sprintf("couldn't fetch %s (%v); the worktree has the local branch", branch, fetchErr)
+	default:
+		if err := run(wtPath, "reset", "--hard", "origin/"+branch, "--"); err != nil {
+			warning = fmt.Sprintf("couldn't reset to origin/%s (%v); the worktree has the local branch", branch, err)
+		}
+	}
+	return wtPath, warning, nil
 }
