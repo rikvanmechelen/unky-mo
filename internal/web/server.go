@@ -70,6 +70,10 @@ type Server struct {
 
 	// pairs rate-limits failed device pairings.
 	pairs pairLimiter
+
+	// hosts, when set, is the Host allowlist for a plain-HTTP server (see
+	// SetPlainHTTPHosts).
+	hosts *hostAllowlist
 }
 
 // NewServer builds a Server. ticketRefresh is the ticket cache TTL
@@ -110,7 +114,15 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.hosts != nil && !s.hosts.allows(r.Host) {
+		http.Error(w, "unknown host", http.StatusMisdirectedRequest)
+		return
+	}
 	w.Header().Set("Content-Security-Policy", s.frameAncestors())
+	if crossSiteRefused(r) {
+		writeError(w, http.StatusForbidden, errCrossSite)
+		return
+	}
 	if origin := r.Header.Get("Origin"); origin != "" && hubCORSPaths[r.URL.Path] && !sameOrigin(r) {
 		hdr := w.Header()
 		hdr.Set("Access-Control-Allow-Origin", origin)

@@ -19,6 +19,9 @@ func BasicAuth(h http.Handler, creds *Credentials) http.Handler {
 
 const deviceCookie = "mo_device"
 
+// basicVerifySlots caps concurrent basic-auth password checks.
+const basicVerifySlots = 4
+
 type deviceKey struct{}
 
 // requestDevice is the paired device a request logged in as, if any.
@@ -39,9 +42,16 @@ func requestDevice(r *http.Request) (Device, bool) {
 // browser navigation without one goes to the launcher's login form, the
 // page's own fetches get a plain 401, and anything else (curl) gets the
 // basic challenge, so there's no native prompt in a browser.
+//
+// Basic auth is throttled like pairing (5 failures a minute per client IP,
+// then 429), and at most basicVerifySlots password checks run at once: each
+// failed guess costs a full PBKDF2, so without both a LAN host could pin
+// every core or work through a dictionary.
 func RequireLogin(h http.Handler, creds *Credentials, devices *DeviceStore) http.Handler {
 	var mu sync.Mutex
 	verified := map[[32]byte]bool{}
+	var failures pairLimiter
+	slots := make(chan struct{}, basicVerifySlots)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublicPath(r) || (r.Method == http.MethodPost && r.URL.Path == "/api/hub/pair") ||
@@ -62,17 +72,20 @@ func RequireLogin(h http.Handler, creds *Credentials, devices *DeviceStore) http
 			}
 		}
 		if devices != nil {
-			token, fromCookie := "", false
-			if c, err := r.Cookie(deviceCookie); err == nil {
-				token, fromCookie = c.Value, true
-			} else if v, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-				token = v
-			}
-			if token != "" {
-				if d, touched, ok := devices.lookup(token); ok {
-					if fromCookie && touched {
-						setDeviceCookie(w, r, token)
+			// Both credentials are tried: a revoked device's cookie left in
+			// the browser must not hide a valid Bearer token (the shell's
+			// frame on the same address sends both).
+			if c, err := r.Cookie(deviceCookie); err == nil && c.Value != "" {
+				if d, touched, ok := devices.lookup(c.Value); ok {
+					if touched {
+						setDeviceCookie(w, r, c.Value)
 					}
+					h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), deviceKey{}, d)))
+					return
+				}
+			}
+			if v, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && v != "" {
+				if d, _, ok := devices.lookup(v); ok {
 					h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), deviceKey{}, d)))
 					return
 				}
@@ -84,11 +97,23 @@ func RequireLogin(h http.Handler, creds *Credentials, devices *DeviceStore) http
 			mu.Lock()
 			hit := verified[key]
 			mu.Unlock()
-			if !hit && creds.Verify(user, pass) {
-				mu.Lock()
-				verified[key] = true
-				mu.Unlock()
-				hit = true
+			if !hit {
+				ip, now := clientIP(r), time.Now()
+				if failures.blocked(ip, now) {
+					http.Error(w, "too many failed logins; wait a minute", http.StatusTooManyRequests)
+					return
+				}
+				slots <- struct{}{}
+				good := creds.Verify(user, pass)
+				<-slots
+				if good {
+					mu.Lock()
+					verified[key] = true
+					mu.Unlock()
+					hit = true
+				} else {
+					failures.fail(ip, now)
+				}
 			}
 			if hit {
 				h.ServeHTTP(w, r)

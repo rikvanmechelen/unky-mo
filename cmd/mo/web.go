@@ -141,6 +141,9 @@ func webCmd() *cobra.Command {
 			}
 
 			if cfg.Web.DisableTLS {
+				// Without TLS, DNS rebinding could make a hostile page
+				// same-origin with the dashboard: answer only our own names.
+				webServer.SetPlainHTTPHosts(hosts)
 				fmt.Printf("mo web listening on http://%s (%s, TLS disabled)\n", addr, authNote)
 				return http.ListenAndServe(addr, handler)
 			}

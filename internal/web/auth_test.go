@@ -11,7 +11,6 @@ func TestBasicAuth(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 	creds := testCredentials(t, "mo", "s3cret")
-	h := BasicAuth(inner, creds)
 
 	tests := []struct {
 		name       string
@@ -27,6 +26,8 @@ func TestBasicAuth(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// A handler per case: failed attempts count toward the lockout.
+			h := BasicAuth(inner, creds)
 			req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
 			if tt.setAuth {
 				req.SetBasicAuth(tt.user, tt.pass)
@@ -66,5 +67,34 @@ func TestIsLoopbackAddr(t *testing.T) {
 		if got := IsLoopbackAddr(addr); got != want {
 			t.Errorf("IsLoopbackAddr(%q): want %v, got %v", addr, want, got)
 		}
+	}
+}
+
+// TestBasicAuthLockout: five failed basic logins in a minute from one
+// address lock it out, even with the right password, while another
+// address still gets in.
+func TestBasicAuthLockout(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	h := BasicAuth(inner, testCredentials(t, "mo", "s3cret"))
+	send := func(addr, pass string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+		req.RemoteAddr = addr
+		req.SetBasicAuth("mo", pass)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for i := 0; i < pairFailuresPerMinute; i++ {
+		if got := send("10.0.0.9:1234", "guess"); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: want 401, got %d", i+1, got)
+		}
+	}
+	if got := send("10.0.0.9:1234", "s3cret"); got != http.StatusTooManyRequests {
+		t.Errorf("locked-out address: want 429, got %d", got)
+	}
+	if got := send("10.0.0.8:1234", "s3cret"); got != http.StatusTeapot {
+		t.Errorf("another address: want 418, got %d", got)
 	}
 }
