@@ -234,8 +234,9 @@ var constantRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9_:.@$])((?:::)?[A-Z][A-Za-z
 // rubyConstants lists the constants code references, with their lines.
 func rubyConstants(code string) []ref {
 	var out []ref
+	lineAt := lineIndexer(code)
 	for _, m := range constantRe.FindAllStringSubmatchIndex(code, -1) {
-		out = append(out, ref{to: code[m[2]:m[3]], line: 1 + strings.Count(code[:m[2]], "\n")})
+		out = append(out, ref{to: code[m[2]:m[3]], line: lineAt(m[2])})
 	}
 	return out
 }

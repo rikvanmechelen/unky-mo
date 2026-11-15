@@ -26,7 +26,7 @@ var (
 // manifestItems reads a manifest's permissions and exported components.
 func manifestItems(src string) (perms, exported map[string]int) {
 	perms, exported = map[string]int{}, map[string]int{}
-	lineOf := func(i int) int { return 1 + strings.Count(src[:i], "\n") }
+	lineOf := lineIndexer(src)
 	for _, m := range permissionRe.FindAllStringSubmatchIndex(src, -1) {
 		perms[src[m[2]:m[3]]] = lineOf(m[0])
 	}

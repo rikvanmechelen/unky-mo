@@ -231,7 +231,7 @@ func stimulusBindings(src string) []stimBinding {
 	if !strings.Contains(src, "data") || !(strings.Contains(src, "controller") || strings.Contains(src, "action") || strings.Contains(src, "target")) {
 		return nil
 	}
-	lineAt := func(off int) int { return 1 + strings.Count(src[:off], "\n") }
+	lineAt := lineIndexer(src)
 	type hit struct {
 		at       int
 		key, val string

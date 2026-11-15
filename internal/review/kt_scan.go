@@ -96,7 +96,7 @@ type jvmRef struct {
 func jvmRefs(src string) []jvmRef {
 	code := jvmCode(src)
 	var out []jvmRef
-	lineOf := func(i int) int { return 1 + strings.Count(code[:i], "\n") }
+	lineOf := lineIndexer(code)
 	for _, m := range jvmImportRe.FindAllStringSubmatchIndex(code, -1) {
 		out = append(out, jvmRef{Name: code[m[2]:m[3]], Package: m[4] >= 0, Line: lineOf(m[0])})
 	}

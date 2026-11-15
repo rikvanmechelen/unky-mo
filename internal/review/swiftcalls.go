@@ -884,6 +884,16 @@ func (s *swiftScanner) refs(called map[int]bool, add func(int, hCall)) {
 // bodies sets each definition's body hash: its own lines (comments
 // blanked, strings kept), without its nested definitions'.
 func (s *swiftScanner) bodies(norm []string) {
+	// The definitions by start offset, so each one visits only those that
+	// start inside it: comparing every pair was quadratic in the number of
+	// definitions (a file of 40,000 bodiless declarations took seconds).
+	byStart := make([]int, 0, len(s.spans))
+	for j, o := range s.spans {
+		if o.start >= 0 {
+			byStart = append(byStart, j)
+		}
+	}
+	sort.SliceStable(byStart, func(a, b int) bool { return s.spans[byStart[a]].start < s.spans[byStart[b]].start })
 	for i := range s.f.Defs {
 		d := &s.f.Defs[i]
 		sp := s.spans[i]
@@ -896,8 +906,13 @@ func (s *swiftScanner) bodies(norm []string) {
 			continue
 		}
 		nested := map[int]bool{}
-		for j := i + 1; j < len(s.spans); j++ {
-			if o := s.spans[j]; o.start > sp.start && o.end <= sp.end && o.start >= 0 {
+		first := sort.Search(len(byStart), func(a int) bool { return s.spans[byStart[a]].start > sp.start })
+		for _, j := range byStart[first:] {
+			o := s.spans[j]
+			if o.start > sp.end {
+				break
+			}
+			if j > i && o.end <= sp.end {
 				for k := s.f.Defs[j].Line; k <= s.f.Defs[j].End; k++ {
 					nested[k-1] = true
 				}

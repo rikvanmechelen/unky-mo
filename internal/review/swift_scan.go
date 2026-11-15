@@ -131,7 +131,7 @@ type swiftScanned struct {
 func swiftRefs(src string) swiftScanned {
 	code := swiftCode(src)
 	var s swiftScanned
-	lineOf := func(i int) int { return 1 + strings.Count(code[:i], "\n") }
+	lineOf := lineIndexer(code)
 	for _, m := range swiftImportRe.FindAllStringSubmatchIndex(code, -1) {
 		if m[2] >= 0 {
 			continue // @testable import: tests only
