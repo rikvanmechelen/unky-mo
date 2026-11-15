@@ -172,7 +172,7 @@ func (c *Client) DisplayPopupAttach(session, cwd, title string) error {
 		args = append(args, "-d", cwd)
 	}
 	if title != "" {
-		args = append(args, "-T", title)
+		args = append(args, "-T", EscapeFormat(title))
 	}
 	args = append(args, "tmux")
 	if c.SocketName != "" {
@@ -572,7 +572,7 @@ func (c *Client) IsPaneAlive(paneID string) bool {
 
 // Popup opens a floating popup terminal in the given directory.
 func (c *Client) Popup(cwd, title string) error {
-	return c.runTmux("display-popup", "-E", "-d", cwd, "-w", "80%", "-h", "80%", "-T", title)
+	return c.runTmux("display-popup", "-E", "-d", cwd, "-w", "80%", "-h", "80%", "-T", EscapeFormat(title))
 }
 
 // SelectPane focuses a specific pane.

@@ -2155,16 +2155,12 @@ func (m Model) showShellOutput(shell claude.ActiveShell) tea.Cmd {
 	}
 
 	// Build a header script that shows status info then tails the output
-	displayCmd := m.claude.FormatShellCommand(shell.Command, 60)
-	script := fmt.Sprintf(
-		`echo "Shell details"; echo ""; echo "Status: running"; echo "Command: %s"; echo "Output:"; echo ""; tail -f %s`,
-		displayCmd, shell.OutputFile,
-	)
+	script := shellOutputScript(m.claude.FormatShellCommand(shell.Command, 60), shell.OutputFile)
 
 	title := fmt.Sprintf(" Shell: %s ", m.claude.FormatShellCommand(shell.Command, 30))
 	c := exec.Command("tmux", "display-popup", "-E",
 		"-w", "95%", "-h", "95%",
-		"-T", title,
+		"-T", ttmux.EscapeFormat(title),
 		"sh", "-c", script)
 	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
@@ -2179,11 +2175,11 @@ func (m Model) showDiffPopup(file string) tea.Cmd {
 		return func() tea.Msg { return sidebarStatusMsg("no project path") }
 	}
 	title := fmt.Sprintf(" diff: %s ", filepath.Base(file))
-	diffCmd := fmt.Sprintf("git diff --color=always HEAD -- %s | less -R", file)
+	diffCmd := diffScript(file)
 	c := exec.Command("tmux", "display-popup", "-E",
 		"-w", "95%", "-h", "95%",
 		"-d", m.windowPath,
-		"-T", title,
+		"-T", ttmux.EscapeFormat(title),
 		"sh", "-c", diffCmd)
 	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
@@ -2206,7 +2202,7 @@ func (m Model) openFileInEditor(file string) tea.Cmd {
 	c := exec.Command("tmux", "display-popup", "-E",
 		"-w", "90%", "-h", "90%",
 		"-d", m.windowPath,
-		"-T", title,
+		"-T", ttmux.EscapeFormat(title),
 		editor, absPath)
 	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
@@ -2300,7 +2296,7 @@ func (m *Model) openPopup() tea.Cmd {
 	c := exec.Command("tmux", "display-popup", "-E",
 		"-w", "80%", "-h", "80%",
 		"-d", m.windowPath,
-		"-T", title,
+		"-T", ttmux.EscapeFormat(title),
 		"tmux", "attach-session", "-t", m.termSession())
 	return execWithMouseRestore(c, func(err error) tea.Msg {
 		if err != nil {
@@ -2526,4 +2522,22 @@ func (m Model) switchToSelected() tea.Cmd {
 
 		return nil
 	}
+}
+
+// shQuote quotes s as one word for sh.
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// shellOutputScript is the sh script the shell popup runs: a header naming
+// the command, then the output file followed. Both are quoted: the command
+// is Claude's own Bash command, and inside double quotes its $(…) or
+// backticks would run again just by being looked at.
+func shellOutputScript(command, outputFile string) string {
+	return `echo "Shell details"; echo ""; echo "Status: running"; printf 'Command: %s\n' ` + shQuote(command) +
+		`; echo "Output:"; echo ""; tail -f -- ` + shQuote(outputFile)
+}
+
+// diffScript is the sh script the diff popup runs for file. The name is
+// quoted: a file in the checkout can be called anything, a;rm -rf ~ too.
+func diffScript(file string) string {
+	return "git diff --color=always HEAD -- " + shQuote(file) + " | less -R"
 }

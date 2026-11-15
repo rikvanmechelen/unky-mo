@@ -41,3 +41,9 @@ func TestNeedsSafeTarget(t *testing.T) {
 		t.Error("@ in name should not trigger safe target")
 	}
 }
+
+func TestEscapeFormat(t *testing.T) {
+	if got := EscapeFormat(" diff: #(touch x)#{pane_id} "); got != " diff: ##(touch x)##{pane_id} " {
+		t.Errorf("got %q", got)
+	}
+}

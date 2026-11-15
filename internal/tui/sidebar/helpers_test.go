@@ -1,6 +1,9 @@
 package sidebar
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -900,5 +903,28 @@ func TestFirstLoadAllDirsCollapsed(t *testing.T) {
 	}
 	if root.children["c"].expanded {
 		t.Error("c should be collapsed on first load (defaultDepth=0)")
+	}
+}
+
+// The popup scripts quote what they're given: a hostile file name or
+// command is shown, not run.
+func TestPopupScriptsQuote(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	evil := "a'; touch " + marker + "; echo '$(touch " + marker + ")`touch " + marker + "`"
+	for name, script := range map[string]string{
+		"shell output": strings.Replace(shellOutputScript(evil, "/dev/null"), "tail -f", "cat", 1),
+		"diff":         strings.Replace(diffScript(evil), "git diff --color=always HEAD -- ", "echo ", 1),
+	} {
+		out, err := exec.Command("sh", "-c", strings.Replace(script, "| less -R", "", 1)).CombinedOutput()
+		if _, statErr := os.Stat(marker); statErr == nil {
+			t.Fatalf("%s: the name ran as a command (%s)", name, out)
+		}
+		if err != nil {
+			t.Errorf("%s: %v: %s", name, err, out)
+		}
+		if !strings.Contains(string(out), "$(touch") {
+			t.Errorf("%s: the text wasn't shown as is: %s", name, out)
+		}
 	}
 }

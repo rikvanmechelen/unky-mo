@@ -30,3 +30,10 @@ func ExactTarget(session, name string) string {
 func NeedsSafeTarget(name string) bool {
 	return strings.Contains(name, ".")
 }
+
+// EscapeFormat makes s literal where tmux expects a format (a popup's -T
+// title): formats expand #{…} and run #(…) as a shell command, and the
+// text can be a file name or a command Claude ran.
+func EscapeFormat(s string) string {
+	return strings.ReplaceAll(s, "#", "##")
+}
