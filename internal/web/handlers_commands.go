@@ -32,7 +32,7 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
-	v, _ := s.cmdsCache.get(row.Path+"\x00"+row.SessionID, func() (any, error) {
+	v, _ := s.cache.commands.get(row.Path+"\x00"+row.SessionID, func() (any, error) {
 		return s.deps.Commands.List(row.Path, row.SessionID), nil
 	})
 	cmds, _ := v.([]claude.SlashCommand)

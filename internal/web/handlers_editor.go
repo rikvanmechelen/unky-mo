@@ -200,7 +200,7 @@ func writeContent(w http.ResponseWriter, r *http.Request, c *gitfiles.Content, r
 // is one of its listed files (see handleSessionFile), or the HTTP status
 // and error to answer with.
 func (s *Server) listedPath(dir, path string) (root string, status int, err error) {
-	v, err := s.treeCache.get(dir, func() (any, error) {
+	v, err := s.cache.tree.get(dir, func() (any, error) {
 		root, paths, err := s.deps.Git.Tree(dir)
 		return treeResponse{Repo: true, Root: root, Paths: paths}, err
 	})
@@ -215,7 +215,7 @@ func (s *Server) listedPath(dir, path string) (root string, status int, err erro
 		return tree.Root, 0, nil
 	}
 	// Not in the (up to 10s old) tree: maybe deleted, or created since.
-	v, err = s.filesCache.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
+	v, err = s.cache.files.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
 	if err != nil {
 		return "", http.StatusBadGateway, err
 	}
@@ -238,7 +238,7 @@ func (s *Server) listedPath(dir, path string) (root string, status int, err erro
 // secret) leaves .env on disk, ignored, while the change list still shows
 // it as deleted, and serving the disk then would hand out the secret.
 func (s *Server) workingCopyListed(dir, path string) bool {
-	if v, err := s.treeCache.get(dir, func() (any, error) {
+	if v, err := s.cache.tree.get(dir, func() (any, error) {
 		root, paths, err := s.deps.Git.Tree(dir)
 		return treeResponse{Repo: true, Root: root, Paths: paths}, err
 	}); err == nil {
@@ -246,7 +246,7 @@ func (s *Server) workingCopyListed(dir, path string) bool {
 			return true
 		}
 	}
-	v, err := s.filesCache.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
+	v, err := s.cache.files.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
 	if err != nil {
 		return false
 	}

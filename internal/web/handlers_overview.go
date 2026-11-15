@@ -136,7 +136,7 @@ func (s *Server) change(dir string, q changeQuery) (*gitfiles.Overview, error) {
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.overviewCache.get(sel.Root+"\x00range\x00"+sel.Base+"\x00"+sel.Head, func() (any, error) {
+	v, err := s.cache.overview.get(sel.Root+"\x00range\x00"+sel.Base+"\x00"+sel.Head, func() (any, error) {
 		return s.deps.Git.OverviewRange(sel.Root, sel.Base, sel.Head)
 	})
 	if err != nil {
@@ -152,7 +152,7 @@ func (s *Server) change(dir string, q changeQuery) (*gitfiles.Overview, error) {
 // commits' resolution is kept long.
 func (s *Server) worktreeChange(dir string, q changeQuery) (*gitfiles.Overview, error) {
 	type rootHead struct{ root, head string }
-	v, err := s.overviewCache.get("head\x00"+dir, func() (any, error) {
+	v, err := s.cache.overview.get("head\x00"+dir, func() (any, error) {
 		root, head, err := s.deps.Git.HeadCommit(dir)
 		return rootHead{root, head}, err
 	})
@@ -171,7 +171,7 @@ func (s *Server) worktreeChange(dir string, q changeQuery) (*gitfiles.Overview, 
 		}
 		base = sel.Base
 	}
-	v, err = s.overviewCache.get(rh.root+"\x00wt\x00"+base, func() (any, error) {
+	v, err = s.cache.overview.get(rh.root+"\x00wt\x00"+base, func() (any, error) {
 		return s.deps.Git.OverviewWorktree(rh.root, base)
 	})
 	if err != nil {
@@ -183,7 +183,7 @@ func (s *Server) worktreeChange(dir string, q changeQuery) (*gitfiles.Overview, 
 // selection resolves q's commits to the two commits their change lies
 // between. A commit's parents never change, so the answer is kept long.
 func (s *Server) selection(dir string, q changeQuery) (*gitfiles.Selection, error) {
-	v, err := s.selectionCache.get(dir+"\x00"+strings.Join(q.commits, ","), func() (any, error) { return s.deps.Git.ResolveSelection(dir, q.commits) })
+	v, err := s.cache.selection.get(dir+"\x00"+strings.Join(q.commits, ","), func() (any, error) { return s.deps.Git.ResolveSelection(dir, q.commits) })
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +243,7 @@ func (s *Server) handleArchitecture(w http.ResponseWriter, r *http.Request) {
 
 // serveArchitecture analyzes the overview get returns, cached under key.
 func (s *Server) serveArchitecture(w http.ResponseWriter, r *http.Request, key string, get func() (*gitfiles.Overview, error)) {
-	v, err := s.archCache.get(key, func() (any, error) {
+	v, err := s.cache.arch.get(key, func() (any, error) {
 		o, err := get()
 		if err != nil {
 			return nil, err
@@ -296,15 +296,15 @@ func (s *Server) fetchBase(w http.ResponseWriter, o *gitfiles.Overview, err erro
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	s.overviewCache.clear()
-	s.archCache.clear()
-	s.callCache.clear()
+	s.cache.overview.clear()
+	s.cache.arch.clear()
+	s.cache.calls.clear()
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // overview reads (through a short cache) the change of the checkout at dir.
 func (s *Server) overview(dir, mode string) (*gitfiles.Overview, error) {
-	v, err := s.overviewCache.get(dir+"\x00"+mode, func() (any, error) { return s.deps.Git.Overview(dir, mode) })
+	v, err := s.cache.overview.get(dir+"\x00"+mode, func() (any, error) { return s.deps.Git.Overview(dir, mode) })
 	if err != nil {
 		return nil, err
 	}

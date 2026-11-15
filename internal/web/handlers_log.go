@@ -33,7 +33,7 @@ func (s *Server) handleSessionLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
-	v, err := s.logCache.get(dir+"\x00"+scope, func() (any, error) {
+	v, err := s.cache.log.get(dir+"\x00"+scope, func() (any, error) {
 		l, err := s.deps.Git.Log(dir, scope)
 		if err != nil {
 			return nil, err
@@ -58,7 +58,7 @@ func (s *Server) sessionRoot(windowID string) (string, int, error) {
 	if !ok {
 		return "", http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID)
 	}
-	v, err := s.filesCache.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
+	v, err := s.cache.files.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
 	if errors.Is(err, gitfiles.ErrNotRepo) {
 		return "", http.StatusNotFound, err
 	}

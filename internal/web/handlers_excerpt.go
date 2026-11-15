@@ -155,7 +155,7 @@ func (s *Server) serveExcerpt(w http.ResponseWriter, r *http.Request, o *gitfile
 	if o.Head == "" {
 		key += "\x00" + gitfiles.Stamp(o.Root, eq.path)
 	}
-	v, err := s.excerptCache.get(key, func() (any, error) { return s.deps.Git.Annotate(o, eq.path) })
+	v, err := s.cache.excerpt.get(key, func() (any, error) { return s.deps.Git.Annotate(o, eq.path) })
 	switch {
 	case errors.Is(err, gitfiles.ErrOutsideRoot):
 		writeError(w, http.StatusForbidden, err)

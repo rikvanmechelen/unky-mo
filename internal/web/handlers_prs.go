@@ -14,7 +14,7 @@ func (s *Server) handlePRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v, err := s.prCache.get("list:"+path, func() (any, error) {
+	v, err := s.cache.prs.get("list:"+path, func() (any, error) {
 		return s.deps.PRs.ListPRs(path)
 	})
 	if err != nil {
@@ -39,7 +39,7 @@ func (s *Server) handlePRDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fmt.Sprintf("detail:%s:%d", path, number)
-	v, err := s.prCache.get(key, func() (any, error) {
+	v, err := s.cache.prs.get(key, func() (any, error) {
 		return s.deps.PRs.GetPRDetail(path, number)
 	})
 	if err != nil {

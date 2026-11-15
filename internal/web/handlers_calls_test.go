@@ -48,7 +48,7 @@ func TestCallsUsesStatePathAndCaches(t *testing.T) {
 		t.Errorf("If-None-Match: got %d", rec.Code)
 	}
 	// Past any TTL, the same files are still served from the cache.
-	srv.callCache.now = func() time.Time { return time.Now().Add(time.Hour) }
+	srv.cache.calls.now = func() time.Time { return time.Now().Add(time.Hour) }
 	if rec := get(t, srv, "/api/sessions/@5/calls"); rec.Code != http.StatusOK {
 		t.Errorf("cached: %d", rec.Code)
 	}

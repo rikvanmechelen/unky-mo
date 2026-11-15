@@ -79,7 +79,7 @@ func (s *Server) resolveBranchTarget(r *http.Request) (*branchTarget, int, error
 		if err != nil || n < 1 {
 			return nil, http.StatusBadRequest, fmt.Errorf("bad pr %q", pr)
 		}
-		v, err := s.prCache.get(fmt.Sprintf("detail:%s:%d", pp, n), func() (any, error) { return s.deps.PRs.GetPRDetail(pp, n) })
+		v, err := s.cache.prs.get(fmt.Sprintf("detail:%s:%d", pp, n), func() (any, error) { return s.deps.PRs.GetPRDetail(pp, n) })
 		if err != nil {
 			return nil, http.StatusBadGateway, err
 		}
@@ -90,7 +90,7 @@ func (s *Server) resolveBranchTarget(r *http.Request) (*branchTarget, int, error
 		}
 	}
 	// The page polls; the branch list only needs to be a few seconds fresh.
-	v, err := s.localRefCache.get("branches\x00"+pp, func() (any, error) { return s.deps.Worktrees.ListBranches(pp) })
+	v, err := s.cache.localRef.get("branches\x00"+pp, func() (any, error) { return s.deps.Worktrees.ListBranches(pp) })
 	if err != nil {
 		return nil, http.StatusBadGateway, err
 	}
@@ -110,10 +110,10 @@ func (s *Server) resolveBranchTarget(r *http.Request) (*branchTarget, int, error
 	// Not checked out: a local branch's head, or a PR's or remote branch's
 	// fetched from origin (at most a few minutes old).
 	remote := t.pr > 0 || b == nil
-	cache, key := s.localRefCache, pp+"\x00"+t.branch
+	cache, key := s.cache.localRef, pp+"\x00"+t.branch
 	resolve := func() (any, error) { return s.deps.Git.ResolveBranch(pp, t.branch, remote) }
 	if remote {
-		cache = s.fetchCache
+		cache = s.cache.fetch
 		// The page asks for several endpoints at once: one fetch, the rest
 		// wait for its cached answer (two fetches would fight over the ref).
 		s.fetchMu.Lock()
@@ -166,7 +166,7 @@ func (s *Server) targetOverview(t *branchTarget, mode string) (*gitfiles.Overvie
 	if t.dir != "" {
 		return s.overview(t.dir, mode)
 	}
-	v, err := s.overviewCache.get(t.refKey(), func() (any, error) {
+	v, err := s.cache.overview.get(t.refKey(), func() (any, error) {
 		return s.deps.Git.OverviewAt(t.projectPath, t.branch, t.head, t.base)
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ func (s *Server) handleBranchFile(w http.ResponseWriter, r *http.Request) {
 
 // refTree is a ref target's file list (cached by commit).
 func (s *Server) refTree(t *branchTarget) ([]string, error) {
-	v, err := s.treeCache.get(t.projectPath+"\x00at\x00"+t.head, func() (any, error) {
+	v, err := s.cache.tree.get(t.projectPath+"\x00at\x00"+t.head, func() (any, error) {
 		return s.deps.Git.TreeAt(t.projectPath, t.head)
 	})
 	if err != nil {
@@ -371,7 +371,7 @@ func (s *Server) handleBranchScope(w http.ResponseWriter, r *http.Request) {
 	var extra scopeContext
 	if t.pr > 0 {
 		key := fmt.Sprintf("detail:%s:%d", t.projectPath, t.pr)
-		if v, err := s.prCache.get(key, func() (any, error) { return s.deps.PRs.GetPRDetail(t.projectPath, t.pr) }); err == nil {
+		if v, err := s.cache.prs.get(key, func() (any, error) { return s.deps.PRs.GetPRDetail(t.projectPath, t.pr) }); err == nil {
 			d := v.(*github.PRDetail)
 			extra.pr = &review.ScopeTicket{ID: strconv.Itoa(t.pr), Title: d.Title, Description: truncateRunes(d.Body, maxTicketText)}
 		}

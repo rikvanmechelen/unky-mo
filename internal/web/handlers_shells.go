@@ -25,7 +25,7 @@ func (s *Server) liveSessionShells(windowID string) ([]claude.ActiveShell, bool,
 	if !ok || row.SessionID == "" {
 		return nil, false, nil
 	}
-	v, err := s.shellsCache.get(row.SessionID, func() (any, error) { return s.deps.Shells.List(row.SessionID) })
+	v, err := s.cache.shells.get(row.SessionID, func() (any, error) { return s.deps.Shells.List(row.SessionID) })
 	if err != nil {
 		return nil, true, err
 	}

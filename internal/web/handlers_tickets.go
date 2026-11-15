@@ -29,7 +29,7 @@ type ticketFetchError struct {
 }
 
 func (s *Server) handleTickets(w http.ResponseWriter, r *http.Request) {
-	v, _ := s.ticketCache.get("all", func() (any, error) {
+	v, _ := s.cache.tickets.get("all", func() (any, error) {
 		// Not the request's context: the result is shared and cached, and
 		// one closed tab would otherwise cache "context canceled" for
 		// everyone until the next refresh.

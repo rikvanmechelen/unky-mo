@@ -31,7 +31,7 @@ func (s *Server) fillBranches(st *state.StateFile) {
 			continue
 		}
 		path := p.Path
-		v, _ := s.branchCache.get(path, func() (any, error) { return s.deps.Git.Branch(path), nil })
+		v, _ := s.cache.branch.get(path, func() (any, error) { return s.deps.Git.Branch(path), nil })
 		p.Branch, _ = v.(string)
 	}
 }

@@ -31,7 +31,7 @@ func (s *Server) handleSessionFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no live session in window %s", windowID))
 		return
 	}
-	v, err := s.filesCache.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
+	v, err := s.cache.files.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
 	if errors.Is(err, gitfiles.ErrNotRepo) {
 		writeJSON(w, filesResponse{Repo: false})
 		return
@@ -57,7 +57,7 @@ func (s *Server) handleSessionTree(w http.ResponseWriter, r *http.Request) {
 
 // serveTree answers with the file list of the checkout containing dir.
 func (s *Server) serveTree(w http.ResponseWriter, dir string) {
-	v, err := s.treeCache.get(dir, func() (any, error) {
+	v, err := s.cache.tree.get(dir, func() (any, error) {
 		root, paths, err := s.deps.Git.Tree(dir)
 		return treeResponse{Repo: true, Root: root, Paths: paths}, err
 	})

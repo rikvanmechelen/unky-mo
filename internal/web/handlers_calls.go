@@ -65,7 +65,7 @@ func (s *Server) serveCalls(w http.ResponseWriter, r *http.Request, key string, 
 		writeError(w, changeStatus(err), err)
 		return
 	}
-	body, err := s.callCache.get(key, changeFingerprint(o), func() ([]byte, error) {
+	body, err := s.cache.calls.get(key, changeFingerprint(o), func() ([]byte, error) {
 		cg, err := s.deps.Calls.Calls(o)
 		if err != nil {
 			return nil, err

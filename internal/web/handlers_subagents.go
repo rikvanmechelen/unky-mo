@@ -38,7 +38,7 @@ func (s *Server) sessionSubagents(windowID string) ([]claude.Subagent, bool, err
 	if !ok || row.SessionID == "" || row.Path == "" {
 		return nil, false, nil
 	}
-	v, err := s.agentsCache.get(row.Path+"\x00"+row.SessionID, func() (any, error) {
+	v, err := s.cache.agents.get(row.Path+"\x00"+row.SessionID, func() (any, error) {
 		return s.deps.Subagents.List(row.Path, row.SessionID)
 	})
 	if err != nil {
