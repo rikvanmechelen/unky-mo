@@ -140,6 +140,8 @@ function createModeChip(root, tintEl, onError, onBlocked = () => {}) {
 
   async function poll() {
     const g = gen;
+    await whenVisible(); // each poll captures Claude's pane: none while hidden
+    if (g !== gen) return;
     if (!busy) {
       try {
         const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/mode`);

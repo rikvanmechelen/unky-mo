@@ -1769,8 +1769,8 @@ function main() {
   // dialog once /permission answers.
   function startPermission(p) {
     if (!permissionTimer) {
-      permissionTimer = setInterval(fetchPermission, 1000);
-      fetchPermission();
+      // Each poll is a capture of Claude's pane: none while hidden.
+      permissionTimer = every(1000, fetchPermission, { now: true });
     }
     if (permissionKey === null) {
       showPermission("state", { tool: p.pending_tool || "", input: p.pending_input, dialog: null });
@@ -1778,7 +1778,7 @@ function main() {
   }
 
   function stopPermission() {
-    if (permissionTimer) clearInterval(permissionTimer);
+    if (permissionTimer) permissionTimer();
     permissionTimer = null;
     permissionSeq++;
     permissionKey = null;
@@ -1817,7 +1817,7 @@ function main() {
   let startupGaveUp = false; // not a window mo launched: stop asking
 
   function stopStartup() {
-    if (startupTimer) clearInterval(startupTimer);
+    if (startupTimer) startupTimer();
     startupTimer = null;
     startupSeq++;
     startupKey = null;
@@ -1827,8 +1827,7 @@ function main() {
 
   function startStartup() {
     if (startupTimer || startupGaveUp) return;
-    startupTimer = setInterval(fetchStartup, 1500);
-    fetchStartup();
+    startupTimer = every(1500, fetchStartup, { now: true });
   }
 
   async function fetchStartup() {
@@ -2140,7 +2139,8 @@ function main() {
   }
 
   resetSession(windowIDFromURL(), new URLSearchParams(location.search).has("new"));
-  setInterval(pollStatus, 2000);
+  // Hidden, more slowly: the status still keeps the tab icon current.
+  every(2000, pollStatus, { hiddenMs: 10000 });
 }
 
 main();

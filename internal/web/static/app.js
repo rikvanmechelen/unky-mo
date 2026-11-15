@@ -511,6 +511,6 @@ document.getElementById("subtitle").textContent = `mo web — ${location.host ||
 fetchJSON("/api/agents").then((a) => { AGENTS = a || []; }).catch(() => {}).finally(pollProjects);
 pollState();
 pollTickets();
-setInterval(pollState, 2000);
-setInterval(pollProjects, 60000);
-setInterval(pollTickets, 60000);
+every(2000, pollState, { hiddenMs: 10000 }); // the tab icon follows it
+every(60000, pollProjects);
+every(60000, pollTickets);

@@ -746,7 +746,7 @@ function createTerminalDrawer(root) {
     refreshOutput();
     syncSizeSoon();
   });
-  setInterval(refreshList, TERM_LIST_MS);
+  every(TERM_LIST_MS, refreshList);
   setInterval(refreshOutput, TERM_OUTPUT_MS);
 
   return {

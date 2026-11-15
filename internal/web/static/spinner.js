@@ -119,6 +119,8 @@ function createSpinner(root) {
 
   async function poll() {
     const g = gen;
+    await whenVisible(); // each poll captures Claude's pane: none while hidden
+    if (g !== gen) return;
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(windowID)}/spinner`);
       const data = res.ok ? await res.json() : { spinner: null };

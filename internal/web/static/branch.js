@@ -139,4 +139,4 @@ async function pollFavicon() {
 
 branchMain();
 pollFavicon();
-setInterval(pollFavicon, 2000);
+every(2000, pollFavicon, { hiddenMs: 10000 });

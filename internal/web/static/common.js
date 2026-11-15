@@ -132,6 +132,60 @@ function renderUsage(container, usage, opts) {
   }
 }
 
+// whenVisible resolves at once while the page is visible, else when it
+// next becomes visible.
+function whenVisible() {
+  if (typeof document === "undefined" || !document.hidden) return Promise.resolve();
+  return new Promise((resolve) => {
+    const on = () => {
+      if (document.hidden) return;
+      document.removeEventListener("visibilitychange", on);
+      resolve();
+    };
+    document.addEventListener("visibilitychange", on);
+  });
+}
+
+// every runs fn every ms (the first time after ms, like setInterval, or at
+// once with {now: true}), one run at a time: a slow answer never stacks up
+// requests behind it. While the page is hidden it waits until it shows
+// again, or, with {hiddenMs}, keeps going that much less often (polls that
+// keep the tab icon current). Showing the page again runs it at once.
+// Returns a function that stops it.
+function every(ms, fn, opts = {}) {
+  let stopped = false;
+  let running = false;
+  let timer = null;
+  const delay = () => (document.hidden && opts.hiddenMs ? opts.hiddenMs : ms);
+  const run = async () => {
+    timer = null;
+    if (stopped || running) return;
+    if (document.hidden && !opts.hiddenMs) await whenVisible();
+    if (stopped) return;
+    running = true;
+    try {
+      await fn();
+    } catch {
+      // the next run tries again
+    }
+    running = false;
+    if (!stopped && timer === null) timer = setTimeout(run, delay());
+  };
+  const onShow = () => {
+    if (!document.hidden && timer !== null && !running) {
+      clearTimeout(timer);
+      run();
+    }
+  };
+  document.addEventListener("visibilitychange", onShow);
+  timer = setTimeout(run, opts.now ? 0 : ms);
+  return () => {
+    stopped = true;
+    if (timer !== null) clearTimeout(timer);
+    document.removeEventListener("visibilitychange", onShow);
+  };
+}
+
 // Every page registers the service worker: it keeps the launcher working
 // when this address doesn't answer (docs/plans/pwa.md), and notify.js uses
 // it for push.
