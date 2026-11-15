@@ -78,15 +78,9 @@ func pyImports(src string) []pyImport {
 	skipIndent := -1 // inside an `if TYPE_CHECKING:` block indented deeper than this
 	for i := 0; i < len(lines); i++ {
 		start := i
-		line := lines[i]
 		// Join a logical line: open brackets or a trailing backslash.
-		for depth(line) > 0 || strings.HasSuffix(strings.TrimRight(line, " \t"), "\\") {
-			if i+1 >= len(lines) {
-				break
-			}
-			line = strings.TrimSuffix(strings.TrimRight(line, " \t"), "\\") + " " + lines[i+1]
-			i++
-		}
+		line, end := pyLogicalLine(lines, i)
+		i = end
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
@@ -126,6 +120,31 @@ func pyImports(src string) []pyImport {
 }
 
 // depth is how many brackets a line leaves open.
+// pyLogicalLine joins the physical lines from lines[i] that make one
+// logical line (open brackets, or a trailing backslash), returning it and
+// the index of its last physical line. The bracket depth is kept as it
+// goes and the line is built once: re-counting and re-concatenating the
+// growing line per physical line made an unclosed "(" near the top of a
+// file quadratic in the rest of it.
+func pyLogicalLine(lines []string, i int) (string, int) {
+	cur := lines[i]
+	d := depth(cur)
+	cont := func(l string) bool { return strings.HasSuffix(strings.TrimRight(l, " \t"), "\\") }
+	if d <= 0 && !cont(cur) {
+		return cur, i
+	}
+	var b strings.Builder
+	for (d > 0 || cont(cur)) && i+1 < len(lines) {
+		b.WriteString(strings.TrimSuffix(strings.TrimRight(cur, " \t"), "\\"))
+		b.WriteByte(' ')
+		i++
+		cur = lines[i]
+		d += depth(cur)
+	}
+	b.WriteString(cur)
+	return b.String(), i
+}
+
 func depth(s string) int {
 	d := 0
 	for _, c := range s {

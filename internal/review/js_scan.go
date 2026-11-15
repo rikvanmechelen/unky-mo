@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"path"
 	"regexp"
 	"sort"
@@ -52,7 +53,7 @@ func jsCode(src string) *jsScanned {
 			blank(b, i, j)
 			i = j
 		case c == '/' && i+1 < n && b[i+1] == '*':
-			end := strings.Index(string(b[i+2:]), "*/")
+			end := bytes.Index(b[i+2:], []byte("*/"))
 			j := n
 			if end >= 0 {
 				j = i + 2 + end + 2

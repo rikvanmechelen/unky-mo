@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 )
@@ -40,7 +41,7 @@ func jvmScan(src string, keepStrings bool) string {
 			blank(b, i, j)
 			i = j
 		case c == '"' && i+2 < n && b[i+1] == '"' && b[i+2] == '"':
-			end := strings.Index(string(b[i+3:]), `"""`)
+			end := bytes.Index(b[i+3:], []byte(`"""`))
 			j := n
 			if end >= 0 {
 				j = i + 3 + end + 3

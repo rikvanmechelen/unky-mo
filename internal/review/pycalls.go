@@ -105,14 +105,8 @@ func (l *pyCalls) scanFile(_, src string) hFile {
 	}
 	for i := 0; i < len(code); i++ {
 		start := i
-		line := code[i]
-		for depth(line) > 0 || strings.HasSuffix(strings.TrimRight(line, " \t"), "\\") {
-			if i+1 >= len(code) {
-				break
-			}
-			line = strings.TrimSuffix(strings.TrimRight(line, " \t"), "\\") + " " + code[i+1]
-			i++
-		}
+		line, end := pyLogicalLine(code, i)
+		i = end
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

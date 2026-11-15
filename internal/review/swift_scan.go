@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 )
@@ -58,10 +59,10 @@ func swiftBlank(src string, strs bool) string {
 				continue
 			}
 			closer := "\"" + strings.Repeat("#", hashes)
-			if strings.HasPrefix(string(b[k:]), `"""`) {
+			if bytes.HasPrefix(b[k:], []byte(`"""`)) {
 				closer = `"""` + strings.Repeat("#", hashes)
 			}
-			end := strings.Index(string(b[k+1:]), closer)
+			end := bytes.Index(b[k+1:], []byte(closer))
 			j := n
 			if end >= 0 {
 				j = k + 1 + end + len(closer)
@@ -69,7 +70,7 @@ func swiftBlank(src string, strs bool) string {
 			str(i, j)
 			i = j
 		case c == '"' && i+2 < n && b[i+1] == '"' && b[i+2] == '"':
-			end := strings.Index(string(b[i+3:]), `"""`)
+			end := bytes.Index(b[i+3:], []byte(`"""`))
 			j := n
 			if end >= 0 {
 				j = i + 3 + end + 3

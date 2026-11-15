@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 )
@@ -38,8 +39,8 @@ func rubyCode(src string) string {
 		if lineStart {
 			lineStart = false
 			// =begin … =end comment blocks start at column 0.
-			if strings.HasPrefix(string(b[i:min(n, i+6)]), "=begin") {
-				end := strings.Index(string(b[i:]), "\n=end")
+			if bytes.HasPrefix(b[i:], []byte("=begin")) {
+				end := bytes.Index(b[i:], []byte("\n=end"))
 				if end < 0 {
 					blank(b, i, n)
 					break
@@ -62,7 +63,7 @@ func rubyCode(src string) string {
 				h := pending[0]
 				pending = pending[1:]
 				for i < n {
-					end := strings.IndexByte(string(b[i:]), '\n')
+					end := bytes.IndexByte(b[i:], '\n')
 					line := ""
 					if end < 0 {
 						line, end = string(b[i:]), n-i
@@ -192,12 +193,12 @@ func erbCode(src string) string {
 		}
 	}
 	for i := 0; i < len(b); {
-		start := strings.Index(string(b[i:]), "<%")
+		start := bytes.Index(b[i:], []byte("<%"))
 		if start < 0 {
 			break
 		}
 		start += i + 2
-		end := strings.Index(string(b[start:]), "%>")
+		end := bytes.Index(b[start:], []byte("%>"))
 		if end < 0 {
 			end = len(b) - start
 		}
