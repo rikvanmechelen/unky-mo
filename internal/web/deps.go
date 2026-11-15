@@ -660,8 +660,10 @@ func (r realTerminals) List(w state.ProjectState) ([]ops.Terminal, error) {
 	seen := map[string]bool{}
 	if id := r.client.WindowOption(w.WindowID, tmux.DrawerPaneOption); id != "" {
 		if panes, err := r.client.ListWindowPanes(w.WindowID); err == nil {
-			for _, p := range panes {
-				if p.ID != id {
+			for i, p := range panes {
+				// Pane .0 is Claude's: never a terminal, whatever the option
+				// says (it's only a window option, and anything can set one).
+				if p.ID != id || i == 0 {
 					continue
 				}
 				if d, err := r.client.PaneDetails(id); err == nil {
