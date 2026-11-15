@@ -90,9 +90,7 @@ func LiftSessionToWorktree(ctx *Context, p LiftParams) (*LiftResult, error) {
 	// Step 4: SIGTERM the live source + wait for exit so the JSONL file
 	// handle is released before we rename it.
 	if p.SourcePID > 0 {
-		if proc, err := os.FindProcess(p.SourcePID); err == nil {
-			_ = proc.Signal(syscall.SIGTERM)
-		}
+		signalClaude(p.SourcePID, syscall.SIGTERM)
 		isAlive := func(pid int) bool { return false }
 		if ctx.Claude != nil {
 			isAlive = ctx.Claude.IsAlive

@@ -2,7 +2,6 @@ package ops
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 	"time"
 
@@ -109,9 +108,7 @@ func SignalAndWaitExit(ctx *Context, pid int) {
 	if pid <= 0 {
 		return
 	}
-	if proc, err := os.FindProcess(pid); err == nil {
-		_ = proc.Signal(syscall.SIGINT)
-	}
+	signalClaude(pid, syscall.SIGINT)
 	isAlive := func(pid int) bool { return false }
 	if ctx != nil && ctx.Claude != nil {
 		isAlive = ctx.Claude.IsAlive
@@ -122,9 +119,7 @@ func SignalAndWaitExit(ctx *Context, pid int) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if proc, err := os.FindProcess(pid); err == nil {
-		_ = proc.Signal(syscall.SIGTERM)
-	}
+	signalClaude(pid, syscall.SIGTERM)
 	for i := 0; i < 10; i++ {
 		if !isAlive(pid) {
 			return

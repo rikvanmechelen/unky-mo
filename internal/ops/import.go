@@ -2,7 +2,6 @@ package ops
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 	"time"
 )
@@ -37,9 +36,7 @@ func ImportExternalSession(ctx *Context, p ImportParams) (*ImportResult, error) 
 		return nil, fmt.Errorf("ops.ImportExternalSession: SessionID required")
 	}
 	if p.PID > 0 {
-		if proc, err := os.FindProcess(p.PID); err == nil {
-			_ = proc.Signal(syscall.SIGTERM)
-		}
+		signalClaude(p.PID, syscall.SIGTERM)
 		// Wait up to ~2s for the orphan to exit cleanly.
 		isAlive := func(pid int) bool { return false }
 		if ctx.Claude != nil {
