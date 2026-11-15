@@ -108,6 +108,8 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 		cmdsCache:      newTTLCache(30 * time.Second),
 		bootID:         newBootID(),
 	}
+	// Annotated files are up to a few MB each: keep the most recent only.
+	s.excerptCache.maxEntries = 64
 	s.routes()
 	return s
 }

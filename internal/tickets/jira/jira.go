@@ -191,7 +191,7 @@ func (p *Provider) doRequest(ctx context.Context, method, endpoint string, reqBo
 	}
 	defer resp.Body.Close()
 
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -380,3 +380,6 @@ func extractJiraError(body []byte) string {
 	}
 	return truncate(strings.TrimSpace(string(body)), 200)
 }
+
+// maxResponseBytes caps a Jira response read into memory.
+const maxResponseBytes = 16 << 20

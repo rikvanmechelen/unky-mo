@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -23,7 +24,7 @@ func (p *Provider) Detail(ctx context.Context, id string) (*tickets.TicketDetail
 // with a naive tag-strip + entity-decode — good enough for reading flow in
 // a TUI; rich ADF rendering is a follow-up if ever needed.
 func (p *Provider) GetIssueDetail(ctx context.Context, key string) (*tickets.TicketDetail, error) {
-	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/rest/api/3/issue/" + key +
+	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/rest/api/3/issue/" + url.PathEscape(key) +
 		"?expand=renderedFields&fields=summary,status,priority,updated,created,project,reporter,assignee," +
 		p.cfg.SprintFieldID
 

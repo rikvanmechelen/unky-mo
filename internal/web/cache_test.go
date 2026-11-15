@@ -2,6 +2,8 @@ package web
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -74,5 +76,69 @@ func TestTTLCachePrunesExpired(t *testing.T) {
 	c.get("fresh2", fetch)
 	if len(c.items) != 2 {
 		t.Fatalf("want only the 2 fresh entries left, got %d", len(c.items))
+	}
+}
+
+// Concurrent misses for one key run one fetch and all get its value.
+func TestTTLCacheSingleFlight(t *testing.T) {
+	c := newTTLCache(time.Minute)
+	var calls atomic.Int32
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, err := c.get("k", func() (any, error) {
+				calls.Add(1)
+				<-release
+				return "v", nil
+			})
+			if v != "v" || err != nil {
+				t.Errorf("got %v %v", v, err)
+			}
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if n := calls.Load(); n != 1 {
+		t.Errorf("%d fetches, want 1", n)
+	}
+}
+
+// A fetch that panics doesn't leave its key stuck: the next get fetches.
+func TestTTLCachePanicReleasesKey(t *testing.T) {
+	c := newTTLCache(time.Minute)
+	func() {
+		defer func() { _ = recover() }()
+		c.get("k", func() (any, error) { panic("boom") })
+	}()
+	done := make(chan any)
+	go func() {
+		v, _ := c.get("k", func() (any, error) { return "again", nil })
+		done <- v
+	}()
+	select {
+	case v := <-done:
+		if v != "again" {
+			t.Errorf("got %v", v)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the key stayed in flight")
+	}
+}
+
+// maxEntries keeps the newest entries.
+func TestTTLCacheMaxEntries(t *testing.T) {
+	c := newTTLCache(time.Hour)
+	c.maxEntries = 2
+	clock := time.Unix(0, 0)
+	c.now = func() time.Time { clock = clock.Add(time.Second); return clock }
+	for _, k := range []string{"a", "b", "c"} {
+		c.get(k, func() (any, error) { return k, nil })
+	}
+	if _, ok := c.items["a"]; ok || len(c.items) != 2 {
+		t.Errorf("items %v", c.items)
 	}
 }

@@ -178,7 +178,7 @@ func VerifyCreds(ctx context.Context, baseURL, email, token string) (string, err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		return "", fmt.Errorf("HTTP %d — email/token rejected", resp.StatusCode)

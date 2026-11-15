@@ -156,7 +156,22 @@ func (c *fingerprintCache) get(key, fp string, compute func() ([]byte, error)) (
 	c.inflight[key] = f
 	c.mu.Unlock()
 
+	finished := false
+	defer func() {
+		if !finished {
+			// compute panicked: release the waiters and the key, or every
+			// later request for it would wait forever.
+			f.err = errFetchPanicked
+			c.mu.Lock()
+			if c.inflight[key] == f {
+				delete(c.inflight, key)
+			}
+			c.mu.Unlock()
+			close(f.done)
+		}
+	}()
 	f.body, f.err = compute()
+	finished = true
 	close(f.done)
 
 	c.mu.Lock()
