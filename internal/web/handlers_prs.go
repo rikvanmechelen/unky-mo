@@ -33,7 +33,7 @@ func (s *Server) handlePRDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	number, err := strconv.Atoi(r.PathValue("number"))
-	if err != nil {
+	if err != nil || number < 1 { // gh would read -5 as a flag
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid PR number"))
 		return
 	}
