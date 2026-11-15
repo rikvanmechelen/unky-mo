@@ -75,7 +75,7 @@ func diffExcerpts(ctx context.Context, cmd moexec.Commander, root, rev, head str
 		}
 		var text string
 		if rev != "" {
-			args := []string{"diff", "--no-color", "--no-ext-diff", "-U2", rev}
+			args := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U2", rev}
 			if head != "" {
 				args = append(args, head)
 			}

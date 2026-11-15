@@ -64,7 +64,7 @@ func (s *Store) Stat(ctx context.Context, rec *Record) ([]FileStat, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, stderr, err := s.cmd.Output(ctx, rec.Root, "env", append(gitArgs(env), "diff", "--no-ext-diff", "--numstat", "-z", "-M", rec.Pre, rec.Post)...)
+	out, stderr, err := s.cmd.Output(ctx, rec.Root, "env", append(gitArgs(env), "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "-M", rec.Pre, rec.Post)...)
 	if err != nil {
 		return nil, gitErr("diff", stderr, err)
 	}
@@ -81,7 +81,7 @@ func (s *Store) Diff(ctx context.Context, rec *Record) (*Diff, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, stderr, err := s.cmd.Output(ctx, rec.Root, "env", append(gitArgs(env), "diff", "--no-ext-diff", "--no-color", "-M", "-U3", rec.Pre, rec.Post)...)
+	out, stderr, err := s.cmd.Output(ctx, rec.Root, "env", append(gitArgs(env), "diff", "--no-ext-diff", "--no-textconv", "--no-color", "-M", "-U3", rec.Pre, rec.Post)...)
 	if err != nil {
 		return nil, gitErr("diff", stderr, err)
 	}

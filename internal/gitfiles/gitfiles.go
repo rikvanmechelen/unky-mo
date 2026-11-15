@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	moexec "github.com/rvanmech/unky-mo/internal/exec"
 )
@@ -201,7 +202,7 @@ func GetChanges(ctx context.Context, cmd moexec.Commander, dir string) (*Changes
 	// with no commits yet has no HEAD to diff against.
 	var counts map[string]Counts
 	if !bytes.Contains(out, []byte("# branch.oid (initial)")) {
-		if ns, err := git(ctx, cmd, root, "diff", "HEAD", "--numstat", "-z"); err == nil {
+		if ns, err := git(ctx, cmd, root, "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--numstat", "-z", "--"); err == nil {
 			counts = ParseNumstat(ns)
 		}
 	}
@@ -230,7 +231,9 @@ func GetChanges(ctx context.Context, cmd moexec.Commander, dir string) (*Changes
 // would report it as added. Large files are skipped; a NUL byte marks the
 // file binary.
 func countLines(path string) (lines int, binary bool) {
-	f, err := os.Open(path)
+	// Not through a symlink: an untracked link could point at any file
+	// (only a count would leak, but every other read refuses links too).
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return 0, false
 	}

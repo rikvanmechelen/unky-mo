@@ -161,7 +161,7 @@ func overviewToWorktree(ctx context.Context, cmd moexec.Commander, o *Overview, 
 // of a file's new version, for spotting a "generated" marker.
 func diffFiles(ctx context.Context, cmd moexec.Commander, root string, revs []string, header func(path, status string) []byte) ([]OverviewFile, error) {
 	diff := func(extra ...string) ([]byte, error) {
-		args := append([]string{"diff", "-z", "-M"}, extra...)
+		args := append([]string{"diff", "--no-ext-diff", "--no-textconv", "-z", "-M"}, extra...)
 		return git(ctx, cmd, root, append(append(args, revs...), "--")...)
 	}
 	ns, err := diff("--name-status")
