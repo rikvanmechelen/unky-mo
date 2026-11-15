@@ -205,13 +205,7 @@ type Model struct {
 	// Two stages: "kill" (one or more sessions live in the target; user
 	// must confirm SIGINT) then "action" (choose [w] worktree only / [b]
 	// worktree + branch / [esc]). Entry skips "kill" when no sessions.
-	pendingCleanupActive       bool
-	pendingCleanupStage        string // "kill" | "action"
-	pendingCleanupProjectPath  string
-	pendingCleanupProjectName  string
-	pendingCleanupBranch       string
-	pendingCleanupWorktreePath string           // "" for plain-branch rows
-	pendingCleanupSessions     []claude.Session // live sessions to kill, captured at entry
+	cleanup *cleanupMenu
 	// Worktree-exists prompt: shown when creating a worktree for a branch
 	// that already has one. Options: focus existing, remove + recreate, cancel.
 	pendingWTExistsActive      bool
@@ -608,38 +602,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Cleanup menu captures all input while active.
-		if m.pendingCleanupActive {
-			switch m.pendingCleanupStage {
+		if m.cleanup != nil {
+			switch m.cleanup.stage {
 			case "kill":
 				// Destructive [y/N] confirm: only y/Y confirms. Enter matches
 				// the default (N) and cancels, same as n/esc.
 				switch msg.String() {
 				case "y", "Y":
-					sessions := m.pendingCleanupSessions
-					m.pendingCleanupStage = "action"
+					sessions := m.cleanup.sessions
+					c := *m.cleanup
+					c.stage = "action"
+					m.cleanup = &c
 					return m, m.killCleanupSessions(sessions)
 				case "n", "N", "enter", "esc", "escape":
-					m.clearPendingCleanupMenu()
+					m.cleanup = nil
 					return m, nil
 				}
 				return m, nil
 			case "action":
-				if m.pendingCleanupWorktreePath != "" {
+				if m.cleanup.worktreePath != "" {
 					// Destructive multi-option: no enter-as-primary. Every
 					// action requires an explicit letter; enter cancels.
 					switch msg.String() {
 					case "w", "W":
-						projectPath := m.pendingCleanupProjectPath
-						branch := m.pendingCleanupBranch
-						m.clearPendingCleanupMenu()
+						projectPath := m.cleanup.projectPath
+						branch := m.cleanup.branch
+						m.cleanup = nil
 						return m, m.runCleanup(projectPath, branch, false)
 					case "b", "B":
-						projectPath := m.pendingCleanupProjectPath
-						branch := m.pendingCleanupBranch
-						m.clearPendingCleanupMenu()
+						projectPath := m.cleanup.projectPath
+						branch := m.cleanup.branch
+						m.cleanup = nil
 						return m, m.runCleanup(projectPath, branch, true)
 					case "n", "N", "enter", "esc", "escape":
-						m.clearPendingCleanupMenu()
+						m.cleanup = nil
 						return m, nil
 					}
 					return m, nil
@@ -647,12 +643,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Plain-branch row: destructive [y/N] confirm.
 				switch msg.String() {
 				case "y", "Y":
-					projectPath := m.pendingCleanupProjectPath
-					branch := m.pendingCleanupBranch
-					m.clearPendingCleanupMenu()
+					projectPath := m.cleanup.projectPath
+					branch := m.cleanup.branch
+					m.cleanup = nil
 					return m, m.runCleanup(projectPath, branch, true)
 				case "n", "N", "enter", "esc", "escape":
-					m.clearPendingCleanupMenu()
+					m.cleanup = nil
 					return m, nil
 				}
 				return m, nil
@@ -1145,16 +1141,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-				m.pendingCleanupActive = true
-				m.pendingCleanupProjectPath = m.detailProject.Path
-				m.pendingCleanupProjectName = m.detailProject.Name
-				m.pendingCleanupBranch = b.Name
-				m.pendingCleanupWorktreePath = b.WorktreePath
-				m.pendingCleanupSessions = sessions
+				stage := "action"
 				if len(sessions) > 0 {
-					m.pendingCleanupStage = "kill"
-				} else {
-					m.pendingCleanupStage = "action"
+					stage = "kill"
+				}
+				m.cleanup = &cleanupMenu{
+					stage:        stage,
+					projectPath:  m.detailProject.Path,
+					projectName:  m.detailProject.Name,
+					branch:       b.Name,
+					worktreePath: b.WorktreePath,
+					sessions:     sessions,
 				}
 				return m, nil
 			}
@@ -2046,7 +2043,7 @@ func (m Model) dashboardView() string {
 	usageStrip := m.renderUsageStrip(totalWidth)
 
 	var footer string
-	if m.pendingCleanupActive {
+	if m.cleanup != nil {
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
 	} else if m.newSession != nil {
@@ -3465,7 +3462,7 @@ func (m Model) projectDetailView() string {
 			{"f", "focus existing"},
 			{"r", "remove + recreate"},
 		}))
-	case m.pendingCleanupActive:
+	case m.cleanup != nil:
 		q, binds := m.cleanupPrompt()
 		footer = m.renderPrompt(q, binds)
 	case m.newSession != nil:
@@ -4199,20 +4196,20 @@ func (m Model) launchSession() tea.Cmd {
 // Follows the prompt convention: yes/no uses [y/N]; multi-option menus end
 // with a [n] cancel hint.
 func (m Model) cleanupPrompt() (string, []footerBinding) {
-	switch m.pendingCleanupStage {
+	switch m.cleanup.stage {
 	case "kill":
-		n := len(m.pendingCleanupSessions)
-		q := fmt.Sprintf("⚠ %d live session(s) in %s — kill them? [y/N]", n, m.pendingCleanupBranch)
+		n := len(m.cleanup.sessions)
+		q := fmt.Sprintf("⚠ %d live session(s) in %s — kill them? [y/N]", n, m.cleanup.branch)
 		return q, yesNoBindings("kill + continue")
 	case "action":
-		if m.pendingCleanupWorktreePath != "" {
-			q := fmt.Sprintf("Remove worktree %s?", m.pendingCleanupBranch)
+		if m.cleanup.worktreePath != "" {
+			q := fmt.Sprintf("Remove worktree %s?", m.cleanup.branch)
 			return q, withCancel([]footerBinding{
 				{"w", "worktree only"},
 				{"b", "worktree + branch"},
 			})
 		}
-		q := fmt.Sprintf("Delete branch %s? [y/N]", m.pendingCleanupBranch)
+		q := fmt.Sprintf("Delete branch %s? [y/N]", m.cleanup.branch)
 		return q, yesNoBindings("delete branch")
 	}
 	return "", nil
@@ -4259,17 +4256,6 @@ func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID st
 		}
 		return statusMsgEvent("Launched " + agent.Name + " in " + primaryWindowName)
 	}
-}
-
-// clearPendingCleanupMenu resets all pendingCleanup* fields so the menu closes.
-func (m *Model) clearPendingCleanupMenu() {
-	m.pendingCleanupActive = false
-	m.pendingCleanupStage = ""
-	m.pendingCleanupProjectPath = ""
-	m.pendingCleanupProjectName = ""
-	m.pendingCleanupBranch = ""
-	m.pendingCleanupWorktreePath = ""
-	m.pendingCleanupSessions = nil
 }
 
 func (m *Model) clearPendingWTExists() {

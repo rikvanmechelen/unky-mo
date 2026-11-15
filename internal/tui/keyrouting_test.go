@@ -39,12 +39,8 @@ func routedPrompts() []routedPrompt {
 			func(m *Model) { m.newSession = &newSessionPrompt{primaryWin: "alpha"} },
 			func(m Model) bool { return m.newSession != nil }},
 		{"pendingCleanup", "cleanup",
-			func(m *Model) {
-				m.pendingCleanupActive = true
-				m.pendingCleanupStage = "action"
-				m.pendingCleanupBranch = "b"
-			},
-			func(m Model) bool { return m.pendingCleanupActive }},
+			func(m *Model) { m.cleanup = &cleanupMenu{stage: "action", branch: "b"} },
+			func(m Model) bool { return m.cleanup != nil }},
 		{"pendingWTExists", "wtExists",
 			func(m *Model) { m.pendingWTExistsActive = true; m.pendingWTExistsBranch = "b" },
 			func(m Model) bool { return m.pendingWTExistsActive }},

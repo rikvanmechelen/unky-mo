@@ -1,6 +1,9 @@
 package tui
 
-import "charm.land/bubbles/v2/textinput"
+import (
+	"charm.land/bubbles/v2/textinput"
+	"github.com/rvanmech/unky-mo/internal/claude"
+)
 
 // The TUI's prompts: each open one is a non-nil pointer on Model holding
 // its own state, so a flow's fields can't leak into another's
@@ -42,4 +45,16 @@ type newSessionPrompt struct {
 	livePID       int    // the claude to park on p
 	liveID        string // its session id
 	resumeSession string // set: p and c resume this session instead of starting fresh
+}
+
+// cleanupMenu removes a branch's worktree and/or the branch (x). Stage
+// "kill" first confirms stopping the sessions running in the worktree;
+// "action" picks what to remove.
+type cleanupMenu struct {
+	stage        string // "kill" | "action"
+	projectPath  string
+	projectName  string
+	branch       string
+	worktreePath string           // "" for a plain branch row
+	sessions     []claude.Session // live sessions to stop, captured when it opened
 }

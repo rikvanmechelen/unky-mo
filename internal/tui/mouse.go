@@ -251,7 +251,7 @@ func (m Model) estimatePRDetailLines(width int) int {
 // isModalActive returns true when any modal, prompt, or input overlay is
 // active in the main TUI. Mouse clicks should be suppressed during these.
 func (m Model) isModalActive() bool {
-	return m.pendingCleanupActive ||
+	return m.cleanup != nil ||
 		m.newSession != nil ||
 		m.pendingImportSessionID != "" ||
 		m.pendingWTExistsActive ||

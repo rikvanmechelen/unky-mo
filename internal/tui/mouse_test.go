@@ -216,7 +216,7 @@ func TestMouseClickDuringModalIsNoop(t *testing.T) {
 		{Name: "bravo", Path: "/ws/bravo"},
 	}
 	m := newDashModel(projects, nil)
-	m.pendingCleanupActive = true // modal active
+	m.cleanup = &cleanupMenu{} // modal active
 
 	m, cmd := sendMouseClick(t, m, 5, 5)
 

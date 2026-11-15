@@ -242,26 +242,17 @@ func TestGoldenScreens(t *testing.T) {
 		}},
 		{"detail_cleanup_kill", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingCleanupActive = true
-			m.pendingCleanupStage = "kill"
-			m.pendingCleanupBranch = "feat"
-			m.pendingCleanupWorktreePath = "/ws/alpha.worktrees/feat"
-			m.pendingCleanupSessions = []claude.Session{{PID: 1}, {PID: 2}}
+			m.cleanup = &cleanupMenu{stage: "kill", branch: "feat", worktreePath: "/ws/alpha.worktrees/feat", sessions: []claude.Session{{PID: 1}, {PID: 2}}}
 			return m
 		}},
 		{"detail_cleanup_worktree", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingCleanupActive = true
-			m.pendingCleanupStage = "action"
-			m.pendingCleanupBranch = "feat"
-			m.pendingCleanupWorktreePath = "/ws/alpha.worktrees/feat"
+			m.cleanup = &cleanupMenu{stage: "action", branch: "feat", worktreePath: "/ws/alpha.worktrees/feat"}
 			return m
 		}},
 		{"detail_cleanup_branch", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingCleanupActive = true
-			m.pendingCleanupStage = "action"
-			m.pendingCleanupBranch = "old"
+			m.cleanup = &cleanupMenu{stage: "action", branch: "old"}
 			return m
 		}},
 		{"detail_new_menu", func(m Model) Model {
