@@ -217,7 +217,7 @@ func TestExtractJiraErrorFallsBackToBody(t *testing.T) {
 
 func TestNewMissingFieldsReturnsErrAuthMissing(t *testing.T) {
 	for _, cfg := range []Config{
-		{Email: "e", Token: "t"},                       // no BaseURL
+		{Email: "e", Token: "t"},                         // no BaseURL
 		{BaseURL: "https://x.atlassian.net", Token: "t"}, // no Email
 		{BaseURL: "https://x.atlassian.net", Email: "e"}, // no Token
 	} {

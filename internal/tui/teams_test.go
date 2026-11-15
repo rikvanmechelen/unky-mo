@@ -192,13 +192,13 @@ func TestEnrichViewsWithTeamInfo_FewerPanesThanTeammates(t *testing.T) {
 
 func TestViewToProjectState_WithTeam(t *testing.T) {
 	v := sessionView{
-		SessionID:   "sess-lead",
-		CWD:         "/ws/project",
-		WindowName:  "project",
-		WindowID:    "@5",
-		Status:      StatusActive,
-		TeamName:    "my-team",
-		TeamRole:    "lead",
+		SessionID:  "sess-lead",
+		CWD:        "/ws/project",
+		WindowName: "project",
+		WindowID:   "@5",
+		Status:     StatusActive,
+		TeamName:   "my-team",
+		TeamRole:   "lead",
 		Teammates: []teammateView{
 			{Name: "arch", Status: "active", PaneID: "%2"},
 			{Name: "test", Status: "idle", PaneID: "%3"},

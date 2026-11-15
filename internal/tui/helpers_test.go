@@ -25,17 +25,17 @@ func TestOrphanedTermSessions(t *testing.T) {
 		{ID: "@17", Name: "unky-mo [extra-terminal]", InstanceID: "deadbeef0123"},
 	}
 	sessions := []string{
-		"mo",                       // not a mo-terms session, ignored
-		"mo-terms-5",               // paired with @5 → keep
-		"mo-terms-17",              // paired with @17 → keep
-		"mo-terms-14",              // no paired window → orphan
-		"mo-terms-1",               // no paired window → orphan
-		"mo-terms-a1b2c3d4e5f6",   // paired with window's instanceID → keep
-		"mo-terms-deadbeef0123",    // paired with window's instanceID → keep
-		"mo-terms-aabbccddeeff",    // no paired instance ID → orphan
-		"mo-terms-alpha",           // non-hex non-digit suffix, left alone
-		"mo-terms",                 // empty suffix, ignored
-		"some-other-server",        // unrelated, ignored
+		"mo",                    // not a mo-terms session, ignored
+		"mo-terms-5",            // paired with @5 → keep
+		"mo-terms-17",           // paired with @17 → keep
+		"mo-terms-14",           // no paired window → orphan
+		"mo-terms-1",            // no paired window → orphan
+		"mo-terms-a1b2c3d4e5f6", // paired with window's instanceID → keep
+		"mo-terms-deadbeef0123", // paired with window's instanceID → keep
+		"mo-terms-aabbccddeeff", // no paired instance ID → orphan
+		"mo-terms-alpha",        // non-hex non-digit suffix, left alone
+		"mo-terms",              // empty suffix, ignored
+		"some-other-server",     // unrelated, ignored
 	}
 	got := orphanedTermSessions(sessions, windows)
 	want := []string{"mo-terms-14", "mo-terms-1", "mo-terms-aabbccddeeff"}
@@ -66,9 +66,9 @@ func TestOrphanedTermSessionsNonHexNonDigitLeftAlone(t *testing.T) {
 	// Suffixes that are neither all-digits nor 12-char hex are left alone
 	// (e.g. windowName-based fallback from unit tests).
 	sessions := []string{
-		"mo-terms-alpha",         // not digits, not hex12 → left alone
+		"mo-terms-alpha",        // not digits, not hex12 → left alone
 		"mo-terms-a1b2c3d4e5f6", // hex12 — matched against live instance IDs
-		"mo-terms-5",             // digit — window @5 is alive
+		"mo-terms-5",            // digit — window @5 is alive
 	}
 	windows := []ttmux.Window{{ID: "@5", InstanceID: "a1b2c3d4e5f6"}}
 	got := orphanedTermSessions(sessions, windows)
@@ -114,8 +114,8 @@ func TestRestartSidebarsNewPathKillsAndRespawns(t *testing.T) {
 	tmux := mock_ops.NewMockTmuxClient(ctrl)
 
 	tmux.EXPECT().ListWindows().Return([]ttmux.Window{
-		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                                     // TUI — skipped
-		{ID: "@5", Index: "1", Name: "alpha", InstanceID: "a1b2c3d4e5f6", CWD: "/ws/alpha"},  // has instance ID
+		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                                    // TUI — skipped
+		{ID: "@5", Index: "1", Name: "alpha", InstanceID: "a1b2c3d4e5f6", CWD: "/ws/alpha"}, // has instance ID
 	}, nil)
 	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
 	tmux.EXPECT().KillPane("mo:1.1").Return(nil)
@@ -139,8 +139,8 @@ func TestRestartSidebarsLegacyFallbackSendsRawKeys(t *testing.T) {
 	tmux := mock_ops.NewMockTmuxClient(ctrl)
 
 	tmux.EXPECT().ListWindows().Return([]ttmux.Window{
-		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                // TUI — skipped
-		{ID: "@5", Index: "1", Name: "alpha", CWD: "/ws/alpha"},         // no instance ID — legacy
+		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},        // TUI — skipped
+		{ID: "@5", Index: "1", Name: "alpha", CWD: "/ws/alpha"}, // no instance ID — legacy
 	}, nil)
 	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
 	tmux.EXPECT().SendRawKeys("mo:1.1", "M-C-r")
@@ -157,9 +157,9 @@ func TestRestartSidebarsMixedWindows(t *testing.T) {
 	tmux := mock_ops.NewMockTmuxClient(ctrl)
 
 	tmux.EXPECT().ListWindows().Return([]ttmux.Window{
-		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                                     // skipped
-		{ID: "@5", Index: "1", Name: "alpha", InstanceID: "a1b2c3d4e5f6", CWD: "/ws/alpha"},  // new path
-		{ID: "@6", Index: "2", Name: "beta", CWD: "/ws/beta"},                                 // legacy
+		{ID: "@0", Index: "0", Name: "mo", CWD: "/home"},                                    // skipped
+		{ID: "@5", Index: "1", Name: "alpha", InstanceID: "a1b2c3d4e5f6", CWD: "/ws/alpha"}, // new path
+		{ID: "@6", Index: "2", Name: "beta", CWD: "/ws/beta"},                               // legacy
 	}, nil)
 	tmux.EXPECT().SessionName().Return("mo").AnyTimes()
 
@@ -240,14 +240,14 @@ func TestParseWindowIndex(t *testing.T) {
 		name string
 		want int
 	}{
-		{"proj", 0},               // bare primary
-		{"proj [2]", 2},           // ordinal sibling
-		{"proj [3]", 3},           // ordinal
-		{"proj [debug]", -1},      // custom-title suffix
-		{"proj@feat", 0},          // bare worktree
-		{"proj@feat [2]", 2},      // worktree sibling
-		{"proj@feat [foo]", -1},   // worktree custom title
-		{"", 0},                   // unparseable → treated as bare
+		{"proj", 0},             // bare primary
+		{"proj [2]", 2},         // ordinal sibling
+		{"proj [3]", 3},         // ordinal
+		{"proj [debug]", -1},    // custom-title suffix
+		{"proj@feat", 0},        // bare worktree
+		{"proj@feat [2]", 2},    // worktree sibling
+		{"proj@feat [foo]", -1}, // worktree custom title
+		{"", 0},                 // unparseable → treated as bare
 	}
 	for _, c := range cases {
 		got := parseWindowIndex(c.name)
@@ -369,13 +369,13 @@ func TestWorktreeParent(t *testing.T) {
 
 func TestViewToDashItemStrayAttachesGitStatus(t *testing.T) {
 	v := sessionView{
-		WindowName:  "stray",
-		Status:      StatusActive,
-		CWD:         "/tmp/some-repo",
-		Section:     "projects",
-		IsStray:     true,
-		Branch:      "main",
-		Dirty:       3,
+		WindowName: "stray",
+		Status:     StatusActive,
+		CWD:        "/tmp/some-repo",
+		Section:    "projects",
+		IsStray:    true,
+		Branch:     "main",
+		Dirty:      3,
 	}
 	item := viewToDashItem(v)
 	if item.Git == nil {

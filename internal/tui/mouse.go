@@ -16,8 +16,8 @@ func fireMouseEnter() tea.Msg { return mouseEnterMsg{} }
 // regions, mirroring dashboardView()'s rendering logic. Computed fresh on each
 // click so it always agrees with what's on screen.
 type dashboardLayout struct {
-	leftWidth  int // columns occupied by the left panel (project list)
-	rightX0    int // first X column of the right panel
+	leftWidth int // columns occupied by the left panel (project list)
+	rightX0   int // first X column of the right panel
 
 	// Left panel (project list): items start at listItemsY0 and occupy one
 	// row each (Height=1, Spacing=0). The list header (title bar + status

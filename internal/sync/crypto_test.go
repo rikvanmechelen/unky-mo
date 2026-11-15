@@ -214,4 +214,3 @@ func TestLoadKeyMissing(t *testing.T) {
 		t.Fatal("expected error when no key is available")
 	}
 }
-

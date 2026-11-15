@@ -71,15 +71,15 @@ type fakeReader struct {
 	liveSessions []Session
 }
 
-func (f *fakeReader) LiveSessions() ([]Session, error)            { return f.liveSessions, nil }
-func (f *fakeReader) SessionForPath(string) *Session               { return nil }
-func (f *fakeReader) SessionsForPath(string) []Session             { return nil }
-func (f *fakeReader) IsAlive(int) bool                             { return false }
-func (f *fakeReader) IsDescendantOf(int, map[int]bool) bool        { return false }
-func (f *fakeReader) IsSessionIdle(string, string) bool            { return false }
-func (f *fakeReader) CustomTitleFor(string, string) string         { return "" }
+func (f *fakeReader) LiveSessions() ([]Session, error)                  { return f.liveSessions, nil }
+func (f *fakeReader) SessionForPath(string) *Session                    { return nil }
+func (f *fakeReader) SessionsForPath(string) []Session                  { return nil }
+func (f *fakeReader) IsAlive(int) bool                                  { return false }
+func (f *fakeReader) IsDescendantOf(int, map[int]bool) bool             { return false }
+func (f *fakeReader) IsSessionIdle(string, string) bool                 { return false }
+func (f *fakeReader) CustomTitleFor(string, string) string              { return "" }
 func (f *fakeReader) LastMessages(string, string, int) []SessionMessage { return nil }
-func (f *fakeReader) RecentSessions(string, int) []RecentSession   { return nil }
-func (f *fakeReader) ProjectsDirForPath(string) string             { return "" }
-func (f *fakeReader) ActiveShellsForSession(string) []ActiveShell  { return nil }
-func (f *fakeReader) FormatShellCommand(cmd string, _ int) string  { return cmd }
+func (f *fakeReader) RecentSessions(string, int) []RecentSession        { return nil }
+func (f *fakeReader) ProjectsDirForPath(string) string                  { return "" }
+func (f *fakeReader) ActiveShellsForSession(string) []ActiveShell       { return nil }
+func (f *fakeReader) FormatShellCommand(cmd string, _ int) string       { return cmd }

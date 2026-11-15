@@ -3,26 +3,26 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Enter            key.Binding
-	AgentLaunch      key.Binding // "A" — pick which coding agent to launch
-	Back             key.Binding
-	New              key.Binding
-	NewProject       key.Binding // "N" — create a new project folder, git-init it, launch claude
-	Attach           key.Binding
-	Resume           key.Binding
-	NewWorktree      key.Binding // "w" — create worktree for the branch under cursor
-	NewBranchPrompt  key.Binding // "W" — type a brand-new branch name
-	OpenInMain       key.Binding // "m" — checkout branch in main repo (safe)
-	OpenInMainForce  key.Binding // "M" — stash then checkout in main repo
-	Tab              key.Binding
-	OpenInBrowser    key.Binding
-	Checkout         key.Binding
-	Help             key.Binding
-	Refresh          key.Binding // "ctrl+r" — force-refresh in-process state (sessions, branches, state file)
-	Restart          key.Binding // ctrl+alt+r or ctrl+cmd+r — exec freshly-installed binary + restart sidebars
-	Suspend          key.Binding // "s" — suspend (tmux detach-client); session keeps running
-	Cleanup          key.Binding // "x" — remove the worktree / branch under cursor
-	Quit             key.Binding
+	Enter           key.Binding
+	AgentLaunch     key.Binding // "A" — pick which coding agent to launch
+	Back            key.Binding
+	New             key.Binding
+	NewProject      key.Binding // "N" — create a new project folder, git-init it, launch claude
+	Attach          key.Binding
+	Resume          key.Binding
+	NewWorktree     key.Binding // "w" — create worktree for the branch under cursor
+	NewBranchPrompt key.Binding // "W" — type a brand-new branch name
+	OpenInMain      key.Binding // "m" — checkout branch in main repo (safe)
+	OpenInMainForce key.Binding // "M" — stash then checkout in main repo
+	Tab             key.Binding
+	OpenInBrowser   key.Binding
+	Checkout        key.Binding
+	Help            key.Binding
+	Refresh         key.Binding // "ctrl+r" — force-refresh in-process state (sessions, branches, state file)
+	Restart         key.Binding // ctrl+alt+r or ctrl+cmd+r — exec freshly-installed binary + restart sidebars
+	Suspend         key.Binding // "s" — suspend (tmux detach-client); session keeps running
+	Cleanup         key.Binding // "x" — remove the worktree / branch under cursor
+	Quit            key.Binding
 }
 
 var keys = keyMap{

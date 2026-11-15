@@ -193,14 +193,13 @@ func renderOverflowRow(bucket tickets.Bucket, hidden int, expanded, selected boo
 	return cursor + style.Render(label) + "\n"
 }
 
-// renderTicketRow renders a single ticket line. Format:
+// renderTicketRow renders a single ticket line, e.g.
 //
 //	▸ ⚡ OP-175  In Progress    fix auth flow
 //
-// - cursor arrow when selected
-// - sprint bolt when in an active sprint
-// - raw status in dim (for Unmapped rows, the raw status is the important
-//   thing to surface so workflow drift is obvious)
+// with the cursor arrow when selected, the sprint bolt when the ticket is in
+// an active sprint, and the raw status in dim (for Unmapped rows the raw
+// status is the important thing to surface, so workflow drift is obvious).
 func renderTicketRow(t tickets.Ticket, selected, unmapped bool, width int) string {
 	cursor := "  "
 	if selected {

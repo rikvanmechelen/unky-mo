@@ -9,7 +9,7 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 
-.PHONY: build install clean test test-race test-expectfail test-integration mocks mocks-check codemirror
+.PHONY: build install clean test test-race test-expectfail test-integration mocks mocks-check codemirror fmt fmt-check
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/mo
@@ -33,6 +33,13 @@ install: build
 
 clean:
 	rm -f $(BINARY)
+
+fmt:
+	gofmt -w .
+
+# CI check: every Go file is gofmt'd.
+fmt-check:
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "not gofmt'd (run 'make fmt'):"; echo "$$out"; exit 1; fi
 
 test:
 	go test ./...

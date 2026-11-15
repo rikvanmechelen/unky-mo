@@ -89,7 +89,7 @@ type Model struct {
 	// restartRequested is set by ctrl+alt+r; RunWithOpts re-execs the
 	// binary in place once bubbletea has restored the terminal.
 	restartRequested bool
-	termCounter         int // incrementing counter for naming
+	termCounter      int // incrementing counter for naming
 	// Sync status: "synced", "stale", or "" (not synced / no sync repo)
 	syncStatus string
 	// Active Claude shells (Bash tool subprocesses)

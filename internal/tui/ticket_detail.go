@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atotto/clipboard"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/atotto/clipboard"
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/tickets"
@@ -20,10 +20,10 @@ import (
 type ticketStartStrategy string
 
 const (
-	strategyMissing     ticketStartStrategy = ""         // project missing on disk / unusable
-	strategyFocusExisting ticketStartStrategy = "focus"  // existing worktree for the branch
-	strategyWorktree    ticketStartStrategy = "worktree" // create a new worktree
-	strategyMainCheckout ticketStartStrategy = "main"    // checkout branch in main repo
+	strategyMissing       ticketStartStrategy = ""         // project missing on disk / unusable
+	strategyFocusExisting ticketStartStrategy = "focus"    // existing worktree for the branch
+	strategyWorktree      ticketStartStrategy = "worktree" // create a new worktree
+	strategyMainCheckout  ticketStartStrategy = "main"     // checkout branch in main repo
 )
 
 // decideTicketStrategy is the pure decision function used by both the hint

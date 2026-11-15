@@ -2,8 +2,8 @@ package tui
 
 import (
 	"os"
-	"path/filepath"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"charm.land/bubbles/v2/list"
@@ -318,10 +318,10 @@ func TestWKeyOnSessionRowOpensLiftPrompt(t *testing.T) {
 	proj := &project.Project{Name: "alpha", Path: "/ws/alpha"}
 	branch := project.Branch{Name: "main", IsMain: true}
 	m := Model{
-		screen:        ScreenProject,
-		list:          newTestListModel(),
-		detailProject: proj,
-		detailFocusLeft: true,
+		screen:           ScreenProject,
+		list:             newTestListModel(),
+		detailProject:    proj,
+		detailFocusLeft:  true,
 		detailPRExpanded: -1,
 		detailRows: []detailRow{
 			{kind: "branch", branch: &branch},
@@ -415,10 +415,10 @@ func TestLiftInputPromptEscCancels(t *testing.T) {
 	// Build a proper textinput so the input-active branch fires.
 	ti := newTestInput("some-branch")
 	m := Model{
-		screen:                 ScreenProject,
-		liftSessionInput:       &ti,
-		liftSessionSessionID:   "s",
-		liftSessionSourcePath:  "/ws/alpha",
+		screen:                ScreenProject,
+		liftSessionInput:      &ti,
+		liftSessionSessionID:  "s",
+		liftSessionSourcePath: "/ws/alpha",
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	mm := got.(Model)

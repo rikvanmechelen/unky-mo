@@ -421,4 +421,3 @@ func TestMouseClickScrollUpRewindsViewport(t *testing.T) {
 		t.Errorf("scroll click should not return a cmd")
 	}
 }
-

@@ -6,15 +6,15 @@
 //
 // Test scenario: spawn a fake `claude` inside a tmux pane under an isolated
 // socket. Confirm that:
-//   1. claude.LiveSessions() discovers the live session.
-//   2. IsDescendantOf attributes the fake PID to the pane's shell PID.
-//   3. Killing the window drops the session out of LiveSessions on the
-//      next poll.
+//  1. claude.LiveSessions() discovers the live session.
+//  2. IsDescendantOf attributes the fake PID to the pane's shell PID.
+//  3. Killing the window drops the session out of LiveSessions on the
+//     next poll.
 package integration
 
 import (
-	"os/exec"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"

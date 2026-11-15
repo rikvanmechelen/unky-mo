@@ -28,7 +28,7 @@ func NewWatcher(onChange func(sessionID string, path string)) (*Watcher, error) 
 	}
 	w := &Watcher{
 		w:        fsw,
-		onChange:  onChange,
+		onChange: onChange,
 		pathToID: make(map[string]string),
 		dirRefs:  make(map[string]int),
 		done:     make(chan struct{}),

@@ -22,12 +22,12 @@ import (
 	"github.com/rvanmech/unky-mo/internal/claude"
 	"github.com/rvanmech/unky-mo/internal/config"
 	gh "github.com/rvanmech/unky-mo/internal/github"
-	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/notify"
-	"github.com/rvanmech/unky-mo/internal/status"
-	moSync "github.com/rvanmech/unky-mo/internal/sync"
+	"github.com/rvanmech/unky-mo/internal/ops"
 	"github.com/rvanmech/unky-mo/internal/project"
 	"github.com/rvanmech/unky-mo/internal/state"
+	"github.com/rvanmech/unky-mo/internal/status"
+	moSync "github.com/rvanmech/unky-mo/internal/sync"
 	"github.com/rvanmech/unky-mo/internal/tickets"
 	"github.com/rvanmech/unky-mo/internal/tickets/jira"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
@@ -189,25 +189,25 @@ type Model struct {
 	agents         []config.AgentConfig
 	agentChoices   map[string]string // project:branch → agent key (persisted preferences)
 	notifServer    *notify.Server
-	statusMgr      *status.Manager  // central source of truth for session statuses
-	statusWatcher  *status.Watcher  // fsnotify watcher for JSONL reconciliation
+	statusMgr      *status.Manager            // central source of truth for session statuses
+	statusWatcher  *status.Watcher            // fsnotify watcher for JSONL reconciliation
 	statusSub      <-chan status.StatusChange // subscription to status changes
 	statusMsg      string
 	startupNotice  string // emitted once as a statusMsgEvent from Init
 	startupSticky  bool   // startupNotice stays up until a keypress (e.g. web CA not trusted)
 	statusSticky   bool   // statusMsg came from a stickyStatusMsgEvent
-	activeSessions     int
-	attentionCount     int
+	activeSessions int
+	attentionCount int
 	gitStatuses    map[string]project.GitStatus // project path → git status
 	// Dashboard active sessions panel (right side)
-	dashFocusLeft      bool // true = project list, false = sessions/tickets panel
-	dashSessionItems   []dashSessionItem
-	dashSessionCursor  int
+	dashFocusLeft     bool // true = project list, false = sessions/tickets panel
+	dashSessionItems  []dashSessionItem
+	dashSessionCursor int
 	// Dashboard right-panel focus: sessions (top) vs tickets (bottom). Only
 	// relevant when dashFocusLeft is false.
-	dashRightFocus   dashRightSection
+	dashRightFocus dashRightSection
 	// Tickets state (populated by background ticketsFetch).
-	ticketsDisabled  bool             // explicit opt-out via [tickets] enabled = false
+	ticketsDisabled  bool // explicit opt-out via [tickets] enabled = false
 	ticketsProviders []tickets.Provider
 	// Ticket detail screen state (ScreenTicket).
 	detailTicket        *tickets.TicketDetail
@@ -227,20 +227,20 @@ type Model struct {
 	pickerRememberActive bool   // true while we're asking r/n to persist the pick
 	pickerPendingMo      string // mo project name user just selected
 	// Project map companion-file overlay (loaded once, refreshed after save).
-	ticketProjectMap map[string]map[string]string
-	ticketsInstances []jira.Instance  // retained for NeedsConfig re-check on token env changes
-	ticketsGroups    []tickets.BucketGroup
-	ticketsErrors    []tickets.FetchResult
-	ticketsLoaded    bool             // false until first fetch completes
-	ticketsLoading   bool             // true while a fetch is in flight
-	ticketsLastFetch time.Time
-	ticketsCursor    int              // index into the flat visible list below
-	ticketsPerBucket int              // config-driven overflow cap
+	ticketProjectMap     map[string]map[string]string
+	ticketsInstances     []jira.Instance // retained for NeedsConfig re-check on token env changes
+	ticketsGroups        []tickets.BucketGroup
+	ticketsErrors        []tickets.FetchResult
+	ticketsLoaded        bool // false until first fetch completes
+	ticketsLoading       bool // true while a fetch is in flight
+	ticketsLastFetch     time.Time
+	ticketsCursor        int // index into the flat visible list below
+	ticketsPerBucket     int // config-driven overflow cap
 	ticketsRefreshPeriod time.Duration
 	// Buckets the user has expanded via enter on the overflow row. Expansion
 	// is session-scoped (not persisted) — the default per-bucket cap applies
 	// again on next launch, which is the behavior the user most often wants.
-	ticketsExpanded  map[tickets.Bucket]bool
+	ticketsExpanded map[tickets.Bucket]bool
 	// Detail views
 	detailProject   *project.Project
 	detailSession   *claude.Session
@@ -264,14 +264,14 @@ type Model struct {
 	// whose primary window is occupied by a different session. Presents
 	// s/p/c/esc options (switch / park+new / concurrent / cancel). Captured
 	// per-field so the menu survives cursor movement without re-querying.
-	pendingNewMenuActive     bool
-	pendingNewProject        string
-	pendingNewBranch         string // "" for main checkout
-	pendingNewCwd            string
-	pendingNewPrimaryWin     string // composed primary window name (no suffix)
-	pendingNewLivePID        int    // claude PID of the session to park on `p`
-	pendingNewLiveID         string // claude session ID of the current primary
-	pendingNewResumeSession  string // non-empty ⇒ `p`/`c` launch `claude --resume <id>` instead of fresh
+	pendingNewMenuActive    bool
+	pendingNewProject       string
+	pendingNewBranch        string // "" for main checkout
+	pendingNewCwd           string
+	pendingNewPrimaryWin    string // composed primary window name (no suffix)
+	pendingNewLivePID       int    // claude PID of the session to park on `p`
+	pendingNewLiveID        string // claude session ID of the current primary
+	pendingNewResumeSession string // non-empty ⇒ `p`/`c` launch `claude --resume <id>` instead of fresh
 	// Agent picker menu: shown when shift+enter is pressed on a branch row.
 	pendingAgentPickerActive bool
 	pendingAgentPickerBranch *project.Branch
@@ -284,8 +284,8 @@ type Model struct {
 	pendingCleanupProjectPath  string
 	pendingCleanupProjectName  string
 	pendingCleanupBranch       string
-	pendingCleanupWorktreePath string            // "" for plain-branch rows
-	pendingCleanupSessions     []claude.Session  // live sessions to kill, captured at entry
+	pendingCleanupWorktreePath string           // "" for plain-branch rows
+	pendingCleanupSessions     []claude.Session // live sessions to kill, captured at entry
 	// Worktree-exists prompt: shown when creating a worktree for a branch
 	// that already has one. Options: focus existing, remove + recreate, cancel.
 	pendingWTExistsActive      bool
@@ -293,7 +293,7 @@ type Model struct {
 	pendingWTExistsProjectPath string
 	pendingWTExistsProjectName string
 	pendingWTExistsWTPath      string
-	pendingWTExistsPRBranch    bool   // true when triggered from a PR (needs git fetch + reset on recreate)
+	pendingWTExistsPRBranch    bool // true when triggered from a PR (needs git fetch + reset on recreate)
 	// Suspend-and-quit prompt: active when q pressed with active sessions.
 	pendingSuspendQuitActive bool
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
@@ -326,11 +326,11 @@ type Model struct {
 	// Pull requests panel (right side of project detail)
 	detailPRs        []gh.PullRequest
 	detailPRCursor   int
-	detailPRErr      string         // error message if gh failed
-	detailPRExpanded int            // index of expanded PR (-1 = none)
-	detailPRDetail   *gh.PRDetail   // fetched detail for expanded PR
-	detailFocusLeft  bool           // true = left panel (sessions/worktrees), false = right (PRs)
-	syncedSessions map[string]moSync.SessionMeta // sync metadata keyed by session ID for the current detail project
+	detailPRErr      string                        // error message if gh failed
+	detailPRExpanded int                           // index of expanded PR (-1 = none)
+	detailPRDetail   *gh.PRDetail                  // fetched detail for expanded PR
+	detailFocusLeft  bool                          // true = left panel (sessions/worktrees), false = right (PRs)
+	syncedSessions   map[string]moSync.SessionMeta // sync metadata keyed by session ID for the current detail project
 	// remoteSynced holds synced sessions whose worktree does not exist on
 	// this machine. Keyed by branch name (empty for main scope, unused here
 	// since the main project always has a local path).
@@ -386,9 +386,9 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 	l.Title = "Unky Mo"
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
-	l.SetShowHelp(false)        // We use our own footer
-	l.DisableQuitKeybindings()  // We handle q/esc ourselves
-	l.InfiniteScrolling = true  // Circular navigation
+	l.SetShowHelp(false)       // We use our own footer
+	l.DisableQuitKeybindings() // We handle q/esc ourselves
+	l.InfiniteScrolling = true // Circular navigation
 	l.Styles.Title = titleStyle
 
 	instances := ticketsInstancesFromConfig(ticketsCfg)
@@ -421,28 +421,28 @@ func NewModelWithDeps(projects []project.Project, tmuxClient ops.TmuxClient, cla
 	})
 
 	return Model{
-		screen:             ScreenDashboard,
-		list:               l,
-		projects:           projects,
-		tmux:               tmuxClient,
-		claude:             claudeReader,
-		ops:                opsCtx,
-		agents:             agents,
-		agentChoices:       agentChoices,
-		notifServer:        notifServer,
-		statusMgr:          statusMgr,
-		statusWatcher:      statusWatcher,
-		statusSub:          statusSub,
-		dashFocusLeft:      true,
-		stateFilePath:      stateFilePath,
-		workspaceDirs:      workspaceDirs,
-		manualProjects:     manualProjects,
-		ticketsDisabled:    ticketsCfg.Disabled,
-		ticketsProviders:   providers,
-		ticketProjectMap:   projectMap,
-		ticketsExpanded:    map[tickets.Bucket]bool{},
-		ticketsInstances:   instances,
-		ticketsPerBucket:   perBucket,
+		screen:               ScreenDashboard,
+		list:                 l,
+		projects:             projects,
+		tmux:                 tmuxClient,
+		claude:               claudeReader,
+		ops:                  opsCtx,
+		agents:               agents,
+		agentChoices:         agentChoices,
+		notifServer:          notifServer,
+		statusMgr:            statusMgr,
+		statusWatcher:        statusWatcher,
+		statusSub:            statusSub,
+		dashFocusLeft:        true,
+		stateFilePath:        stateFilePath,
+		workspaceDirs:        workspaceDirs,
+		manualProjects:       manualProjects,
+		ticketsDisabled:      ticketsCfg.Disabled,
+		ticketsProviders:     providers,
+		ticketProjectMap:     projectMap,
+		ticketsExpanded:      map[tickets.Bucket]bool{},
+		ticketsInstances:     instances,
+		ticketsPerBucket:     perBucket,
 		ticketsRefreshPeriod: refresh,
 	}
 }
@@ -830,7 +830,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-
 
 		switch {
 		case key.Matches(msg, keys.Help):
@@ -1676,12 +1675,12 @@ func (m Model) View() tea.View {
 type dashSessionItem struct {
 	Name        string
 	WindowName  string
-	WindowID    string              // stable tmux window ID (@N); used for safe target construction
-	AgentKey    string              // coding agent mnemonic; empty = default (Claude)
+	WindowID    string // stable tmux window ID (@N); used for safe target construction
+	AgentKey    string // coding agent mnemonic; empty = default (Claude)
 	Status      SessionStatus
-	ProjectPath string              // cwd — used to resolve external PID/sessionID on import
-	Section     string              // "projects" (default) or "external"
-	Git         *project.GitStatus  // set for git-backed strays; nil otherwise
+	ProjectPath string             // cwd — used to resolve external PID/sessionID on import
+	Section     string             // "projects" (default) or "external"
+	Git         *project.GitStatus // set for git-backed strays; nil otherwise
 }
 
 // refreshDashSessions rebuilds the active sessions list for the dashboard
@@ -2298,7 +2297,7 @@ func (m Model) renderFooter(bindings []footerBinding) string {
 
 	for _, b := range bindings {
 		entryWidth := 1 + len(b.key) + 1 + len(b.desc) // " key desc"
-		sep := 2                                         // "  " between entries
+		sep := 2                                       // "  " between entries
 		if len(rowParts) == 0 {
 			sep = 0
 		}
@@ -4973,7 +4972,9 @@ func (m Model) resumeBranchSmart(b project.Branch) tea.Cmd {
 		wt := project.Worktree{Path: b.WorktreePath, Branch: b.Name}
 		return m.launchWorktreeSession(wt)
 	case b.IsMain:
-		return func() tea.Msg { return m.launchAgentInWindow(p.Name, p.Path, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key) }
+		return func() tea.Msg {
+			return m.launchAgentInWindow(p.Name, p.Path, m.defaultAgent().Cmd, m.defaultAgent().Name, m.defaultAgent().Key)
+		}
 	default:
 		return m.createWorktreeAndLaunch(b.Name)
 	}

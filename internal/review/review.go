@@ -124,7 +124,7 @@ type Analysis struct {
 	// files included (a deleted file by its old path's unit): what the
 	// browser can't tell from a path (a Kotlin file's unit is its module and
 	// package, not its folder).
-	FileUnits map[string]string `json:"fileUnits"`
+	FileUnits  map[string]string `json:"fileUnits"`
 	Languages  []LangInfo        `json:"languages"`
 	Edges      []Edge            `json:"edges"`
 	Existing   []Edge            `json:"existing"`

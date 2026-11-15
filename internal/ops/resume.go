@@ -22,9 +22,9 @@ type ResumeParams struct {
 
 // ResumeResult reports what happened.
 type ResumeResult struct {
-	Target    string // final window name (may differ from params if session lives elsewhere)
-	Switched  bool   // true when we focused an existing window
-	Relaunched bool  // true when we had to spawn a new `claude --resume` window
+	Target     string // final window name (may differ from params if session lives elsewhere)
+	Switched   bool   // true when we focused an existing window
+	Relaunched bool   // true when we had to spawn a new `claude --resume` window
 }
 
 // ResumeInDir switches to the tmux window currently hosting a session, or

@@ -16,7 +16,7 @@ const projectMapFileName = "jira-project-map.toml"
 
 // ProjectMapEntry is one row in the companion file.
 type ProjectMapEntry struct {
-	Provider  string `toml:"provider"`   // e.g. "jira"; future-proof for Linear, GitHub Projects
+	Provider  string `toml:"provider"` // e.g. "jira"; future-proof for Linear, GitHub Projects
 	JiraKey   string `toml:"jira_key"`
 	MoProject string `toml:"mo_project"`
 }

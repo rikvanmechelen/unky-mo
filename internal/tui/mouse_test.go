@@ -77,18 +77,18 @@ func newDashModel(projects []project.Project, sessions []dashSessionItem) Model 
 func newProjectModel(rows []detailRow, prs []gh.PullRequest) Model {
 	p := &project.Project{Name: "test-project", Path: "/ws/test", Language: "go"}
 	return Model{
-		screen:         ScreenProject,
-		detailProject:  p,
-		detailRows:     rows,
-		detailCursor:   0,
-		detailPRs:      prs,
-		detailPRCursor: 0,
+		screen:          ScreenProject,
+		detailProject:   p,
+		detailRows:      rows,
+		detailCursor:    0,
+		detailPRs:       prs,
+		detailPRCursor:  0,
 		detailFocusLeft: true,
-		statusMgr:      status.NewManager(),
+		statusMgr:       status.NewManager(),
 		ticketsExpanded: map[tickets.Bucket]bool{},
-		width:          120,
-		height:         50,
-		ready:          true,
+		width:           120,
+		height:          50,
+		ready:           true,
 	}
 }
 
@@ -507,11 +507,11 @@ func TestMouseWheelProjectDetailRight(t *testing.T) {
 
 func TestMouseClickHelpScreenIsNoop(t *testing.T) {
 	m := Model{
-		screen:      ScreenHelp,
-		statusMgr:   status.NewManager(),
-		width:       120,
-		height:      50,
-		ready:       true,
+		screen:    ScreenHelp,
+		statusMgr: status.NewManager(),
+		width:     120,
+		height:    50,
+		ready:     true,
 	}
 
 	m, cmd := sendMouseClick(t, m, 5, 5)
@@ -522,11 +522,11 @@ func TestMouseClickHelpScreenIsNoop(t *testing.T) {
 
 func TestMouseClickTicketScreenIsNoop(t *testing.T) {
 	m := Model{
-		screen:      ScreenTicket,
-		statusMgr:   status.NewManager(),
-		width:       120,
-		height:      50,
-		ready:       true,
+		screen:    ScreenTicket,
+		statusMgr: status.NewManager(),
+		width:     120,
+		height:    50,
+		ready:     true,
 	}
 
 	m, cmd := sendMouseClick(t, m, 5, 5)

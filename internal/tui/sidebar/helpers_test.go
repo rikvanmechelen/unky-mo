@@ -261,10 +261,10 @@ func TestParseGitStatusMultipleStatuses(t *testing.T) {
 	got := parseGitStatus(input)
 
 	cases := map[string]string{
-		"app.go":         "M",
-		"new.go":         "A",
-		"deleted.go":     "D",
-		"untracked.txt":  "?",
+		"app.go":        "M",
+		"new.go":        "A",
+		"deleted.go":    "D",
+		"untracked.txt": "?",
 	}
 	for path, want := range cases {
 		if got[path] != want {

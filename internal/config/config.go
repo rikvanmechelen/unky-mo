@@ -169,19 +169,19 @@ func (c *Config) SetDefaultAgent(key string) error {
 // The panel is shown automatically whenever a token or instance is present;
 // set Disabled = true to hide it even when credentials exist.
 type TicketsConfig struct {
-	Disabled        bool         `toml:"disabled"`
-	RefreshSeconds  int          `toml:"refresh_seconds"`
-	PerBucketLimit  int          `toml:"per_bucket_limit"`
-	Jira            []JiraConfig `toml:"jira"`
+	Disabled       bool         `toml:"disabled"`
+	RefreshSeconds int          `toml:"refresh_seconds"`
+	PerBucketLimit int          `toml:"per_bucket_limit"`
+	Jira           []JiraConfig `toml:"jira"`
 }
 
 // JiraConfig is one Atlassian Cloud instance.
 type JiraConfig struct {
-	Name          string             `toml:"name"`
-	BaseURL       string             `toml:"base_url"`
-	Email         string             `toml:"email"`
-	SprintFieldID string             `toml:"sprint_field_id"`
-	StatusMap     JiraStatusMap      `toml:"status_map"`
+	Name          string        `toml:"name"`
+	BaseURL       string        `toml:"base_url"`
+	Email         string        `toml:"email"`
+	SprintFieldID string        `toml:"sprint_field_id"`
+	StatusMap     JiraStatusMap `toml:"status_map"`
 	// ProjectMap maps Jira project keys (e.g. "OP") to Mo project names
 	// (e.g. "moma-apps-rails"). Used by the ticket-detail "start working"
 	// flow. Picker-saved entries live in a companion file; this map is

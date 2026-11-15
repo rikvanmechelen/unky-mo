@@ -193,4 +193,3 @@ func TestScanWorkspace_BrokenSymlinkSkipped(t *testing.T) {
 		t.Fatalf("expected 0 projects for broken symlink, got %d", len(projects))
 	}
 }
-

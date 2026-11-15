@@ -178,18 +178,18 @@ func OpenBranchInMain(ctx *Context, p OpenBranchParams) (*OpenBranchResult, erro
 
 // CleanupParams drives CleanupWorktree + optional branch deletion.
 type CleanupParams struct {
-	ProjectPath      string
-	Branch           string
-	DeleteBranch     bool
-	Sessions         []claude.Session // if non-nil, SIGINT + kill their windows first
+	ProjectPath  string
+	Branch       string
+	DeleteBranch bool
+	Sessions     []claude.Session // if non-nil, SIGINT + kill their windows first
 }
 
 // CleanupResult describes what happened.
 type CleanupResult struct {
-	KilledSessions    int
-	WorktreeRemoved   bool
-	BranchDeleted     bool
-	Status            string
+	KilledSessions  int
+	WorktreeRemoved bool
+	BranchDeleted   bool
+	Status          string
 }
 
 // CleanupWorktree optionally SIGINTs live sessions and kills their tmux

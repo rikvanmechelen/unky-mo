@@ -10,17 +10,17 @@ type GenericReader struct {
 	AgentKey string
 }
 
-func (g *GenericReader) LiveSessions() ([]Session, error) { return nil, nil }
-func (g *GenericReader) SessionForPath(string) *Session    { return nil }
-func (g *GenericReader) SessionsForPath(string) []Session  { return nil }
-func (g *GenericReader) IsAlive(pid int) bool              { return false }
-func (g *GenericReader) IsDescendantOf(int, map[int]bool) bool { return false }
-func (g *GenericReader) IsSessionIdle(string, string) bool { return false }
-func (g *GenericReader) CustomTitleFor(string, string) string { return "" }
+func (g *GenericReader) LiveSessions() ([]Session, error)                  { return nil, nil }
+func (g *GenericReader) SessionForPath(string) *Session                    { return nil }
+func (g *GenericReader) SessionsForPath(string) []Session                  { return nil }
+func (g *GenericReader) IsAlive(pid int) bool                              { return false }
+func (g *GenericReader) IsDescendantOf(int, map[int]bool) bool             { return false }
+func (g *GenericReader) IsSessionIdle(string, string) bool                 { return false }
+func (g *GenericReader) CustomTitleFor(string, string) string              { return "" }
 func (g *GenericReader) LastMessages(string, string, int) []SessionMessage { return nil }
-func (g *GenericReader) RecentSessions(string, int) []RecentSession { return nil }
-func (g *GenericReader) ProjectsDirForPath(string) string { return "" }
-func (g *GenericReader) ActiveShellsForSession(string) []ActiveShell { return nil }
+func (g *GenericReader) RecentSessions(string, int) []RecentSession        { return nil }
+func (g *GenericReader) ProjectsDirForPath(string) string                  { return "" }
+func (g *GenericReader) ActiveShellsForSession(string) []ActiveShell       { return nil }
 func (g *GenericReader) FormatShellCommand(cmd string, maxLen int) string {
 	if len(cmd) > maxLen {
 		return cmd[:maxLen-1] + "…"

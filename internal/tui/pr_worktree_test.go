@@ -167,12 +167,12 @@ func TestWorktreeExistsMsgOpensPrompt(t *testing.T) {
 // `f` on the worktree-exists prompt should clear state and return a Cmd.
 func TestWorktreeExistsPromptFocusKey(t *testing.T) {
 	m := Model{
-		screen:                  ScreenProject,
-		pendingWTExistsActive:   true,
-		pendingWTExistsBranch:   "feat",
+		screen:                     ScreenProject,
+		pendingWTExistsActive:      true,
+		pendingWTExistsBranch:      "feat",
 		pendingWTExistsProjectPath: "/ws/alpha",
 		pendingWTExistsProjectName: "alpha",
-		pendingWTExistsWTPath:   "/ws/alpha.worktrees/feat",
+		pendingWTExistsWTPath:      "/ws/alpha.worktrees/feat",
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 'f'})
 	mm := got.(Model)
@@ -187,13 +187,13 @@ func TestWorktreeExistsPromptFocusKey(t *testing.T) {
 // `r` on the worktree-exists prompt should clear state and return a Cmd.
 func TestWorktreeExistsPromptRemoveKey(t *testing.T) {
 	m := Model{
-		screen:                  ScreenProject,
-		pendingWTExistsActive:   true,
-		pendingWTExistsBranch:   "feat",
+		screen:                     ScreenProject,
+		pendingWTExistsActive:      true,
+		pendingWTExistsBranch:      "feat",
 		pendingWTExistsProjectPath: "/ws/alpha",
 		pendingWTExistsProjectName: "alpha",
-		pendingWTExistsWTPath:   "/ws/alpha.worktrees/feat",
-		pendingWTExistsPRBranch: true,
+		pendingWTExistsWTPath:      "/ws/alpha.worktrees/feat",
+		pendingWTExistsPRBranch:    true,
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 'r'})
 	mm := got.(Model)

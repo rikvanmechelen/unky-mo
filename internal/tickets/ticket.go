@@ -86,9 +86,9 @@ type Ticket struct {
 // lean — detail is only fetched when the user opens the popup.
 type TicketDetail struct {
 	Ticket
-	DescriptionText  string // rendered from provider HTML to plain text
-	Reporter         string
-	AssigneeDisplay  string
+	DescriptionText string // rendered from provider HTML to plain text
+	Reporter        string
+	AssigneeDisplay string
 }
 
 // Provider is implemented by each ticket source.

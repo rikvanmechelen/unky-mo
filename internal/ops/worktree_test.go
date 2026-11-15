@@ -231,4 +231,3 @@ func TestOpenBranchInMainRefusesDirty(t *testing.T) {
 		t.Error("should NOT launch on dirty repo without Stash")
 	}
 }
-
