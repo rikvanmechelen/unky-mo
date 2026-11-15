@@ -11,12 +11,6 @@ import (
 	"time"
 )
 
-// BasicAuth wraps h so every request must carry HTTP basic auth credentials
-// matching creds: RequireLogin without paired devices.
-func BasicAuth(h http.Handler, creds *Credentials) http.Handler {
-	return RequireLogin(h, creds, nil)
-}
-
 const deviceCookie = "mo_device"
 
 // basicVerifySlots caps concurrent basic-auth password checks.

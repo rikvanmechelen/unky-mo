@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,124 +26,6 @@ func readSettingsFile(t *testing.T) map[string]interface{} {
 	return out
 }
 
-func TestInstallHooksOnEmptySettings(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
-		t.Fatalf("InstallHooks: %v", err)
-	}
-	if !HooksInstalled() {
-		t.Fatal("HooksInstalled should report true after install")
-	}
-	settings := readSettingsFile(t)
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		t.Fatal("hooks section missing")
-	}
-	notifRaw, _ := hooks["Notification"].([]interface{})
-	if len(notifRaw) == 0 {
-		t.Fatal("Notification hook missing")
-	}
-	// Marker present.
-	dump, _ := json.Marshal(hooks)
-	if !strings.Contains(string(dump), "unky-mo") {
-		t.Error("marker should appear somewhere in hooks")
-	}
-	if !strings.Contains(string(dump), "/opt/notify.sh") {
-		t.Error("notify script path should be written")
-	}
-}
-
-func TestInstallHooksIdempotent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
-		t.Fatal(err)
-	}
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
-		t.Fatal(err)
-	}
-	settings := readSettingsFile(t)
-	hooks := settings["hooks"].(map[string]interface{})
-	notif := hooks["Notification"].([]interface{})
-	// Count mo-marked entries — must be exactly 1.
-	markers := 0
-	for _, e := range notif {
-		if entryHasMarker(e) {
-			markers++
-		}
-	}
-	if markers != 1 {
-		t.Errorf("want 1 mo-marked Notification entry, got %d (total %d)", markers, len(notif))
-	}
-}
-
-func TestInstallHooksPreservesUnrelatedHooks(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	preexisting := `{
-  "hooks": {
-    "Notification": [
-      {
-        "matcher": "idle_prompt",
-        "hooks": [
-          {"type":"command","command":"/usr/local/bin/my-own-hook.sh","timeout":3}
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [{"type":"command","command":"/opt/log.sh","timeout":2}]
-      }
-    ]
-  },
-  "theme": "dark"
-}`
-	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(preexisting), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
-		t.Fatalf("InstallHooks: %v", err)
-	}
-	settings := readSettingsFile(t)
-	if settings["theme"] != "dark" {
-		t.Error("unrelated top-level keys should be preserved (theme missing/changed)")
-	}
-	hooks := settings["hooks"].(map[string]interface{})
-
-	// UserPromptSubmit untouched.
-	ups, _ := hooks["UserPromptSubmit"].([]interface{})
-	if len(ups) != 1 {
-		t.Errorf("UserPromptSubmit should have 1 entry, got %d", len(ups))
-	}
-
-	// Notification has both the user's hook AND mo's hook.
-	notif, _ := hooks["Notification"].([]interface{})
-	userHook, moHook := false, false
-	for _, e := range notif {
-		obj := e.(map[string]interface{})
-		inner := obj["hooks"].([]interface{})
-		for _, h := range inner {
-			cmd := h.(map[string]interface{})["command"].(string)
-			if strings.Contains(cmd, "my-own-hook.sh") {
-				userHook = true
-			}
-			if strings.Contains(cmd, "unky-mo") {
-				moHook = true
-			}
-		}
-	}
-	if !userHook {
-		t.Error("user's Notification hook was clobbered")
-	}
-	if !moHook {
-		t.Error("mo's Notification hook missing after install")
-	}
-}
-
 func TestUninstallHooksRemovesOnlyMoEntries(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -152,7 +35,7 @@ func TestUninstallHooksRemovesOnlyMoEntries(t *testing.T) {
 	}
 
 	// Install first, then add a user hook alongside.
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
+	if err := installV1Hooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
 		t.Fatal(err)
 	}
 	settings := readSettingsFile(t)
@@ -259,7 +142,7 @@ func TestInstallHooksV2_ReplacesV1Hooks(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	// Install V1 first.
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
+	if err := installV1Hooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
 		t.Fatal(err)
 	}
 	if !HooksInstalled() {
@@ -333,7 +216,7 @@ func TestEnsureHooksV2_InstallsThenNoops(t *testing.T) {
 
 func TestEnsureHooksV2_UpgradesV1(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if err := InstallHooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
+	if err := installV1Hooks("/opt/notify.sh", "/opt/stop.sh"); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := EnsureHooksV2("/opt/status-hook.sh", "")
@@ -508,4 +391,48 @@ func TestEnsureHooksV2NullSettings(t *testing.T) {
 	if _, err := EnsureHooksV2("/opt/status-hook.sh", ""); err == nil {
 		t.Error("want an error")
 	}
+}
+
+// installV1Hooks writes the old V1 hook set (Notification + Stop), so the
+// tests can check that a V2 install upgrades or removes it.
+func installV1Hooks(notifyScript, stopScript string) error {
+	settings, err := readSettings()
+	if err != nil {
+		return fmt.Errorf("reading settings: %w", err)
+	}
+
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	if hooks == nil {
+		hooks = make(map[string]interface{})
+	}
+
+	// Add/replace Notification hook
+	notifEntries := filterOutUnkyMo(hooks, "Notification")
+	notifEntries = append(notifEntries, map[string]interface{}{
+		"matcher": "idle_prompt|permission_prompt",
+		"hooks": []interface{}{
+			map[string]interface{}{
+				"type":    "command",
+				"command": notifyScript + " # " + hookMarker,
+				"timeout": 5,
+			},
+		},
+	})
+	hooks["Notification"] = notifEntries
+
+	// Add/replace Stop hook
+	stopEntries := filterOutUnkyMo(hooks, "Stop")
+	stopEntries = append(stopEntries, map[string]interface{}{
+		"hooks": []interface{}{
+			map[string]interface{}{
+				"type":    "command",
+				"command": stopScript + " # " + hookMarker,
+				"timeout": 5,
+			},
+		},
+	})
+	hooks["Stop"] = stopEntries
+
+	settings["hooks"] = hooks
+	return writeSettings(settings)
 }

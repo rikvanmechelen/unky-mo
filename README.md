@@ -761,7 +761,6 @@ Tests under the `expectfail` build tag encode claims from `CLAUDE.md` that curre
 unky-mo/
 ├── cmd/mo/main.go          # CLI entry point (Cobra commands)
 ├── internal/
-│   ├── agents/             # Agent-agnostic interfaces (SessionReader, HookInstaller)
 │   ├── config/             # TOML config loading + agent config
 │   ├── claude/             # Claude Code session detection, JSONL parsing, hooks
 │   ├── github/             # GitHub PR fetching via gh CLI

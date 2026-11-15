@@ -27,7 +27,7 @@ func TestBasicAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// A handler per case: failed attempts count toward the lockout.
-			h := BasicAuth(inner, creds)
+			h := RequireLogin(inner, creds, nil)
 			req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
 			if tt.setAuth {
 				req.SetBasicAuth(tt.user, tt.pass)
@@ -77,7 +77,7 @@ func TestBasicAuthLockout(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	})
-	h := BasicAuth(inner, testCredentials(t, "mo", "s3cret"))
+	h := RequireLogin(inner, testCredentials(t, "mo", "s3cret"), nil)
 	send := func(addr, pass string) int {
 		req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
 		req.RemoteAddr = addr

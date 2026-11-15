@@ -70,50 +70,6 @@ func ClaudeSettingsPath() string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
-// InstallHooks adds Unky Mo notification hooks to Claude's global settings.
-// It preserves existing hooks and only adds/replaces the Unky Mo entries.
-func InstallHooks(notifyScript, stopScript string) error {
-	settings, err := readSettings()
-	if err != nil {
-		return fmt.Errorf("reading settings: %w", err)
-	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		hooks = make(map[string]interface{})
-	}
-
-	// Add/replace Notification hook
-	notifEntries := filterOutUnkyMo(hooks, "Notification")
-	notifEntries = append(notifEntries, map[string]interface{}{
-		"matcher": "idle_prompt|permission_prompt",
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": notifyScript + " # " + hookMarker,
-				"timeout": 5,
-			},
-		},
-	})
-	hooks["Notification"] = notifEntries
-
-	// Add/replace Stop hook
-	stopEntries := filterOutUnkyMo(hooks, "Stop")
-	stopEntries = append(stopEntries, map[string]interface{}{
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": stopScript + " # " + hookMarker,
-				"timeout": 5,
-			},
-		},
-	})
-	hooks["Stop"] = stopEntries
-
-	settings["hooks"] = hooks
-	return writeSettings(settings)
-}
-
 // v2HookTypes lists all hook event types that InstallHooksV2 registers.
 var v2HookTypes = []struct {
 	name    string

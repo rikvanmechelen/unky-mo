@@ -121,7 +121,7 @@ func TestBasicAuthLetsPublicPathsThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := BasicAuth(NewServer(Deps{Hub: testHub()}, 0, "test"), creds)
+	h := RequireLogin(NewServer(Deps{Hub: testHub()}, 0, "test"), creds, nil)
 	for path, want := range map[string]int{
 		"/api/hub/hello": http.StatusOK,
 		"/api/hub/core":  http.StatusOK,
