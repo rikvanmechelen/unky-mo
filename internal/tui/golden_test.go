@@ -51,6 +51,7 @@ func goldenModel(t *testing.T) Model {
 
 	tc.EXPECT().ListWindows().Return([]ttmux.Window{{ID: "@1", Name: "alpha"}}, nil).AnyTimes()
 	tc.EXPECT().WindowPanePIDs(gomock.Any()).Return(map[int]bool{}, nil).AnyTimes()
+	tc.EXPECT().SessionName().Return("mo").AnyTimes()
 	cr.EXPECT().LiveSessions().Return(nil, nil).AnyTimes()
 	cr.EXPECT().IsDescendantOf(gomock.Any(), gomock.Any()).Return(false).AnyTimes()
 	cr.EXPECT().ProjectsDirForPath(gomock.Any()).Return("/nonexistent").AnyTimes()
@@ -77,7 +78,7 @@ func goldenModel(t *testing.T) Model {
 
 	m.sessionViews = []sessionView{
 		{SessionID: "s1", CWD: "/ws/alpha", ProjectPath: "/ws/alpha", ProjectName: "alpha", WindowName: "alpha", WindowID: "@1", Status: StatusActive, Section: "projects"},
-		{SessionID: "s2", CWD: "/ws/alpha.worktrees/feat", ProjectPath: "/ws/alpha", ProjectName: "alpha@feat", Parent: "alpha", WindowName: "alpha@feat", WindowID: "@2", Status: StatusPermission, Section: "projects", IsWorktree: true},
+		{SessionID: "s2", CWD: "/ws/alpha.worktrees/feat", ProjectPath: "/ws/alpha", ProjectName: "@feat", Parent: "alpha", WindowName: "alpha@feat", WindowID: "@2", Status: StatusPermission, Section: "projects", IsWorktree: true},
 		{SessionID: "s3", CWD: "/ws/beta", ProjectPath: "/ws/beta", ProjectName: "beta", WindowName: "beta", WindowID: "@3", AgentKey: "g", Status: StatusIdle, Section: "projects"},
 		{SessionID: "s4", CWD: "/tmp/scratch", ProjectPath: "/tmp/scratch", ProjectName: "scratch", WindowName: "scratch", WindowID: "@4", Status: StatusQuestion, Section: "external", IsStray: true},
 		{SessionID: "s5", CWD: "/ws/other", ProjectPath: "/ws/other", ProjectName: "other", WindowName: "other", WindowID: "@5", Status: StatusIdle, Section: "projects", IsStray: true, Branch: "topic", Dirty: 3},
