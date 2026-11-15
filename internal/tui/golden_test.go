@@ -175,16 +175,15 @@ func TestGoldenScreens(t *testing.T) {
 		}},
 		{"dashboard_suspend_quit", func(m Model) Model {
 			m.activeSessions = 2
-			m.pendingSuspendQuitActive = true
+			m.suspendQuit = &suspendQuitPrompt{}
 			return m
 		}},
 		{"dashboard_import", func(m Model) Model {
-			m.pendingImportSessionID = "s4"
-			m.pendingImportProject = "scratch"
+			m.importExternal = &importPrompt{sessionID: "s4", project: "scratch"}
 			return m
 		}},
 		{"dashboard_agent_picker", func(m Model) Model {
-			m.pendingAgentPickerActive = true
+			m.agentPicker = &agentPickerPrompt{}
 			return m
 		}},
 		{"dashboard_new_project", func(m Model) Model {
@@ -236,8 +235,7 @@ func TestGoldenScreens(t *testing.T) {
 		}},
 		{"detail_wt_exists", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingWTExistsActive = true
-			m.pendingWTExistsBranch = "feat"
+			m.worktreeExists = &worktreeExistsPrompt{branch: "feat"}
 			return m
 		}},
 		{"detail_cleanup_kill", func(m Model) Model {
@@ -262,7 +260,7 @@ func TestGoldenScreens(t *testing.T) {
 		}},
 		{"detail_agent_picker", func(m Model) Model {
 			m = withDetail(m)
-			m.pendingAgentPickerActive = true
+			m.agentPicker = &agentPickerPrompt{}
 			return m
 		}},
 		{"detail_recap", func(m Model) Model {

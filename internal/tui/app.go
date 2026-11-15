@@ -187,11 +187,7 @@ type Model struct {
 	detailRecap  []claude.SessionMessage // last messages for currently selected session
 	// Import-external-session prompt: non-empty means we're asking the user
 	// whether to take over a claude running outside mo (kill it + resume here).
-	pendingImportSessionID string
-	pendingImportPath      string
-	pendingImportWindow    string
-	pendingImportProject   string // project display name, for the prompt text
-	pendingImportPID       int
+	importExternal *importPrompt
 	// New-session menu: active when the user pressed `n` on a target that
 	// already has a live session, or `enter` on a historical session row
 	// whose primary window is occupied by a different session. Presents
@@ -199,8 +195,7 @@ type Model struct {
 	// per-field so the menu survives cursor movement without re-querying.
 	newSession *newSessionPrompt
 	// Agent picker menu: shown when shift+enter is pressed on a branch row.
-	pendingAgentPickerActive bool
-	pendingAgentPickerBranch *project.Branch
+	agentPicker *agentPickerPrompt
 	// Cleanup menu: active when the user pressed `x` on a branch row.
 	// Two stages: "kill" (one or more sessions live in the target; user
 	// must confirm SIGINT) then "action" (choose [w] worktree only / [b]
@@ -208,14 +203,9 @@ type Model struct {
 	cleanup *cleanupMenu
 	// Worktree-exists prompt: shown when creating a worktree for a branch
 	// that already has one. Options: focus existing, remove + recreate, cancel.
-	pendingWTExistsActive      bool
-	pendingWTExistsBranch      string
-	pendingWTExistsProjectPath string
-	pendingWTExistsProjectName string
-	pendingWTExistsWTPath      string
-	pendingWTExistsPRBranch    bool // true when triggered from a PR (needs git fetch + reset on recreate)
+	worktreeExists *worktreeExistsPrompt
 	// Suspend-and-quit prompt: active when q pressed with active sessions.
-	pendingSuspendQuitActive bool
+	suspendQuit *suspendQuitPrompt
 	// externalPIDs / externalSessions cache the orphan PID + sessionID for each
 	// CWD currently in StatusExternal, populated by refreshSessions.
 	externalPIDs     map[string]int
@@ -657,85 +647,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Worktree-exists prompt: non-destructive multi-option menu.
-		if m.pendingWTExistsActive {
+		if m.worktreeExists != nil {
 			switch msg.String() {
 			case "f", "F":
-				projectName := m.pendingWTExistsProjectName
-				branch := m.pendingWTExistsBranch
-				wtPath := m.pendingWTExistsWTPath
-				m.clearPendingWTExists()
+				projectName := m.worktreeExists.projectName
+				branch := m.worktreeExists.branch
+				wtPath := m.worktreeExists.wtPath
+				m.worktreeExists = nil
 				return m, m.focusExistingWorktree(projectName, branch, wtPath)
 			case "r", "R":
-				projectPath := m.pendingWTExistsProjectPath
-				projectName := m.pendingWTExistsProjectName
-				branch := m.pendingWTExistsBranch
-				prBranch := m.pendingWTExistsPRBranch
-				m.clearPendingWTExists()
+				projectPath := m.worktreeExists.projectPath
+				projectName := m.worktreeExists.projectName
+				branch := m.worktreeExists.branch
+				prBranch := m.worktreeExists.prBranch
+				m.worktreeExists = nil
 				return m, m.removeAndRecreateWorktree(projectPath, projectName, branch, prBranch)
 			case "n", "N", "enter", "esc", "escape":
-				m.clearPendingWTExists()
+				m.worktreeExists = nil
 				return m, nil
 			}
 			return m, nil
 		}
 
 		// Agent picker menu: non-destructive multi-option.
-		if m.pendingAgentPickerActive {
+		if m.agentPicker != nil {
 			k := msg.String()
 			// Check each configured agent mnemonic.
 			for _, a := range m.agents {
 				if k == a.Key || k == strings.ToUpper(a.Key) {
-					branch := m.pendingAgentPickerBranch
-					agent := a
-					m.clearAgentPicker()
-					if branch == nil {
-						return m, nil
-					}
-					return m, m.launchBranchWithAgent(*branch, agent)
+					branch := m.agentPicker.branch
+					m.agentPicker = nil
+					return m, m.launchBranchWithAgent(branch, a)
 				}
 			}
 			// Cancel keys.
 			switch k {
 			case "n", "N", "esc", "escape", "enter":
-				m.clearAgentPicker()
+				m.agentPicker = nil
 				return m, nil
 			}
 			return m, nil
 		}
 
 		// Suspend-and-quit prompt: destructive, enter cancels.
-		if m.pendingSuspendQuitActive {
-			switch msg.String() {
-			case "s", "S":
-				m.pendingSuspendQuitActive = false
+		if m.suspendQuit != nil {
+			m.suspendQuit = nil
+			if s := msg.String(); s == "s" || s == "S" {
 				return m, m.executeSuspendAll()
-			default:
-				m.pendingSuspendQuitActive = false
-				return m, nil
 			}
+			return m, nil
 		}
 
 		// Import-external-session prompt captures all input while active.
 		// Destructive [y/N] (kills the external claude): only y/Y confirms.
-		if m.pendingImportSessionID != "" {
+		if m.importExternal != nil {
 			switch msg.String() {
 			case "y", "Y":
-				sessionID := m.pendingImportSessionID
-				pid := m.pendingImportPID
-				path := m.pendingImportPath
-				window := m.pendingImportWindow
-				m.pendingImportSessionID = ""
-				m.pendingImportPID = 0
-				m.pendingImportPath = ""
-				m.pendingImportWindow = ""
-				m.pendingImportProject = ""
-				return m, m.importExternalSession(pid, sessionID, path, window)
+				p := m.importExternal
+				m.importExternal = nil
+				return m, m.importExternalSession(p.pid, p.sessionID, p.path, p.window)
 			case "n", "N", "enter", "esc", "escape":
-				m.pendingImportSessionID = ""
-				m.pendingImportPID = 0
-				m.pendingImportPath = ""
-				m.pendingImportWindow = ""
-				m.pendingImportProject = ""
+				m.importExternal = nil
 				return m, nil
 			}
 			return m, nil
@@ -784,11 +756,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.dashSessionCursor >= 0 && m.dashSessionCursor < len(m.dashSessionItems) {
 					item := m.dashSessionItems[m.dashSessionCursor]
 					if item.Status == StatusExternal {
-						m.pendingImportSessionID = m.externalSessions[item.ProjectPath]
-						m.pendingImportPID = m.externalPIDs[item.ProjectPath]
-						m.pendingImportPath = item.ProjectPath
-						m.pendingImportWindow = item.WindowName
-						m.pendingImportProject = item.Name
+						if id := m.externalSessions[item.ProjectPath]; id != "" {
+							m.importExternal = &importPrompt{
+								sessionID: id,
+								pid:       m.externalPIDs[item.ProjectPath],
+								path:      item.ProjectPath,
+								window:    item.WindowName,
+								project:   item.Name,
+							}
+						}
 						return m, nil
 					}
 					if m.tmux != nil {
@@ -900,9 +876,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == ScreenDashboard && m.dashFocusLeft {
 				// Dashboard project list: pick agent, then launch on main branch.
 				if sel, ok := m.list.SelectedItem().(ProjectItem); ok {
-					m.pendingAgentPickerActive = true
-					main := project.Branch{Name: "main", IsMain: true}
-					m.pendingAgentPickerBranch = &main
+					m.agentPicker = &agentPickerPrompt{branch: project.Branch{Name: "main", IsMain: true}}
 					m.detailProject = &sel.project
 					return m, nil
 				}
@@ -911,9 +885,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.detailCursor >= 0 && m.detailCursor < len(m.detailRows) {
 					row := m.detailRows[m.detailCursor]
 					if (row.kind == "branch" || row.kind == "br-empty") && row.branch != nil {
-						m.pendingAgentPickerActive = true
-						b := *row.branch
-						m.pendingAgentPickerBranch = &b
+						m.agentPicker = &agentPickerPrompt{branch: *row.branch}
 						return m, nil
 					}
 				}
@@ -1207,7 +1179,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.activeSessions > 0 {
-				m.pendingSuspendQuitActive = true
+				m.suspendQuit = &suspendQuitPrompt{}
 				return m, nil
 			}
 			m.disableHomeRespawn()
@@ -1422,12 +1394,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case worktreeExistsMsg:
 		if m.detailProject != nil {
-			m.pendingWTExistsActive = true
-			m.pendingWTExistsBranch = msg.branch
-			m.pendingWTExistsProjectPath = m.detailProject.Path
-			m.pendingWTExistsProjectName = m.detailProject.Name
-			m.pendingWTExistsWTPath = msg.worktreePath
-			m.pendingWTExistsPRBranch = msg.prBranch
+			m.worktreeExists = &worktreeExistsPrompt{
+				branch:      msg.branch,
+				projectPath: m.detailProject.Path,
+				projectName: m.detailProject.Name,
+				wtPath:      msg.worktreePath,
+				prBranch:    msg.prBranch,
+			}
 		}
 		return m, nil
 
@@ -2052,15 +2025,15 @@ func (m Model) dashboardView() string {
 			{"p", "park+new"},
 			{"c", "concurrent"},
 		}))
-	} else if m.pendingSuspendQuitActive {
+	} else if m.suspendQuit != nil {
 		question := fmt.Sprintf("%d active session(s) — suspend all and quit?", m.activeSessions)
 		footer = m.renderPrompt(question, withCancel([]footerBinding{
 			{"S", "suspend + quit"},
 		}))
-	} else if m.pendingImportSessionID != "" {
-		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here) [y/N]", m.pendingImportProject)
+	} else if m.importExternal != nil {
+		question := fmt.Sprintf("%q is running outside Unky Mo. Import it? (kills the external claude and resumes here) [y/N]", m.importExternal.project)
 		footer = m.renderPrompt(question, yesNoBindings("import"))
-	} else if m.pendingAgentPickerActive {
+	} else if m.agentPicker != nil {
 		footer = m.renderPrompt("Launch with:", withCancel(m.agentPickerBindings()))
 	} else if m.newProject != nil {
 		question := fmt.Sprintf("New project in %s — folder name:", m.newProject.parentDir)
@@ -3456,8 +3429,8 @@ func (m Model) projectDetailView() string {
 			{"s", "stash + pop"},
 			{"l", "leave in source"},
 		}))
-	case m.pendingWTExistsActive:
-		q := fmt.Sprintf("Worktree for %s already exists", m.pendingWTExistsBranch)
+	case m.worktreeExists != nil:
+		q := fmt.Sprintf("Worktree for %s already exists", m.worktreeExists.branch)
 		footer = m.renderPrompt(q, withCancel([]footerBinding{
 			{"f", "focus existing"},
 			{"r", "remove + recreate"},
@@ -3472,7 +3445,7 @@ func (m Model) projectDetailView() string {
 			{"c", "concurrent"},
 			{"esc", "cancel"},
 		})
-	case m.pendingAgentPickerActive:
+	case m.agentPicker != nil:
 		footer = m.renderPrompt("Launch with:", withCancel(m.agentPickerBindings()))
 	default:
 		var bindings []footerBinding
@@ -4230,11 +4203,6 @@ func (m Model) newMenuPromptText() string {
 	return fmt.Sprintf("A session is already running in %s — what would you like to do?", target)
 }
 
-func (m *Model) clearAgentPicker() {
-	m.pendingAgentPickerActive = false
-	m.pendingAgentPickerBranch = nil
-}
-
 // parkAndLaunchPrimary is a thin TUI adapter over ops.ParkAndLaunch.
 func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID string) tea.Cmd {
 	agent := m.defaultAgent()
@@ -4256,15 +4224,6 @@ func (m Model) parkAndLaunchPrimary(pid int, primaryWindowName, cwd, resumeID st
 		}
 		return statusMsgEvent("Launched " + agent.Name + " in " + primaryWindowName)
 	}
-}
-
-func (m *Model) clearPendingWTExists() {
-	m.pendingWTExistsActive = false
-	m.pendingWTExistsBranch = ""
-	m.pendingWTExistsProjectPath = ""
-	m.pendingWTExistsProjectName = ""
-	m.pendingWTExistsWTPath = ""
-	m.pendingWTExistsPRBranch = false
 }
 
 // focusExistingWorktree tries to switch to the existing worktree's session

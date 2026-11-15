@@ -249,7 +249,7 @@ func TestMouseClickDuringNewMenuIsNoop(t *testing.T) {
 func TestMouseClickDuringImportPromptIsNoop(t *testing.T) {
 	projects := []project.Project{{Name: "alpha", Path: "/ws/alpha"}}
 	m := newDashModel(projects, nil)
-	m.pendingImportSessionID = "abc"
+	m.importExternal = &importPrompt{sessionID: "abc"}
 
 	m, cmd := sendMouseClick(t, m, 5, 5)
 	if cmd != nil {

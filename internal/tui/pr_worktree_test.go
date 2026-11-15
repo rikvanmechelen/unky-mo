@@ -141,22 +141,22 @@ func TestWorktreeExistsMsgOpensPrompt(t *testing.T) {
 		prBranch:     true,
 	})
 	mm := got.(Model)
-	if !mm.pendingWTExistsActive {
+	if mm.worktreeExists == nil {
 		t.Fatal("worktreeExistsMsg should activate the prompt")
 	}
-	if mm.pendingWTExistsBranch != "feat" {
-		t.Errorf("Branch: got %q, want %q", mm.pendingWTExistsBranch, "feat")
+	if mm.worktreeExists.branch != "feat" {
+		t.Errorf("Branch: got %q, want %q", mm.worktreeExists.branch, "feat")
 	}
-	if mm.pendingWTExistsWTPath != "/ws/alpha.worktrees/feat" {
-		t.Errorf("WTPath: got %q", mm.pendingWTExistsWTPath)
+	if mm.worktreeExists.wtPath != "/ws/alpha.worktrees/feat" {
+		t.Errorf("WTPath: got %q", mm.worktreeExists.wtPath)
 	}
-	if mm.pendingWTExistsProjectPath != "/ws/alpha" {
-		t.Errorf("ProjectPath: got %q", mm.pendingWTExistsProjectPath)
+	if mm.worktreeExists.projectPath != "/ws/alpha" {
+		t.Errorf("ProjectPath: got %q", mm.worktreeExists.projectPath)
 	}
-	if mm.pendingWTExistsProjectName != "alpha" {
-		t.Errorf("ProjectName: got %q", mm.pendingWTExistsProjectName)
+	if mm.worktreeExists.projectName != "alpha" {
+		t.Errorf("ProjectName: got %q", mm.worktreeExists.projectName)
 	}
-	if !mm.pendingWTExistsPRBranch {
+	if !mm.worktreeExists.prBranch {
 		t.Error("PRBranch should be true")
 	}
 	if cmd != nil {
@@ -167,16 +167,12 @@ func TestWorktreeExistsMsgOpensPrompt(t *testing.T) {
 // `f` on the worktree-exists prompt should clear state and return a Cmd.
 func TestWorktreeExistsPromptFocusKey(t *testing.T) {
 	m := Model{
-		screen:                     ScreenProject,
-		pendingWTExistsActive:      true,
-		pendingWTExistsBranch:      "feat",
-		pendingWTExistsProjectPath: "/ws/alpha",
-		pendingWTExistsProjectName: "alpha",
-		pendingWTExistsWTPath:      "/ws/alpha.worktrees/feat",
+		screen:         ScreenProject,
+		worktreeExists: &worktreeExistsPrompt{branch: "feat", projectPath: "/ws/alpha", projectName: "alpha", wtPath: "/ws/alpha.worktrees/feat"},
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 'f'})
 	mm := got.(Model)
-	if mm.pendingWTExistsActive {
+	if mm.worktreeExists != nil {
 		t.Error("f should clear the prompt")
 	}
 	if cmd == nil {
@@ -187,17 +183,12 @@ func TestWorktreeExistsPromptFocusKey(t *testing.T) {
 // `r` on the worktree-exists prompt should clear state and return a Cmd.
 func TestWorktreeExistsPromptRemoveKey(t *testing.T) {
 	m := Model{
-		screen:                     ScreenProject,
-		pendingWTExistsActive:      true,
-		pendingWTExistsBranch:      "feat",
-		pendingWTExistsProjectPath: "/ws/alpha",
-		pendingWTExistsProjectName: "alpha",
-		pendingWTExistsWTPath:      "/ws/alpha.worktrees/feat",
-		pendingWTExistsPRBranch:    true,
+		screen:         ScreenProject,
+		worktreeExists: &worktreeExistsPrompt{branch: "feat", projectPath: "/ws/alpha", projectName: "alpha", wtPath: "/ws/alpha.worktrees/feat", prBranch: true},
 	}
 	got, cmd := m.Update(tea.KeyPressMsg{Code: 'r'})
 	mm := got.(Model)
-	if mm.pendingWTExistsActive {
+	if mm.worktreeExists != nil {
 		t.Error("r should clear the prompt")
 	}
 	if cmd == nil {
@@ -213,35 +204,16 @@ func TestWorktreeExistsPromptCancelKeys(t *testing.T) {
 		{Code: tea.KeyEnter},
 	} {
 		m := Model{
-			screen:                ScreenProject,
-			pendingWTExistsActive: true,
-			pendingWTExistsBranch: "feat",
+			screen:         ScreenProject,
+			worktreeExists: &worktreeExistsPrompt{branch: "feat"},
 		}
 		got, cmd := m.Update(key)
 		mm := got.(Model)
-		if mm.pendingWTExistsActive {
+		if mm.worktreeExists != nil {
 			t.Errorf("key %v should clear the prompt", key)
 		}
 		if cmd != nil {
 			t.Errorf("key %v should not return a Cmd (cancel)", key)
 		}
-	}
-}
-
-// clearPendingWTExists zeroes all worktree-exists fields.
-func TestClearPendingWTExists(t *testing.T) {
-	m := Model{
-		pendingWTExistsActive:      true,
-		pendingWTExistsBranch:      "feat",
-		pendingWTExistsProjectPath: "/ws/alpha",
-		pendingWTExistsProjectName: "alpha",
-		pendingWTExistsWTPath:      "/ws/alpha.worktrees/feat",
-		pendingWTExistsPRBranch:    true,
-	}
-	m.clearPendingWTExists()
-	if m.pendingWTExistsActive || m.pendingWTExistsBranch != "" ||
-		m.pendingWTExistsProjectPath != "" || m.pendingWTExistsProjectName != "" ||
-		m.pendingWTExistsWTPath != "" || m.pendingWTExistsPRBranch {
-		t.Errorf("clearPendingWTExists left dirty state: %+v", m)
 	}
 }

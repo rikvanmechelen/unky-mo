@@ -3,6 +3,7 @@ package tui
 import (
 	"charm.land/bubbles/v2/textinput"
 	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/project"
 )
 
 // The TUI's prompts: each open one is a non-nil pointer on Model holding
@@ -58,3 +59,32 @@ type cleanupMenu struct {
 	worktreePath string           // "" for a plain branch row
 	sessions     []claude.Session // live sessions to stop, captured when it opened
 }
+
+// importPrompt offers to take over a claude running outside mo: kill it and
+// resume its session here.
+type importPrompt struct {
+	sessionID string
+	pid       int
+	path      string
+	window    string
+	project   string // display name, for the question
+}
+
+// agentPickerPrompt picks the coding agent to launch branch with (A).
+type agentPickerPrompt struct {
+	branch project.Branch
+}
+
+// worktreeExistsPrompt: the branch already has a worktree; focus it, or
+// remove and recreate it.
+type worktreeExistsPrompt struct {
+	branch      string
+	projectPath string
+	projectName string
+	wtPath      string
+	prBranch    bool // from a PR: recreating fetches and resets it
+}
+
+// suspendQuitPrompt confirms suspending the live sessions before quitting
+// (q with sessions running).
+type suspendQuitPrompt struct{}

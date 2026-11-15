@@ -42,20 +42,17 @@ func routedPrompts() []routedPrompt {
 			func(m *Model) { m.cleanup = &cleanupMenu{stage: "action", branch: "b"} },
 			func(m Model) bool { return m.cleanup != nil }},
 		{"pendingWTExists", "wtExists",
-			func(m *Model) { m.pendingWTExistsActive = true; m.pendingWTExistsBranch = "b" },
-			func(m Model) bool { return m.pendingWTExistsActive }},
+			func(m *Model) { m.worktreeExists = &worktreeExistsPrompt{branch: "b"} },
+			func(m Model) bool { return m.worktreeExists != nil }},
 		{"pendingAgentPicker", "agentPicker",
-			func(m *Model) {
-				m.pendingAgentPickerActive = true
-				m.pendingAgentPickerBranch = &project.Branch{Name: "b"}
-			},
-			func(m Model) bool { return m.pendingAgentPickerActive }},
+			func(m *Model) { m.agentPicker = &agentPickerPrompt{branch: project.Branch{Name: "b"}} },
+			func(m Model) bool { return m.agentPicker != nil }},
 		{"pendingSuspendQuit", "suspend",
-			func(m *Model) { m.pendingSuspendQuitActive = true },
-			func(m Model) bool { return m.pendingSuspendQuitActive }},
+			func(m *Model) { m.suspendQuit = &suspendQuitPrompt{} },
+			func(m Model) bool { return m.suspendQuit != nil }},
 		{"pendingImport", "import",
-			func(m *Model) { m.pendingImportSessionID = "s"; m.pendingImportProject = "p" },
-			func(m Model) bool { return m.pendingImportSessionID != "" }},
+			func(m *Model) { m.importExternal = &importPrompt{sessionID: "s", project: "p"} },
+			func(m Model) bool { return m.importExternal != nil }},
 	}
 }
 
@@ -114,9 +111,9 @@ func TestPromptsBeatGlobalKeys(t *testing.T) {
 	}
 	t.Run("pendingSuspendQuit", func(t *testing.T) {
 		m := goldenModel(t)
-		m.pendingSuspendQuitActive = true
+		m.suspendQuit = &suspendQuitPrompt{}
 		m = pressKey(m, tea.KeyPressMsg(tea.Key{Code: '?', Text: "?"}))
-		if m.pendingSuspendQuitActive || m.screen == ScreenHelp {
+		if m.suspendQuit != nil || m.screen == ScreenHelp {
 			t.Errorf("? should cancel suspend-quit and do nothing else")
 		}
 	})

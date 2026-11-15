@@ -253,8 +253,8 @@ func (m Model) estimatePRDetailLines(width int) int {
 func (m Model) isModalActive() bool {
 	return m.cleanup != nil ||
 		m.newSession != nil ||
-		m.pendingImportSessionID != "" ||
-		m.pendingWTExistsActive ||
+		m.importExternal != nil ||
+		m.worktreeExists != nil ||
 		m.lift != nil ||
 		m.worktree != nil ||
 		(m.screen == ScreenTicket && (m.pickerActive || m.pickerRememberActive))
