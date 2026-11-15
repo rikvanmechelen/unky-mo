@@ -264,3 +264,33 @@ func TestStamp(t *testing.T) {
 		t.Errorf("outside: %q", got)
 	}
 }
+
+// A changed file over the size cap, on either side, is reported too large
+// without its diff being read.
+func TestAnnotateTooLarge(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "big.txt", "small\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "base")
+	run(t, dir, "checkout", "-q", "-b", "feat")
+	big := strings.Repeat("0123456789abcdef\n", MaxContentBytes/16+10)
+	write(t, dir, "big.txt", big)
+	ctx, cmd := context.Background(), moexec.DefaultCommander
+	o, err := GetOverview(ctx, cmd, dir, ModeBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, err := Annotate(ctx, cmd, o, "big.txt"); err != nil || !a.TooLarge || a.Rows != nil {
+		t.Errorf("working tree: %+v %v", a, err)
+	}
+	run(t, dir, "commit", "-q", "-am", "big")
+	write(t, dir, "big.txt", "small again\n")
+	o, err = GetOverview(ctx, cmd, dir, ModeBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Big only in the middle commit: both ends are small, so it's read.
+	if a, _ := Annotate(ctx, cmd, o, "big.txt"); a.TooLarge {
+		t.Errorf("small on both ends: too large")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -92,6 +93,18 @@ func Annotate(ctx context.Context, cmd moexec.Commander, o *Overview, path strin
 		return a, a.fromContent(newSide(ctx, cmd, o, file.Path), "+")
 	case file.Status == "D":
 		return a, a.fromContent(func() (*Content, error) { return ReadAt(ctx, cmd, o.Root, o.Rev, file.Path) }, "-")
+	}
+
+	// The diff is read whole, so check both sides' sizes first: a large
+	// text file would otherwise cost its whole diff in memory per request
+	// before the cap below applies.
+	oldAt := file.Path
+	if file.OldPath != "" {
+		oldAt = file.OldPath
+	}
+	if tooLarge(ctx, cmd, o.Root, o.Rev, oldAt) || tooLarge(ctx, cmd, o.Root, o.Head, file.Path) {
+		a.TooLarge = true
+		return a, nil
 	}
 
 	args := []string{"diff", "-M", "--no-color", "--no-ext-diff", "--no-textconv", "-U" + strconv.Itoa(fullContext), o.Rev}
@@ -324,4 +337,20 @@ func Stamp(root, rel string) string {
 		return "missing"
 	}
 	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+}
+
+// tooLarge reports whether path is over MaxContentBytes at rev (a full
+// commit id), or in the working tree when rev is "". Unknown sizes (a file
+// missing on that side) aren't too large.
+func tooLarge(ctx context.Context, cmd moexec.Commander, root, rev, path string) bool {
+	if rev == "" {
+		info, err := os.Lstat(filepath.Join(root, path))
+		return err == nil && info.Size() > MaxContentBytes
+	}
+	out, err := git(ctx, cmd, root, "cat-file", "-s", rev+":"+path)
+	if err != nil {
+		return false
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	return err == nil && n > MaxContentBytes
 }

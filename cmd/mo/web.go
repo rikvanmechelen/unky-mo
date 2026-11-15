@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -145,7 +147,10 @@ func webCmd() *cobra.Command {
 				// same-origin with the dashboard: answer only our own names.
 				webServer.SetPlainHTTPHosts(hosts)
 				fmt.Printf("mo web listening on http://%s (%s, TLS disabled)\n", addr, authNote)
-				return http.ListenAndServe(addr, handler)
+				srv := newWebHTTPServer(handler, nil)
+				srv.Addr = addr
+				stopOnSignal(cmd.Context(), srv)
+				return ignoreClosed(srv.ListenAndServe())
 			}
 
 			tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
@@ -156,11 +161,7 @@ func webCmd() *cobra.Command {
 			} else {
 				tlsConfig.Certificates = []tls.Certificate{fixed}
 			}
-			srv := &http.Server{
-				Handler:           handler,
-				TLSConfig:         tlsConfig,
-				ReadHeaderTimeout: 10 * time.Second,
-			}
+			srv := newWebHTTPServer(handler, tlsConfig)
 			ln, err := net.Listen("tcp", addr)
 			if err != nil {
 				return err
@@ -172,10 +173,11 @@ func webCmd() *cobra.Command {
 				}
 				fmt.Printf("CA sha256 %s\n", web.Fingerprint(res.CA))
 			}
-			return web.ServeTLSOrRedirect(ln, srv, func(host string) bool {
+			stopOnSignal(cmd.Context(), srv)
+			return ignoreClosed(web.ServeTLSOrRedirect(ln, srv, func(host string) bool {
 				l := leaf()
 				return l != nil && l.VerifyHostname(host) == nil
-			})
+			}))
 		},
 	}
 
@@ -388,4 +390,37 @@ func secretPath(name string) string {
 		}
 	}
 	return newPath
+}
+
+// newWebHTTPServer is mo web's server: a header must arrive within 10 s, an
+// idle keep-alive connection is closed after 2 minutes, and headers are
+// capped. There's no write timeout: the chat view's streams stay open.
+func newWebHTTPServer(h http.Handler, tlsConfig *tls.Config) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
+}
+
+// stopOnSignal shuts srv down on SIGINT, SIGTERM or SIGHUP (a restart
+// killing the mo-web session), giving requests in flight 5 seconds.
+func stopOnSignal(ctx context.Context, srv *http.Server) {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		defer stop()
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+}
+
+func ignoreClosed(err error) error {
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }

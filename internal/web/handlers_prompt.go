@@ -41,7 +41,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		// means something while the session is working.
 		SendNow bool `json:"sendNow"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPromptBody)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}

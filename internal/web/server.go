@@ -311,3 +311,10 @@ func (s *Server) paneLock(windowID string) func() {
 	mu.Lock()
 	return mu.Unlock
 }
+
+// Request body caps for the JSON endpoints: a request is refused once it
+// passes the cap, instead of being read whole first.
+const (
+	maxSmallBody  = 64 << 10                  // answers, launches, cleanups, mode changes
+	maxPromptBody = 4*maxPromptBytes + 64<<10 // the text JSON-escaped, plus attachment ids
+)
