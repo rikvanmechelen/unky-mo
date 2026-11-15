@@ -106,6 +106,14 @@ type SessionOps interface {
 // view's Files panel and the session nav. dir is always a live session's
 // cwd from the state file, never a browser-supplied path.
 type GitFiles interface {
+	FileReader
+	HistoryReader
+	ChangeReader
+}
+
+// FileReader is a checkout's files: what changed, every file, its branch,
+// and one file's working-tree and committed versions, read and saved.
+type FileReader interface {
 	Changes(dir string) (*gitfiles.Changes, error)
 	Tree(dir string) (root string, paths []string, err error)
 	Branch(dir string) string
@@ -117,6 +125,11 @@ type GitFiles interface {
 	// WriteFile saves an editor tab, only if the file still hashes to
 	// baseHash (a *gitfiles.ConflictError otherwise). Same root/path rules.
 	WriteFile(root, path, text, baseHash string) (*gitfiles.Content, error)
+}
+
+// HistoryReader is the Git log tab's history and the Overview's commit
+// selections.
+type HistoryReader interface {
 	// Log reads the commit graph for the Graph tab (scope is
 	// gitfiles.ScopeBranch or ScopeAll).
 	Log(dir, scope string) (*gitfiles.Log, error)
@@ -126,6 +139,25 @@ type GitFiles interface {
 	// changed files (gitfiles.ErrNotInCommit otherwise).
 	Commit(root, hash string) (*gitfiles.CommitDetail, error)
 	CommitFile(root, hash, path string) (*gitfiles.CommitFileDiff, error)
+	// ResolveSelection checks that hashes (full commit ids) are consecutive
+	// commits of the checkout containing dir, and returns the two commits
+	// their change lies between (gitfiles.ErrBadSelection,
+	// *gitfiles.SelectionError or ErrUnknownCommit otherwise).
+	ResolveSelection(dir string, hashes []string) (*gitfiles.Selection, error)
+	// OverviewRange reads the change from commit base to commit head: the
+	// Overview of selected commits.
+	OverviewRange(root, base, head string) (*gitfiles.Overview, error)
+	// HeadCommit returns the checkout's root and HEAD's full id
+	// (gitfiles.ErrNoCommits in a repo without commits), and
+	// OverviewWorktree the change from commit base to the working tree: a
+	// selection that includes the uncommitted changes.
+	HeadCommit(dir string) (root, head string, err error)
+	OverviewWorktree(root, base string) (*gitfiles.Overview, error)
+}
+
+// ChangeReader is the Overview's change: from the merge base, at a branch
+// or PR that isn't checked out, and one file of it as rows.
+type ChangeReader interface {
 	// Overview reads the change for the Overview tab (mode is
 	// gitfiles.ModeBranch or ModeHead).
 	Overview(dir, mode string) (*gitfiles.Overview, error)
@@ -144,20 +176,6 @@ type GitFiles interface {
 	// FetchBase updates origin's copy of an overview's base ("origin/main"):
 	// the Overview's "Fetch" when that copy is old.
 	FetchBase(root, base string) error
-	// ResolveSelection checks that hashes (full commit ids) are consecutive
-	// commits of the checkout containing dir, and returns the two commits
-	// their change lies between (gitfiles.ErrBadSelection,
-	// *gitfiles.SelectionError or ErrUnknownCommit otherwise).
-	ResolveSelection(dir string, hashes []string) (*gitfiles.Selection, error)
-	// OverviewRange reads the change from commit base to commit head: the
-	// Overview of selected commits.
-	OverviewRange(root, base, head string) (*gitfiles.Overview, error)
-	// HeadCommit returns the checkout's root and HEAD's full id
-	// (gitfiles.ErrNoCommits in a repo without commits), and
-	// OverviewWorktree the change from commit base to the working tree: a
-	// selection that includes the uncommitted changes.
-	HeadCommit(dir string) (root, head string, err error)
-	OverviewWorktree(root, base string) (*gitfiles.Overview, error)
 	// Annotate reads one file of o's change as rows of both versions (see
 	// gitfiles.Annotate): a file o lists, or an unchanged one read from the
 	// new side. path must already be one the caller lists.
