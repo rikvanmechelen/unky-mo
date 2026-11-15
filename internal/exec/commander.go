@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"time"
 )
 
 // Commander wraps the three exec patterns used across the codebase:
@@ -39,8 +40,7 @@ var DefaultCommander Commander = realCommander{}
 type realCommander struct{}
 
 func (realCommander) Output(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd := command(ctx, dir, name, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.Output()
@@ -48,23 +48,32 @@ func (realCommander) Output(ctx context.Context, dir, name string, args ...strin
 }
 
 func (realCommander) CombinedOutput(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd := command(ctx, dir, name, args...)
 	return cmd.CombinedOutput()
 }
 
 func (realCommander) Run(ctx context.Context, dir, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd := command(ctx, dir, name, args...)
 	return cmd.Run()
 }
 
 func (realCommander) OutputStdin(ctx context.Context, dir string, in []byte, name string, args ...string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd := command(ctx, dir, name, args...)
 	cmd.Stdin = bytes.NewReader(in)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.Output()
 	return stdout, stderr.Bytes(), err
+}
+
+// waitDelay bounds how long a cancelled command's output is waited for
+// after it's killed: a child it started (claude forks helpers) can hold the
+// pipes open, and Wait would otherwise block until that child exits.
+const waitDelay = 2 * time.Second
+
+func command(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.WaitDelay = waitDelay
+	return cmd
 }

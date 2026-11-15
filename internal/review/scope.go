@@ -246,10 +246,20 @@ func CheckScope(ctx context.Context, cmd moexec.Commander, req ScopeRequest) (*S
 			}
 		}
 	}
-	out, stderr, err := cmd.Output(ctx, os.TempDir(), "claude",
+	// A fresh private directory as the cwd: "project" settings are then
+	// none by construction. The shared temp dir is writable by every local
+	// user, who could put a .claude/settings.json (hooks run commands) or a
+	// CLAUDE.md there. The prompt goes on stdin: as one argument it can
+	// pass Linux's 128 KiB limit on a single argv string.
+	dir, err := os.MkdirTemp("", "mo-scope-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	out, stderr, err := cmd.OutputStdin(ctx, dir, []byte(BuildScopePrompt(req)), "claude",
 		"-p", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
 		"--no-session-persistence", "--output-format", "json", "--model", ScopeModel,
-		"--json-schema", scopeSchema, BuildScopePrompt(req))
+		"--json-schema", scopeSchema)
 	if err != nil && len(out) == 0 {
 		if msg := strings.TrimSpace(string(stderr)); msg != "" {
 			return nil, fmt.Errorf("claude -p: %w: %s", err, msg)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"strings"
 	"testing"
@@ -76,16 +77,29 @@ func TestParseScopeOutput(t *testing.T) {
 func TestCheckScopeArgs(t *testing.T) {
 	cmd := mock_exec.NewMockCommander(gomock.NewController(t))
 	req := scopeReq()
-	cmd.EXPECT().Output(gomock.Any(), os.TempDir(), "claude", gomock.Any()).DoAndReturn(
-		func(_ context.Context, _, _ string, args ...string) ([]byte, []byte, error) {
-			joined := strings.Join(args[:len(args)-1], " ")
+	cmd.EXPECT().OutputStdin(gomock.Any(), gomock.Any(), gomock.Any(), "claude", gomock.Any()).DoAndReturn(
+		func(_ context.Context, dir string, in []byte, _ string, args ...string) ([]byte, []byte, error) {
+			joined := strings.Join(args, " ")
 			for _, want := range []string{"-p", "--tools  --strict-mcp-config", "--setting-sources project", "--no-session-persistence", "--output-format json", "--model sonnet", "--json-schema {"} {
 				if !strings.Contains(joined, want) {
 					t.Errorf("args lack %q: %q", want, joined)
 				}
 			}
-			if args[len(args)-1] != BuildScopePrompt(req) {
-				t.Error("prompt isn't the last argument")
+			if string(in) != BuildScopePrompt(req) {
+				t.Error("the prompt isn't on stdin")
+			}
+			if strings.Contains(joined, "You are reviewing the scope") {
+				t.Error("the prompt is in argv too")
+			}
+			// A fresh directory only this user can use, empty.
+			if dir == os.TempDir() || !strings.HasPrefix(filepath.Base(dir), "mo-scope-") {
+				t.Errorf("cwd %q", dir)
+			}
+			if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+				t.Errorf("cwd mode: %v %v", info, err)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("cwd not empty: %v", entries)
 			}
 			return []byte(`{"is_error":false,"structured_output":{"summary":"s","files":[{"path":"internal/tui/delegate.go","verdict":"drift","reason":"TUI not in ticket"}]}}`), nil, nil
 		})
@@ -94,7 +108,7 @@ func TestCheckScopeArgs(t *testing.T) {
 		t.Fatalf("got %+v, %v", res, err)
 	}
 
-	cmd.EXPECT().Output(gomock.Any(), gomock.Any(), "claude", gomock.Any()).Return(nil, []byte("not logged in"), errors.New("exit status 1"))
+	cmd.EXPECT().OutputStdin(gomock.Any(), gomock.Any(), gomock.Any(), "claude", gomock.Any()).Return(nil, []byte("not logged in"), errors.New("exit status 1"))
 	if _, err := CheckScope(context.Background(), cmd, req); err == nil || !strings.Contains(err.Error(), "not logged in") {
 		t.Errorf("failure: %v", err)
 	}
