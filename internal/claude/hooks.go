@@ -358,6 +358,9 @@ func HooksInstalled() bool {
 	return hasUnkyMoHook(hooks, "Notification") && hasUnkyMoHook(hooks, "Stop")
 }
 
+// readSettings reads Claude Code's settings.json. Numbers are kept as
+// written (json.Number), so a large integer in someone else's setting
+// isn't rounded through float64 on the way back.
 func readSettings() (map[string]interface{}, error) {
 	path := ClaudeSettingsPath()
 	data, err := os.ReadFile(path)
@@ -367,24 +370,69 @@ func readSettings() (map[string]interface{}, error) {
 		}
 		return nil, err
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return make(map[string]interface{}), nil
+	}
 	var settings map[string]interface{}
-	if err := json.Unmarshal(data, &settings); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&settings); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if settings == nil {
+		// "null": not something to add hooks to without losing it.
+		return nil, fmt.Errorf("%s is not a JSON object", path)
 	}
 	return settings, nil
 }
 
+// writeSettings replaces settings.json atomically (temp file, then rename,
+// keeping the file's mode), so a crash mid-write can't leave Claude Code an
+// empty or torn file, and keeps the version it replaced as
+// settings.json.bak. Other people's hook commands keep their <, > and &
+// (the default encoder would write \u003e for them).
 func writeSettings(settings map[string]interface{}) error {
-	data, err := json.MarshalIndent(settings, "", "  ")
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(settings); err != nil {
+		return err
+	}
+	path := ClaudeSettingsPath()
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real // a settings.json linked from a dotfiles repo stays a link
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+		if old, err := os.ReadFile(path); err == nil && !bytes.Equal(old, buf.Bytes()) {
+			_ = os.WriteFile(path+".bak", old, mode)
+		}
+	}
+	f, err := os.CreateTemp(dir, ".settings.*.json.tmp")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	path := ClaudeSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
+	tmp := f.Name()
+	_, werr := f.Write(buf.Bytes())
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
 	}
-	return os.WriteFile(path, data, 0644)
+	if werr == nil {
+		werr = os.Chmod(tmp, mode)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, path)
+	}
+	if werr != nil {
+		os.Remove(tmp)
+	}
+	return werr
 }
 
 // filterOutUnkyMo removes entries with the unky-mo marker from a hook type.

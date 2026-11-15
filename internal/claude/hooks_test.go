@@ -463,3 +463,49 @@ func TestEnsureHooksV2_SnapshotHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Installing hooks keeps everything else in settings.json as it was:
+// <, > and & in other commands, large integers, a symlinked file stays a
+// link (to the rewritten file), and the previous version is kept as .bak.
+func TestEnsureHooksV2KeepsOtherSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dots := filepath.Join(home, "dotfiles")
+	os.MkdirAll(dots, 0o755)
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	orig := `{"big": 9007199254740993, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "a > /dev/null && b < c"}]}]}}`
+	os.WriteFile(filepath.Join(dots, "settings.json"), []byte(orig), 0o600)
+	link := filepath.Join(home, ".claude", "settings.json")
+	if err := os.Symlink(filepath.Join(dots, "settings.json"), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureHooksV2("/opt/status-hook.sh", ""); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("the symlink was replaced by a file")
+	}
+	got, _ := os.ReadFile(link)
+	for _, want := range []string{"a > /dev/null && b < c", "9007199254740993", "status-hook.sh"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("lost %q:\n%s", want, got)
+		}
+	}
+	if fi, _ := os.Stat(filepath.Join(dots, "settings.json")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode changed to %v", fi.Mode().Perm())
+	}
+	if bak, _ := os.ReadFile(filepath.Join(dots, "settings.json.bak")); string(bak) != orig {
+		t.Errorf("backup = %q", bak)
+	}
+}
+
+// A settings.json holding "null" is refused, not a panic at startup.
+func TestEnsureHooksV2NullSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte("null\n"), 0o644)
+	if _, err := EnsureHooksV2("/opt/status-hook.sh", ""); err == nil {
+		t.Error("want an error")
+	}
+}
