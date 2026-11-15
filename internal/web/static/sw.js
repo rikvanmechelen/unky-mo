@@ -123,6 +123,8 @@ document.getElementById("go").addEventListener("submit", function (e) {
   var v = document.getElementById("addr").value.trim();
   if (!v) return;
   if (!/^[a-z]+:\\/\\//i.test(v)) v = "https://" + v + (/:\\d+$/.test(v) ? "" : ":7890");
+  // Only a web address (http just for this machine), like the launcher's own rule.
+  if (!/^https:\\/\\//i.test(v) && !/^http:\\/\\/(localhost|127\\.0\\.0\\.1)(:|\\/|$)/i.test(v)) return;
   location.href = v + "/hub?stay=1";
 });
 document.getElementById("reset").addEventListener("click", function () {
