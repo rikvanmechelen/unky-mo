@@ -302,6 +302,12 @@ func (s *swiftScanner) bodyBrace(i int, stopAtLine, stopAtAssign bool) int {
 			if stopAtLine && d <= 0 {
 				return -1
 			}
+			// A body never starts past the next declaration: without this,
+			// every bodiless func (a file of them) scanned to the end of the
+			// file, which is quadratic.
+			if d <= 0 && swiftDeclStarts[s.wordAt(i+1)] {
+				return -1
+			}
 		case '=':
 			if stopAtAssign && d <= 0 && !(i+1 < len(s.code) && s.code[i+1] == '=') {
 				return -1
@@ -309,6 +315,31 @@ func (s *swiftScanner) bodyBrace(i int, stopAtLine, stopAtAssign bool) int {
 		}
 	}
 	return -1
+}
+
+// swiftDeclStarts are words that start a declaration at the head of a
+// line: a body brace is never found past one.
+var swiftDeclStarts = func() map[string]bool {
+	m := map[string]bool{"func": true, "var": true, "let": true, "struct": true, "enum": true, "actor": true,
+		"protocol": true, "extension": true, "init": true, "deinit": true, "subscript": true, "typealias": true,
+		"import": true, "case": true}
+	for w := range swiftModifiers {
+		m[w] = true
+	}
+	return m
+}()
+
+// wordAt is the identifier at the start of the line from i, past
+// indentation; "" if the line starts with anything else.
+func (s *swiftScanner) wordAt(i int) string {
+	for i < len(s.code) && (s.code[i] == ' ' || s.code[i] == '\t') {
+		i++
+	}
+	j := i
+	for j < len(s.code) && swiftIdentByte(s.code[j]) {
+		j++
+	}
+	return s.code[i:j]
 }
 
 // lineEnd is the offset of the newline ending i's line (at paren depth 0).
