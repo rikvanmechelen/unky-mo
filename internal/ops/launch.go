@@ -107,7 +107,7 @@ func LaunchSession(ctx *Context, p LaunchParams) (*LaunchResult, error) {
 		if width <= 0 {
 			width = 42
 		}
-		sidebarCmd := fmt.Sprintf("%s sidebar", ctx.MoBinaryPath)
+		sidebarCmd := shellQuote(ctx.MoBinaryPath) + " sidebar" // the path may hold spaces
 		if res.InstanceID != "" {
 			sidebarCmd += " --instance-id=" + res.InstanceID
 		}

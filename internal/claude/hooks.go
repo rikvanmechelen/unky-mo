@@ -176,8 +176,7 @@ func v2Specs(statusScript, snapshotBin string) []hookSpec {
 }
 
 func snapshotHookCommand(moBin, phase string) string {
-	quoted := "'" + strings.ReplaceAll(moBin, "'", `'\''`) + "'"
-	return fmt.Sprintf("%s snapshot %s # %s", quoted, phase, hookMarker)
+	return fmt.Sprintf("%s snapshot %s # %s", shQuote(moBin), phase, hookMarker)
 }
 
 // InstallHooksV2 installs the expanded hook set using a single unified script.
@@ -228,8 +227,13 @@ func InstallHooksV2(statusScript, snapshotBin string) error {
 }
 
 func v2HookCommand(hookType, statusScript string) string {
-	return fmt.Sprintf("HOOK_EVENT_NAME=%s %s # %s", hookType, statusScript, hookMarker)
+	// Quoted: a config dir with a space in it (XDG_CONFIG_HOME) would
+	// otherwise split the script path and every hook would fail.
+	return fmt.Sprintf("HOOK_EVENT_NAME=%s %s # %s", hookType, shQuote(statusScript), hookMarker)
 }
+
+// shQuote quotes s as one word for a POSIX shell.
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // EnsureHooksV2 installs the V2 hook set unless Claude's settings already
 // hold exactly it for statusScript and snapshotBin: per event, the unky-mo

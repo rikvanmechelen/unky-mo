@@ -214,18 +214,6 @@ func launchInTmux(sessionName string) error {
 	return syscall.Exec(tmuxBin, argv, os.Environ())
 }
 
-// addCLISidebarPane adds a sidebar pane to a tmux window target with the
-// given cwd.
-func addCLISidebarPane(tc *tmux.Client, target, cwd string) {
-	moPath, err := os.Executable()
-	if err != nil {
-		return
-	}
-	sidebarCmd := fmt.Sprintf("%s sidebar", moPath)
-	tc.SplitWindow(target, 33, cwd, sidebarCmd)
-	tc.SelectPane(target + ".0")
-}
-
 func findProject(cfg *config.Config, name string) (string, error) {
 	projects, err := cfg.LoadProjects()
 	if err != nil {
@@ -429,25 +417,9 @@ func resumeCmd() *cobra.Command {
 				return nil
 			}
 
-			target, err := tc.CreateWindow(windowName, projectPath)
-			if err != nil {
-				return fmt.Errorf("creating window: %w", err)
+			if err := launchResumed(cfg, tc, windowName, projectPath, sessionID); err != nil {
+				return err
 			}
-
-			agent := cfg.DefaultAgent()
-			shellCmd := "exec " + agent.Cmd
-			if agent.ResumeCmd != "" {
-				shellCmd = fmt.Sprintf("exec %s %s", agent.ResumeCmd, sessionID)
-			}
-			if err := tc.SendKeys(target, shellCmd); err != nil {
-				return fmt.Errorf("resuming session: %w", err)
-			}
-
-			tc.SetWindowOption(target, "@mo_agent", agent.Key)
-			tc.SetWindowHook(target, "pane-exited", "kill-window")
-			addCLISidebarPane(tc, target, projectPath)
-			_ = tc.SwitchToWindow(target)
-
 			fmt.Printf("Resuming session %s in %s\n", sessionID, windowName)
 			return nil
 		},
@@ -637,24 +609,9 @@ func syncCmd() *cobra.Command {
 				return nil
 			}
 
-			target, err := tc.CreateWindow(windowName, projectPath)
-			if err != nil {
-				return fmt.Errorf("creating window: %w", err)
+			if err := launchResumed(cfg, tc, windowName, projectPath, meta.SessionID); err != nil {
+				return err
 			}
-
-			agent := cfg.DefaultAgent()
-			syncShellCmd := "exec " + agent.Cmd
-			if agent.ResumeCmd != "" {
-				syncShellCmd = fmt.Sprintf("exec %s %s", agent.ResumeCmd, meta.SessionID)
-			}
-			if err := tc.SendKeys(target, syncShellCmd); err != nil {
-				return fmt.Errorf("resuming session: %w", err)
-			}
-
-			tc.SetWindowOption(target, "@mo_agent", agent.Key)
-			tc.SetWindowHook(target, "pane-exited", "kill-window")
-			addCLISidebarPane(tc, target, projectPath)
-			_ = tc.SwitchToWindow(target)
 
 			fmt.Printf("Resumed session in %s\n", windowName)
 			return nil
@@ -984,4 +941,22 @@ func versionCmd() *cobra.Command {
 			fmt.Println("mo", version)
 		},
 	}
+}
+
+// launchResumed opens a window resuming sessionID with the default agent,
+// the way every other launch does (ops.LaunchSession): instance id, the
+// pane-exited hook bound to Claude's pane, the sidebar, asdf shims.
+func launchResumed(cfg *config.Config, tc *tmux.Client, windowName, cwd, sessionID string) error {
+	agent := cfg.DefaultAgent()
+	ctx := ops.NewContext(tc)
+	ctx.SidebarWidth = 33 // the CLI's narrower sidebar, as mo start
+	_, err := ops.LaunchSession(ctx, ops.LaunchParams{
+		WindowName:    windowName,
+		Cwd:           cwd,
+		ShellCmd:      ops.AgentShellCmd(agent, sessionID),
+		AgentKey:      agent.Key,
+		AttachSidebar: true,
+		SwitchFocus:   true,
+	})
+	return err
 }
