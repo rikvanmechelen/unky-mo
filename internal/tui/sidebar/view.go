@@ -282,6 +282,8 @@ func (m Model) renderItem(item SidebarItem, isSelected bool, maxNameLen int) str
 			suffix += " " + dotIdle.Render("idle")
 		} else if item.Status == "permission" {
 			suffix += " " + dotPermission.Render("perm")
+		} else if item.Status == "question" {
+			suffix += " " + dotPermission.Render("ask")
 		} else if item.Status == "external" {
 			suffix += " " + dotExternal.Render("ext")
 		}
@@ -362,7 +364,7 @@ func renderDot(status string) string {
 		return dotActive.Render("●")
 	case "idle":
 		return dotIdle.Render("●")
-	case "permission":
+	case "permission", "question":
 		return dotPermission.Render("●")
 	case "external":
 		return dotExternal.Render("●")

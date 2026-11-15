@@ -172,7 +172,7 @@ func (m Model) renderSessionsPanel(rightWidth int) string {
 				dot = statusActive.Render(symbolActive)
 			case StatusIdle:
 				dot = statusIdle.Render(symbolIdle)
-			case StatusPermission:
+			case StatusPermission, StatusQuestion:
 				dot = statusPermission.Render(symbolPermission)
 			case StatusExternal:
 				dot = statusExternal.Render(symbolActive)
@@ -201,6 +201,8 @@ func (m Model) renderSessionsPanel(rightWidth int) string {
 				suffix += " " + statusIdle.Render("idle")
 			} else if item.Status == StatusPermission {
 				suffix += " " + statusPermission.Render("perm")
+			} else if item.Status == StatusQuestion {
+				suffix += " " + statusPermission.Render("ask")
 			} else if item.Status == StatusExternal {
 				suffix += " " + statusExternal.Render("external")
 			}
