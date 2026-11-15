@@ -299,6 +299,10 @@ type Deps struct {
 	// Hub identifies this machine to the installed app; nil leaves the
 	// hub routes out.
 	Hub *HubInfo
+	// Login is the `mo web auth set` login and Devices the devices paired
+	// with it; both nil without a login (no pairing then).
+	Login   *Credentials
+	Devices *DeviceStore
 }
 
 // Restarter asks the running TUI to restart itself, every sidebar and this

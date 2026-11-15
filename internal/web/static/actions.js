@@ -236,3 +236,84 @@ async function showTrustDialog(info) {
     btn.addEventListener("click", () => showTrustDialog(info));
   }
 })();
+
+// showDevicesDialog lists the browsers logged in to this machine with a
+// device login (docs/plans/pwa.md step 3), each revocable, and logs this
+// one out.
+async function showDevicesDialog() {
+  const dialog = dialogNode("dialog", "dialog devices-dialog");
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.appendChild(dialogNode("div", "dialog__title", "Devices"));
+  dialog.appendChild(dialogNode("div", "dialog__text",
+    "Browsers logged in to this machine. Revoking one logs it out; it needs the password to come back."));
+  const list = dialogNode("ul", "devices-dialog__list");
+  dialog.appendChild(list);
+  const error = dialogNode("div", "devices-dialog__error");
+  dialog.appendChild(error);
+
+  const ago = (iso) => {
+    const d = new Date(iso);
+    return isNaN(d) ? "" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  };
+  async function load() {
+    list.replaceChildren();
+    error.textContent = "";
+    const res = await fetch("/api/hub/devices", { cache: "no-store" });
+    if (!res.ok) {
+      error.textContent = `Couldn't load the devices (${res.status}).`;
+      return;
+    }
+    const { devices } = await res.json();
+    if (!devices.length) list.appendChild(dialogNode("li", "devices-dialog__empty", "No devices have logged in with the login form yet."));
+    for (const d of devices) {
+      const li = dialogNode("li", "devices-dialog__row");
+      const text = dialogNode("div", "devices-dialog__text");
+      text.appendChild(dialogNode("div", "devices-dialog__label", d.label + (d.current ? " (this device)" : "")));
+      text.appendChild(dialogNode("div", "devices-dialog__meta", `last used ${ago(d.lastUsed)} · logged in ${ago(d.created)}`));
+      const btn = dialogNode("button", "btn btn--small" + (d.current ? "" : " btn--danger"), d.current ? "Log out" : "Revoke");
+      btn.type = "button";
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        const r = d.current
+          ? await fetch("/api/hub/logout", { method: "POST" })
+          : await fetch(`/api/hub/devices/${encodeURIComponent(d.id)}`, { method: "DELETE" });
+        if (d.current && r.ok) {
+          location.href = "/hub?login=1";
+          return;
+        }
+        if (!r.ok) error.textContent = `That didn't work (${r.status}).`;
+        load();
+      });
+      li.append(text, btn);
+      list.appendChild(li);
+    }
+  }
+
+  const row = dialogNode("div", "dialog__actions");
+  const done = dialogNode("button", "btn", "Close");
+  done.type = "button";
+  done.addEventListener("click", close);
+  row.appendChild(done);
+  dialog.appendChild(row);
+  dialog.addEventListener("cancel", () => dialog.remove());
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  load().catch(() => { error.textContent = "Couldn't load the devices."; });
+}
+
+// The "Devices" buttons only show when this machine has a login, which is
+// when devices can log in at all.
+(async () => {
+  const btns = document.querySelectorAll("[data-devices]");
+  if (!btns.length) return;
+  try {
+    const res = await fetch("/api/hub/whoami", { cache: "no-store" });
+    if (!res.ok) return;
+  } catch {
+    return;
+  }
+  for (const btn of btns) {
+    btn.hidden = false;
+    btn.addEventListener("click", () => showDevicesDialog());
+  }
+})();

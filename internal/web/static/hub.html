@@ -18,6 +18,18 @@
   <p class="hub__status" id="hub-status" role="status">Looking for your machines…</p>
   <div id="hub-note"></div>
 
+  <section class="hub__section" id="login" hidden aria-labelledby="login-heading">
+    <h2 class="hub__heading" id="login-heading">Log in</h2>
+    <form class="login" id="login-form">
+      <input id="login-user" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="Username" aria-label="Username" required>
+      <input id="login-pass" name="password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required>
+      <input id="login-label" name="label" autocomplete="off" maxlength="80" placeholder="Name for this device" aria-label="Name for this device">
+      <button class="btn" type="submit">Log in</button>
+    </form>
+    <p class="add__error" id="login-error" role="alert"></p>
+    <p class="hub__foot">The password isn't kept. This device gets its own login, which you can revoke from the dashboard's Devices.</p>
+  </section>
+
   <section class="hub__section" aria-labelledby="machines-heading">
     <h2 class="hub__heading" id="machines-heading">Machines</h2>
     <ul class="machines" id="machines"></ul>

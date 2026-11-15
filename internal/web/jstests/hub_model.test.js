@@ -175,3 +175,20 @@ test("forwardDecision", () => {
   assert.deepEqual(forwardDecision({ own: null, stay: true, found: { [ID]: "https://b:1" }, hub }), { kind: "stay" });
   assert.deepEqual(forwardDecision({ own: null, stay: false, found: {}, hub }), { kind: "stay" });
 });
+
+test("safeNext only accepts a path on this address", () => {
+  const { safeNext } = require("../static/hub-model.js");
+  assert.equal(safeNext("/chat?window=@3"), "/chat?window=@3");
+  assert.equal(safeNext("/"), "/");
+  for (const bad of [null, "", "//evil.example/x", "https://evil.example", "/\\evil.example", "chat", "/hub", "/hub?login=1", "javascript:alert(1)"]) {
+    assert.equal(safeNext(bad), null, String(bad));
+  }
+});
+
+test("hubDeviceLabel names the browser and system", () => {
+  const { hubDeviceLabel } = require("../static/hub-model.js");
+  assert.equal(hubDeviceLabel("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36", false), "Chrome on Android");
+  assert.equal(hubDeviceLabel("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", true), "Home Screen app on iPhone");
+  assert.equal(hubDeviceLabel("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36", true), "Chrome app on Linux");
+  assert.equal(hubDeviceLabel("curl/8", false), "Browser");
+});

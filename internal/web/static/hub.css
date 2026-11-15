@@ -63,7 +63,9 @@ body {
 .machine__empty { color: var(--ink-3); padding: 12px 0; border-bottom: 1px solid var(--line); }
 
 .add { display: flex; gap: 8px; flex-wrap: wrap; }
-.add input {
+.login { display: grid; gap: 8px; max-width: 360px; }
+.login .btn { justify-self: start; }
+.add input, .login input {
   flex: 1 1 220px; min-width: 0; font: inherit; padding: 8px 10px;
   background: var(--paper); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 0;
 }
@@ -75,7 +77,7 @@ body {
 }
 .btn--quiet { background: transparent; color: var(--ink); }
 .btn:disabled { opacity: 0.5; cursor: default; }
-.btn:focus-visible, .add input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.btn:focus-visible, .add input:focus-visible, .login input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .hub__foot { color: var(--ink-3); font-size: 13px; }
 .hub__foot a { color: inherit; }

@@ -204,9 +204,38 @@ function forwardDecision({ own, stay, found, hub }) {
   return url ? { kind: "go", url } : { kind: "stay" };
 }
 
+// safeNext is where to go after logging in: a path on this address, never
+// another site and never the launcher itself.
+function safeNext(next) {
+  if (typeof next !== "string" || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  if (next === "/hub" || next.startsWith("/hub?") || next.startsWith("/hub/")) return null;
+  return next;
+}
+
+// hubDeviceLabel guesses a name for this device ("Chrome on Android"),
+// which the person can change before logging in.
+function hubDeviceLabel(ua, standalone) {
+  const os = /iPhone/.test(ua) ? "iPhone"
+    : /iPad/.test(ua) ? "iPad"
+    : /Android/.test(ua) ? "Android"
+    : /Mac OS X|Macintosh/.test(ua) ? "macOS"
+    : /Windows/.test(ua) ? "Windows"
+    : /CrOS/.test(ua) ? "ChromeOS"
+    : /Linux/.test(ua) ? "Linux"
+    : "";
+  const browser = /Edg\//.test(ua) ? "Edge"
+    : /Firefox\/|FxiOS/.test(ua) ? "Firefox"
+    : /Chrome\/|CriOS/.test(ua) ? "Chrome"
+    : /Safari\//.test(ua) ? "Safari"
+    : "Browser";
+  const ios = os === "iPhone" || os === "iPad";
+  const name = standalone ? (ios ? "Home Screen app" : `${browser} app`) : browser;
+  return os ? `${name} on ${os}` : name;
+}
+
 if (typeof module === "object" && module.exports) {
   module.exports = {
     CORE_RELEASE, normalizeAddress, loadHub, saveHub, learnMachine, mergeAddrs, addManual, markFailed,
-    orderCandidates, probe, findMachine, targetPath, forwardDecision, isMachineID,
+    orderCandidates, probe, findMachine, targetPath, forwardDecision, isMachineID, safeNext, hubDeviceLabel,
   };
 }

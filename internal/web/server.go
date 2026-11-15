@@ -67,6 +67,9 @@ type Server struct {
 	// bootID identifies this process, so a browser that asked for a
 	// restart can tell when the new server is up (GET /api/boot).
 	bootID string
+
+	// pairs rate-limits failed device pairings.
+	pairs pairLimiter
 }
 
 // NewServer builds a Server. ticketRefresh is the ticket cache TTL
@@ -181,6 +184,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/hub/hello", s.handleHubHello)
 	s.mux.HandleFunc("GET /api/hub/addrs", s.handleHubAddrs)
 	s.mux.HandleFunc("GET /api/hub/core", s.handleHubCore)
+	s.mux.HandleFunc("POST /api/hub/pair", s.handlePair)
+	s.mux.HandleFunc("GET /api/hub/whoami", s.handleWhoami)
+	s.mux.HandleFunc("GET /api/hub/devices", s.handleDevices)
+	s.mux.HandleFunc("DELETE /api/hub/devices/{id}", s.handleRevokeDevice)
+	s.mux.HandleFunc("POST /api/hub/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /hub", s.handleHubFile)
 	s.mux.HandleFunc("GET /hub/{name}", s.handleHubFile)
 	s.mux.HandleFunc("GET /api/push", s.handlePushInfo)

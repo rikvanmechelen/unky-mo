@@ -1,6 +1,6 @@
 # mo web as an installed app that finds its machine
 
-**Status:** steps 1–2 built on main, 2026-11-14.
+**Status:** steps 1–3 built on main, 2026-11-14.
 
 ## Goal
 
@@ -183,6 +183,27 @@ Run on Android Chrome (emulator + a real phone), iOS Safari as a Home Screen app
   - The page lists machines (name, address that answered, status), and has "Add address" (`normalizeAddress`: https only except localhost, default port 7890, no path or user info; probed at once, kept only if a machine answers).
   - The dashboard header gets a "Machines" link to `/hub?stay=1`. Every page registers the worker (not only when push is supported).
 - Tests: Go (`isPublicPath` table; `/api/hub/core` shape, release/sw/manifest read from the files, public through `BasicAuth`; the release table guard). Node (`jstests/hub_model.test.js`: address normalization, learning and merging, candidate order, the probe race with fake fetch and timers, the auto-forward decision; `jstests/sw.test.js`: install/refuse, routing core paths, navigation fallback on failure and timeout, recovery page, tries and rollback, booted, reset, cache cleanup).
+
+## Step 3 in detail: login with device tokens
+
+- **`DeviceStore`** (`devices.go`), file `<config dir>/web-devices.json` (0600, temp + rename, under a mutex): `[{id, hash, label, origin, created, lastUsed}]`. `id` is 8 random bytes in hex, the token 32 random bytes base64url, `hash` its SHA-256 in hex. `origin` is the pairing request's `Origin` (for step 4's framing rule).
+  - `Pair(label, origin)` → token + device; at most 64 devices (a 65th is refused).
+  - `Lookup(token)` → the device, unless it's unknown or unused for 90 days (expired ones are dropped). `lastUsed` is written at most hourly.
+  - `List()`, `Revoke(id)`.
+  - The file is re-read when its size or mtime changes, so `mo web devices revoke` takes effect in a running server at once.
+- **`RequireLogin(h, creds, devices)`** replaces `BasicAuth` in `mo web` (`BasicAuth` stays, as `RequireLogin` without devices). In order:
+  1. Public paths (`isPublicPath`), and `POST /api/hub/pair`, which checks the password itself.
+  2. The `mo_device` cookie, then `Authorization: Bearer`, then basic auth. The device found is put in the request context.
+  3. Otherwise: a browser navigation (`Sec-Fetch-Mode: navigate`) is redirected (303) to `/hub?login=1&next=<path>`, so there's no native prompt. A request with `Sec-Fetch-Mode` (the dashboard's own fetches) gets a plain 401. Anything else (curl, old browsers without fetch metadata) gets the 401 with the basic challenge as today, so `curl -u` and existing logins keep working.
+- **Endpoints** (`handlers_devices.go`; all 404 without a login configured, since tokens exist only alongside one):
+  - `POST /api/hub/pair` `{username, password, label}` → `{token, device: {id, label}}` and the cookie `mo_device` (`HttpOnly; SameSite=Lax; Path=/; Max-Age` 90 days; `Secure` over TLS). Wrong login → 401. More than 5 failures a minute from one client IP → 429 before the password is checked. Same-origin only in this step (a cross-origin `Origin` is refused with 403); step 4 opens it for the shell.
+  - `GET /api/hub/whoami` → `{device: {id, label} | null}`: the launcher's "am I logged in here" check.
+  - `GET /api/hub/devices` → the list, `current` marking this device. `DELETE /api/hub/devices/{id}` revokes one. `POST /api/hub/logout` revokes this device and clears the cookie.
+  - A cookie that's still used gets re-set (new `Max-Age`) when `lastUsed` is written, so an active device stays logged in.
+- **CLI:** `mo web devices list` and `mo web devices revoke <id>`.
+- **Launcher:** when its own origin answers but `whoami` is a 401 (or `?login`), it shows a login form (username, password, a device name defaulting to `deviceLabel`'s guess), posts `pair`, then opens `next`. The password is never stored. (A core change: the launcher hasn't left this machine yet, so release 1's recorded hash is updated rather than raising the release.)
+- **Dashboard:** a "Devices" button next to "Machines" opens a dialog: this machine's paired devices with label, last used, "this device", Revoke, and "Log out" for this one.
+- Tests: `DeviceStore` (pair/lookup, hash only on disk, mode 0600, expiry, hourly `lastUsed`, revoke, re-read after an outside change, the cap); `RequireLogin` (each credential kind, a revoked or expired token refused at once, the navigation/fetch/curl split, public paths); the endpoints (pair sets the cookie and stores only the hash, wrong password, the rate limit, a cross-origin pair refused, no login → 404, whoami, list/revoke/logout).
 
 ## Decisions
 

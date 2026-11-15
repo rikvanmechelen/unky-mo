@@ -377,6 +377,15 @@ h1, h2 {
 .trust-dialog__summary { cursor: pointer; font-size: 15px; font-weight: 700; }
 .trust-dialog__steps { margin: 8px 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.4; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; }
 .trust-dialog a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+.devices-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.devices-dialog__list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.devices-dialog__row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.devices-dialog__text { flex: 1; min-width: 0; }
+.devices-dialog__label { font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.devices-dialog__meta { font-size: 13px; color: var(--ink-3); }
+.devices-dialog__empty { font-size: 14px; color: var(--ink-3); padding: 10px 0; }
+.devices-dialog__error { font-size: 14px; color: var(--red); }
+.devices-dialog__error:empty { display: none; }
 .notify-dialog__state { font-size: 15px; line-height: 1.35; padding: 10px 12px; background: var(--surface); border-left: 4px solid var(--ink-4); }
 .notify-dialog__state.is-on { border-left-color: var(--green); }
 .notify-dialog__checks { display: flex; flex-direction: column; gap: 10px; }

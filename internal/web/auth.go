@@ -1,26 +1,69 @@
 package web
 
 import (
+	"context"
 	"crypto/sha256"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
+	"time"
 )
 
 // BasicAuth wraps h so every request must carry HTTP basic auth credentials
-// matching creds. PBKDF2 is deliberately slow and the dashboard polls
-// several endpoints, so a successful login is remembered in memory (keyed
-// by a SHA-256 of the pair) and later requests skip the KDF. Failed
-// attempts always pay the full hashing cost. The public paths (isPublicPath:
-// the installed app's launcher, worker and manifest) need no login.
+// matching creds: RequireLogin without paired devices.
 func BasicAuth(h http.Handler, creds *Credentials) http.Handler {
+	return RequireLogin(h, creds, nil)
+}
+
+const deviceCookie = "mo_device"
+
+type deviceKey struct{}
+
+// requestDevice is the paired device a request logged in as, if any.
+func requestDevice(r *http.Request) (Device, bool) {
+	d, ok := r.Context().Value(deviceKey{}).(Device)
+	return d, ok
+}
+
+// RequireLogin wraps h so every request must be logged in: with a paired
+// device's token (the mo_device cookie, or Authorization: Bearer), or with
+// basic auth matching creds. PBKDF2 is deliberately slow and the dashboard
+// polls several endpoints, so a successful basic login is remembered in
+// memory (keyed by a SHA-256 of the pair) and later requests skip the KDF.
+// Failed attempts always pay the full hashing cost.
+//
+// The public paths (isPublicPath: the launcher, worker and manifest) and
+// POST /api/hub/pair, which checks the password itself, need no login. A
+// browser navigation without one goes to the launcher's login form, the
+// page's own fetches get a plain 401, and anything else (curl) gets the
+// basic challenge, so there's no native prompt in a browser.
+func RequireLogin(h http.Handler, creds *Credentials, devices *DeviceStore) http.Handler {
 	var mu sync.Mutex
 	verified := map[[32]byte]bool{}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isPublicPath(r) {
+		if isPublicPath(r) || (r.Method == http.MethodPost && r.URL.Path == "/api/hub/pair") {
 			h.ServeHTTP(w, r)
 			return
+		}
+		if devices != nil {
+			token, fromCookie := "", false
+			if c, err := r.Cookie(deviceCookie); err == nil {
+				token, fromCookie = c.Value, true
+			} else if v, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+				token = v
+			}
+			if token != "" {
+				if d, touched, ok := devices.lookup(token); ok {
+					if fromCookie && touched {
+						setDeviceCookie(w, r, token)
+					}
+					h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), deviceKey{}, d)))
+					return
+				}
+			}
 		}
 		user, pass, ok := r.BasicAuth()
 		if ok {
@@ -39,9 +82,40 @@ func BasicAuth(h http.Handler, creds *Credentials) http.Handler {
 				return
 			}
 		}
+		switch r.Header.Get("Sec-Fetch-Mode") {
+		case "navigate":
+			if devices != nil {
+				http.Redirect(w, r, "/hub?login=1&next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+				return
+			}
+		case "":
+		default:
+			if devices != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
 		w.Header().Set("WWW-Authenticate", `Basic realm="mo web", charset="UTF-8"`)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+// setDeviceCookie keeps a device logged in on this address. HttpOnly, so
+// no script on the page can read the token.
+func setDeviceCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     deviceCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(deviceIdle / time.Second),
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearDeviceCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: deviceCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode})
 }
 
 // IsLoopbackAddr reports whether a listen address (host:port) only accepts

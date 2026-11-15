@@ -14,7 +14,7 @@
   let hub = loadHub(storage);
   const params = new URLSearchParams(location.search);
   const stay = params.has("stay");
-  const target = targetPath(location);
+  const target = safeNext(params.get("next")) || targetPath(location);
   const env = {
     fetch: (u, o) => fetch(u, o),
     setTimeout: (f, ms) => setTimeout(f, ms),
@@ -146,15 +146,52 @@
     setStatus(up ? `${up} of ${ids.length} machine${ids.length === 1 ? "" : "s"} answer${up === 1 ? "s" : ""} here.` : "None of your machines answer on this network. Add an address below.");
   }
 
-  async function main() {
-    render();
-    const own = await probe(location.origin, env);
-    if (!own) return findAll();
+  // whoami says whether this browser is logged in here: "in", "out", or
+  // "open" (no login configured on a localhost-only server).
+  async function whoami() {
+    try {
+      const res = await fetch("/api/hub/whoami", { cache: "no-store" });
+      if (res.status === 401) return "out";
+      return res.ok ? "in" : "open";
+    } catch {
+      return "open";
+    }
+  }
 
-    hub = learnMachine(hub, own, location.origin, Date.now());
-    found[own.machine] = location.origin;
-    save();
-    render();
+  function showLogin(own) {
+    setStatus(`Log in to ${own.name || "this machine"}.`);
+    $("login").hidden = false;
+    $("login-heading").textContent = `Log in to ${own.name || "this machine"}`;
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    if (!$("login-label").value) $("login-label").value = hubDeviceLabel(navigator.userAgent, standalone);
+    $("login-user").focus();
+    $("login-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const err = $("login-error");
+      err.textContent = "";
+      const body = { username: $("login-user").value.trim(), password: $("login-pass").value, label: $("login-label").value.trim() };
+      let res;
+      try {
+        res = await fetch("/api/hub/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      } catch {
+        err.textContent = "This address stopped answering.";
+        return;
+      }
+      $("login-pass").value = "";
+      if (res.status === 401) err.textContent = "Wrong username or password.";
+      else if (res.status === 429) err.textContent = "Too many attempts. Wait a minute and try again.";
+      else if (!res.ok) err.textContent = (await res.json().catch(() => ({}))).error || `Logging in failed (${res.status}).`;
+      else {
+        $("login").hidden = true;
+        openHere(own);
+      }
+    };
+  }
+
+  // openHere continues on this address once it answers and the browser is
+  // logged in: learn the machine's addresses, update the launcher, then
+  // open the page.
+  async function openHere(own) {
     await learnAddrs(own.machine);
     const updated = await checkCore();
     render();
@@ -165,7 +202,7 @@
       if (updated) note("The launcher was updated.", { label: "Reload", run: () => location.reload() });
       return;
     }
-    if (location.pathname === "/hub") return go("/");
+    if (location.pathname === "/hub") return go(target);
     // The worker showed the launcher because this page didn't load in
     // time, yet the address answers now: try the page once more, then let
     // the person decide, so a slow page can't loop.
@@ -179,8 +216,20 @@
     }
     if (!retried) return location.reload();
     setStatus(`${own.name || "This machine"} answers, but the page didn't load in time.`);
-    note("", null);
     note("Try again?", { label: "Retry", run: () => location.reload() });
+  }
+
+  async function main() {
+    render();
+    const own = await probe(location.origin, env);
+    if (!own) return findAll();
+
+    hub = learnMachine(hub, own, location.origin, Date.now());
+    found[own.machine] = location.origin;
+    save();
+    render();
+    if ((await whoami()) === "out") return showLogin(own);
+    return openHere(own);
   }
 
   $("add").addEventListener("submit", async (e) => {
