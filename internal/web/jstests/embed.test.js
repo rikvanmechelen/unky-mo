@@ -127,3 +127,14 @@ test("the wrapper can replace window.fetch without calling itself", async () => 
   assert.notEqual(res, "hung");
   assert.equal(requests.at(-1).headers.get("Authorization"), "Bearer TOKEN");
 });
+
+test("a parent whose token this machine refuses learns nothing and isn't kept", async () => {
+  const storage = memStorage();
+  const { win, parent } = fakeWin({ routes: { "POST /api/hub/ticket": 401 }, storage });
+  const e = createEmbed(win);
+  await win.dispatch("message", { source: parent, origin: "https://evil.example", data: { type: "mo-auth", token: "BOGUS" } });
+  await e.ready;
+  e.postPath();
+  assert.equal(parent.sent.length, 1, "only the initial mo-ready, no path");
+  assert.equal(storage.getItem("mo.embed"), null, "nothing persisted");
+});

@@ -68,9 +68,17 @@ function createEmbed(win) {
     if (e.source !== win.parent || token) return;
     const m = e.data;
     if (!m || m.type !== "mo-auth" || typeof m.token !== "string") return;
+    // Taken only if this machine accepts it: frame-ancestors decides who
+    // may frame the page, and a parent that isn't a shell holding a token
+    // for here learns nothing (no path or title is reported to it).
     token = m.token;
-    parentOrigin = e.origin;
     await getTicket();
+    if (!ticket) {
+      token = null;
+      resolveReady();
+      return;
+    }
+    parentOrigin = e.origin;
     persist();
     resolveReady();
     postPath();
