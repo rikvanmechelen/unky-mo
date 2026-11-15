@@ -362,213 +362,262 @@ func callSides(cl callLang, base, idx *index, oldPaths, newPaths []string) (befo
 // callDelta adds one language's changed functions, changed calls, context
 // and findings to cg.
 func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, newPaths []string, renames map[string]string) {
-	if before.truncated || after.truncated {
-		cg.Truncated = true
-	}
-	changedOld := map[string]bool{}
+	d := &deltaBuilder{cg: cg, cl: cl, before: before, after: after, renames: renames,
+		changedOld: map[string]bool{}, changedNew: map[string]bool{}}
 	for _, p := range oldPaths {
-		changedOld[p] = true
+		d.changedOld[p] = true
 	}
-	changedNew := map[string]bool{}
 	for _, p := range newPaths {
-		changedNew[p] = true
+		d.changedNew[p] = true
 	}
-	// A file that doesn't parse on either side hides its functions on both:
-	// otherwise they'd all look removed (or added).
+	d.changedFuncs()
+	d.classify()
+	d.edges()
+	d.draw()
+	d.callerContext()
+	d.removedCalled()
+	d.testFindings()
+	d.g.flush()
+}
+
+// deltaBuilder holds what callDelta's stages share.
+type deltaBuilder struct {
+	cg                     *CallGraph
+	cl                     callLang
+	before, after          *callSet
+	renames                map[string]string // old path → new path
+	changedOld, changedNew map[string]bool   // the changed files, per side
+	oldFns, newFns         map[string]*fn    // their functions
+	status                 map[string]string // ID → status (new IDs, plus removed old ones)
+	renamedFrom, oldToNew  map[string]string
+	gone                   []string // removed IDs, and renamed functions' old ones
+	oldEdges, newEdges     map[edgeKey][]EdgeFile
+	labels                 map[edgeKey]string
+	g                      *graphBuilder
+	callers                map[string][]callerRef
+}
+
+// kindOf is a call's kind as shown: approximate for a heuristic language.
+func (d *deltaBuilder) kindOf(k string) string {
+	if !d.cl.exact() && (k == CallStatic || k == CallDynamic) {
+		return CallApprox
+	}
+	return k
+}
+
+// changedFuncs picks the changed files' functions on each side. A file
+// that doesn't parse on either side hides its functions on both: otherwise
+// they'd all look removed (or added).
+func (d *deltaBuilder) changedFuncs() {
+	if d.before.truncated || d.after.truncated {
+		d.cg.Truncated = true
+	}
 	skipOld, skipNew := map[string]bool{}, map[string]bool{}
-	for p := range before.unparsed {
-		if changedOld[p] {
-			skipOld[p], skipNew[renames[p]] = true, true
-			cg.Unparsed = append(cg.Unparsed, renames[p])
+	for p := range d.before.unparsed {
+		if d.changedOld[p] {
+			skipOld[p], skipNew[d.renames[p]] = true, true
+			d.cg.Unparsed = append(d.cg.Unparsed, d.renames[p])
 		}
 	}
-	for p := range after.unparsed {
-		if changedNew[p] {
+	for p := range d.after.unparsed {
+		if d.changedNew[p] {
 			skipNew[p] = true
-			for old, nw := range renames {
+			for old, nw := range d.renames {
 				if nw == p {
 					skipOld[old] = true
 				}
 			}
-			cg.Unparsed = append(cg.Unparsed, p)
+			d.cg.Unparsed = append(d.cg.Unparsed, p)
 		}
 	}
-	cg.Unparsed = sortedUnique(cg.Unparsed)
+	d.cg.Unparsed = sortedUnique(d.cg.Unparsed)
 
 	// The changed files' functions on each side.
-	oldFns, newFns := map[string]*fn{}, map[string]*fn{}
-	for id, f := range before.funcs {
-		if changedOld[f.Path] && !skipOld[f.Path] && !f.synthetic {
-			oldFns[id] = f
+	d.oldFns, d.newFns = map[string]*fn{}, map[string]*fn{}
+	for id, f := range d.before.funcs {
+		if d.changedOld[f.Path] && !skipOld[f.Path] && !f.synthetic {
+			d.oldFns[id] = f
 		}
 	}
-	for id, f := range after.funcs {
-		if changedNew[f.Path] && !skipNew[f.Path] && !f.synthetic {
-			newFns[id] = f
+	for id, f := range d.after.funcs {
+		if d.changedNew[f.Path] && !skipNew[f.Path] && !f.synthetic {
+			d.newFns[id] = f
 		}
 	}
+}
 
-	status := map[string]string{} // ID → status (new IDs, plus removed old ones)
+// classify gives each changed function its status (added, removed,
+// changed, signature, renamed: same body, same unit) and lists the IDs that
+// are gone, a renamed function's old name included.
+func (d *deltaBuilder) classify() {
+	d.status = map[string]string{}
 	var added, removed []string
-	for _, id := range sortedKeys(newFns) {
-		f := newFns[id]
-		old, ok := before.funcs[id]
+	for _, id := range sortedKeys(d.newFns) {
+		f := d.newFns[id]
+		old, ok := d.before.funcs[id]
 		switch {
 		case !ok:
 			added = append(added, id)
 		case old.sig != f.sig:
-			status[id] = FuncSignature
+			d.status[id] = FuncSignature
 		case old.body != f.body:
-			status[id] = FuncChanged
+			d.status[id] = FuncChanged
 		}
 	}
-	for _, id := range sortedKeys(oldFns) {
-		if _, ok := after.funcs[id]; !ok {
+	for _, id := range sortedKeys(d.oldFns) {
+		if _, ok := d.after.funcs[id]; !ok {
 			removed = append(removed, id)
 		}
 	}
 	// Renames: an added and a removed function with the same body in the
 	// same unit.
-	renamedFrom := map[string]string{} // new ID → old ID
-	oldToNew := map[string]string{}
+	d.renamedFrom = map[string]string{} // new ID → old ID
+	d.oldToNew = map[string]string{}
 	for _, a := range added {
-		nf := newFns[a]
+		nf := d.newFns[a]
 		for i, r := range removed {
-			of := oldFns[r]
+			of := d.oldFns[r]
 			if r != "" && of.body != "" && of.body == nf.body && of.Unit == nf.Unit && of.Lang == nf.Lang {
-				renamedFrom[a], oldToNew[r] = r, a
+				d.renamedFrom[a], d.oldToNew[r] = r, a
 				removed[i] = ""
 				break
 			}
 		}
 	}
 	for _, a := range added {
-		if _, ok := renamedFrom[a]; ok {
-			status[a] = FuncRenamed
+		if _, ok := d.renamedFrom[a]; ok {
+			d.status[a] = FuncRenamed
 		} else {
-			status[a] = FuncAdded
+			d.status[a] = FuncAdded
 		}
 	}
-	var gone []string
+
 	for _, r := range removed {
 		if r != "" {
-			status[r] = FuncRemoved
-			gone = append(gone, r)
+			d.status[r] = FuncRemoved
+			d.gone = append(d.gone, r)
 		}
 	}
 	// A renamed function's old name is gone too: code still calling it is
 	// broken just the same.
-	for _, old := range sortedKeys(oldToNew) {
-		gone = append(gone, old)
+	for _, old := range sortedKeys(d.oldToNew) {
+		d.gone = append(d.gone, old)
 	}
+}
 
+// edges collects the changed files' calls on each side, a renamed
+// function (caller or callee) under its new ID on both.
+func (d *deltaBuilder) edges() {
 	// Edges of the changed files' functions: before vs after, with a
 	// renamed function (as caller or callee) under its new ID on both sides.
-	oldEdges, newEdges := map[edgeKey][]EdgeFile{}, map[edgeKey][]EdgeFile{}
-	labels := map[edgeKey]string{}
+	d.oldEdges, d.newEdges = map[edgeKey][]EdgeFile{}, map[edgeKey][]EdgeFile{}
+	d.labels = map[edgeKey]string{}
 	rename := func(id string) string {
-		if n, ok := oldToNew[id]; ok {
+		if n, ok := d.oldToNew[id]; ok {
 			return n
 		}
 		return id
 	}
-	for _, f := range oldFns {
+	for _, f := range d.oldFns {
 		for _, c := range f.calls {
 			if c.kind == CallImpl {
 				continue // which implementations are known depends on what was loaded
 			}
 			k := edgeKey{rename(f.ID), rename(c.to), c.kind}
-			oldEdges[k] = appendSite(oldEdges[k], EdgeFile{Path: f.Path, Line: c.line})
+			d.oldEdges[k] = appendSite(d.oldEdges[k], EdgeFile{Path: f.Path, Line: c.line})
 		}
 	}
-	for _, f := range newFns {
+	for _, f := range d.newFns {
 		for _, c := range f.calls {
 			if c.kind == CallImpl {
 				continue
 			}
 			k := edgeKey{f.ID, c.to, c.kind}
-			newEdges[k] = appendSite(newEdges[k], EdgeFile{Path: f.Path, Line: c.line})
-			if c.label != "" && labels[k] == "" {
-				labels[k] = c.label
+			d.newEdges[k] = appendSite(d.newEdges[k], EdgeFile{Path: f.Path, Line: c.line})
+			if c.label != "" && d.labels[k] == "" {
+				d.labels[k] = c.label
 			}
 		}
 	}
+}
 
-	g := &graphBuilder{cg: cg, lang: cl.name(), funcs: map[string]*Func{}, edges: map[string]bool{}}
+// draw adds the changed functions and the calls that appear or disappear
+// (plus unchanged ones leaving a changed function), and the implementations
+// behind interface methods called dynamically.
+func (d *deltaBuilder) draw() {
+	d.g = &graphBuilder{cg: d.cg, lang: d.cl.name(), funcs: map[string]*Func{}, edges: map[string]bool{}}
 	addFn := func(f *fn, st string, before bool) {
 		out := f.Func
 		out.Status, out.Before = st, before
 		out.Unresolved = countUnresolved(f.unresolved)
 		if st == FuncRenamed {
-			out.From = renamedFrom[f.ID]
+			out.From = d.renamedFrom[f.ID]
 		}
-		g.addFunc(out)
+		d.g.addFunc(out)
 	}
-	for id, st := range status {
+	for id, st := range d.status {
 		if st == FuncRemoved {
-			addFn(oldFns[id], st, true)
+			addFn(d.oldFns[id], st, true)
 		} else {
-			addFn(newFns[id], st, false)
+			addFn(d.newFns[id], st, false)
 		}
 	}
-	center := func(id string) bool { return status[id] != "" }
+	center := func(id string) bool { return d.status[id] != "" }
 
-	approx := !cl.exact()
-	kindOf := func(k string) string {
-		if approx && (k == CallStatic || k == CallDynamic) {
-			return CallApprox
-		}
-		return k
-	}
-	for _, ek := range sortedEdgeKeys(newEdges) {
+	for _, ek := range sortedEdgeKeys(d.newEdges) {
 		op := OpAdded
-		if _, had := oldEdges[ek]; had {
+		if _, had := d.oldEdges[ek]; had {
 			// Unchanged: context only when it leaves a changed function.
 			if !center(ek.from) {
 				continue
 			}
 			op = ""
 		}
-		g.ensure(after, before, ek.from)
-		g.ensure(after, before, ek.to)
-		g.addCall(Call{From: ek.from, To: ek.to, Kind: kindOf(ek.kind), Op: op, Sites: newEdges[ek], Label: labels[ek]})
+		d.g.ensure(d.after, d.before, ek.from)
+		d.g.ensure(d.after, d.before, ek.to)
+		d.g.addCall(Call{From: ek.from, To: ek.to, Kind: d.kindOf(ek.kind), Op: op, Sites: d.newEdges[ek], Label: d.labels[ek]})
 	}
-	for _, ek := range sortedEdgeKeys(oldEdges) {
-		if _, has := newEdges[ek]; has {
+	for _, ek := range sortedEdgeKeys(d.oldEdges) {
+		if _, has := d.newEdges[ek]; has {
 			continue
 		}
-		g.ensure(after, before, ek.from)
-		g.ensure(after, before, ek.to)
-		g.addCall(Call{From: ek.from, To: ek.to, Kind: kindOf(ek.kind), Op: OpRemoved, Sites: oldEdges[ek]})
+		d.g.ensure(d.after, d.before, ek.from)
+		d.g.ensure(d.after, d.before, ek.to)
+		d.g.addCall(Call{From: ek.from, To: ek.to, Kind: d.kindOf(ek.kind), Op: OpRemoved, Sites: d.oldEdges[ek]})
 	}
 
 	// The implementations behind each interface method a drawn edge calls
 	// dynamically, for context.
-	for _, c := range append([]Call{}, g.calls...) {
+	for _, c := range append([]Call{}, d.g.calls...) {
 		if c.Kind != CallDynamic {
 			continue
 		}
-		if f := after.funcs[c.To]; f != nil {
+		if f := d.after.funcs[c.To]; f != nil {
 			for _, ic := range f.calls {
 				if ic.kind == CallImpl {
-					g.ensure(after, before, ic.to)
-					g.addCall(Call{From: c.To, To: ic.to, Kind: CallImpl})
+					d.g.ensure(d.after, d.before, ic.to)
+					d.g.addCall(Call{From: c.To, To: ic.to, Kind: CallImpl})
 				}
 			}
 		}
 	}
+}
 
+// callerContext indexes every caller in the new version, draws a changed
+// function's callers (capped), and flags signature changes whose callers
+// must change too.
+func (d *deltaBuilder) callerContext() {
 	// Callers of the changed functions in the new version, from anywhere
 	// the language looked (context, and the findings' sources).
-	callers := map[string][]callerRef{}
-	for _, f := range after.funcs {
+	d.callers = map[string][]callerRef{}
+	for _, f := range d.after.funcs {
 		for _, c := range f.calls {
-			callers[c.to] = append(callers[c.to], callerRef{f.ID, c, f.Path})
+			d.callers[c.to] = append(d.callers[c.to], callerRef{f.ID, c, f.Path})
 		}
 	}
 	// In a stable order, so the test reachedByTest names doesn't change
 	// between polls.
-	for _, cs := range callers {
+	for _, cs := range d.callers {
 		sort.Slice(cs, func(i, j int) bool {
 			if cs[i].from != cs[j].from {
 				return cs[i].from < cs[j].from
@@ -576,12 +625,12 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			return cs[i].site.line < cs[j].site.line
 		})
 	}
-	for _, id := range sortedKeys(status) {
-		st := status[id]
+	for _, id := range sortedKeys(d.status) {
+		st := d.status[id]
 		if st == FuncRemoved || st == FuncAdded {
 			continue // a removed function has no callers left to resolve; an added one's are in the edges
 		}
-		cs := callers[id]
+		cs := d.callers[id]
 		sort.Slice(cs, func(i, j int) bool {
 			if cs[i].path != cs[j].path {
 				return cs[i].path < cs[j].path
@@ -594,40 +643,44 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 			if c.from == id {
 				continue
 			}
-			if st == FuncSignature && !changedNew[c.path] && !onlyDefaultsAdded(before.funcs[id], after.funcs[id]) {
+			if st == FuncSignature && !d.changedNew[c.path] && !onlyDefaultsAdded(d.before.funcs[id], d.after.funcs[id]) {
 				sigSites = appendSite(sigSites, EdgeFile{Path: c.path, Line: c.site.line})
 			}
-			if newEdges[edgeKey{c.from, id, c.site.kind}] != nil && changedNew[c.path] {
+			if d.newEdges[edgeKey{c.from, id, c.site.kind}] != nil && d.changedNew[c.path] {
 				continue // already drawn as a changed file's edge
 			}
 			if !seen[c.from] {
 				if len(seen) == maxCallers {
-					g.funcs[id].MoreCallers++
+					d.g.funcs[id].MoreCallers++
 					continue
 				}
 				seen[c.from] = true
 			}
-			g.ensure(after, before, c.from)
-			g.addCall(Call{From: c.from, To: id, Kind: kindOf(c.site.kind), Sites: []EdgeFile{{Path: c.path, Line: c.site.line}}, Label: c.site.label})
+			d.g.ensure(d.after, d.before, c.from)
+			d.g.addCall(Call{From: c.from, To: id, Kind: d.kindOf(c.site.kind), Sites: []EdgeFile{{Path: c.path, Line: c.site.line}}, Label: c.site.label})
 		}
 		if len(sigSites) > 0 {
-			cg.Findings = append(cg.Findings, CallFinding{Kind: FindingSignatureCallers, Func: id, Sites: sigSites})
+			d.cg.Findings = append(d.cg.Findings, CallFinding{Kind: FindingSignatureCallers, Func: id, Sites: sigSites})
 		}
 	}
+}
 
+// removedCalled flags a removed (or renamed) function something still
+// calls: unresolved calls in the new version that would have gone to it.
+func (d *deltaBuilder) removedCalled() {
 	// A removed function that something still calls: unresolved calls in
 	// the new version that would have gone to it.
-	if len(gone) > 0 {
+	if len(d.gone) > 0 {
 		want := map[string][]EdgeFile{}
-		for _, id := range sortedKeys(after.funcs) { // sites in a stable order
-			f := after.funcs[id]
+		for _, id := range sortedKeys(d.after.funcs) { // sites in a stable order
+			f := d.after.funcs[id]
 			for _, u := range f.unresolved {
 				for _, w := range u.want {
 					want[w] = appendSite(want[w], EdgeFile{Path: f.Path, Line: u.line})
 				}
 			}
 		}
-		for _, id := range gone {
+		for _, id := range d.gone {
 			sites := want[id]
 			// Heuristic languages can only name a method whose receiver
 			// they don't know: "~name" stands for any removed method
@@ -642,63 +695,67 @@ func callDelta(cg *CallGraph, cl callLang, before, after *callSet, oldPaths, new
 				sites = appendSite(sites, s)
 			}
 			if len(sites) > 0 {
-				cg.Findings = append(cg.Findings, CallFinding{Kind: FindingRemovedCalled, Func: id, Sites: sites})
+				d.cg.Findings = append(d.cg.Findings, CallFinding{Kind: FindingRemovedCalled, Func: id, Sites: sites})
 			}
 		}
 	}
+}
 
+// testFindings marks what test reaches each changed function, flags the
+// ones none does (for languages that loaded tests), and a changed file
+// whose conventional test file exists but didn't change.
+func (d *deltaBuilder) testFindings() {
 	// A changed function no test reaches within untestedHops calls. Only
 	// for languages that loaded any tests: otherwise every function would
 	// be flagged.
 	hasTests := false
-	for _, f := range after.funcs {
+	for _, f := range d.after.funcs {
 		if f.Test {
 			hasTests = true
 			break
 		}
 	}
 	if hasTests {
-		for _, id := range sortedKeys(status) {
-			st := status[id]
-			if st == FuncRemoved || newFns[id] == nil || newFns[id].Test || newFns[id].generated || newFns[id].entry || newFns[id].conventional {
+		for _, id := range sortedKeys(d.status) {
+			st := d.status[id]
+			if st == FuncRemoved || d.newFns[id] == nil || d.newFns[id].Test || d.newFns[id].generated || d.newFns[id].entry || d.newFns[id].conventional {
 				continue
 			}
-			if t := reachedByTest(id, after, callers, untestedHops); t != nil {
+			if t := reachedByTest(id, d.after, d.callers, untestedHops); t != nil {
 				ref := &TestRef{ID: t.ID, Name: t.Name, Path: t.Path, Line: t.Line}
-				if root := rootTest(t, after, callers); root != t {
+				if root := rootTest(t, d.after, d.callers); root != t {
 					ref = &TestRef{ID: root.ID, Name: root.Name, Path: root.Path, Line: root.Line, Via: t.Name}
 				}
-				g.funcs[id].TestedBy = ref
+				d.g.funcs[id].TestedBy = ref
 			} else {
-				cg.Findings = append(cg.Findings, CallFinding{Kind: FindingUntested, Func: id})
+				d.cg.Findings = append(d.cg.Findings, CallFinding{Kind: FindingUntested, Func: id})
 			}
 		}
 	}
 	// A changed file whose conventional test file exists but didn't change.
 	byFile := map[string]string{} // path → its first changed function
-	for _, id := range sortedKeys(status) {
-		if f := newFns[id]; f != nil && status[id] != FuncRemoved && !f.Test && !f.generated && !f.entry {
+	for _, id := range sortedKeys(d.status) {
+		if f := d.newFns[id]; f != nil && d.status[id] != FuncRemoved && !f.Test && !f.generated && !f.entry {
 			if _, ok := byFile[f.Path]; !ok {
 				byFile[f.Path] = id
 			}
 		}
 	}
 	for _, p := range sortedKeys(byFile) {
-		tests := after.testFiles[p]
+		tests := d.after.testFiles[p]
 		if len(tests) == 0 {
 			continue
 		}
 		touched := false
 		var sites []EdgeFile
 		for _, t := range tests {
-			touched = touched || changedNew[t]
+			touched = touched || d.changedNew[t]
 			sites = append(sites, EdgeFile{Path: t, Line: 1})
 		}
 		if !touched {
-			cg.Findings = append(cg.Findings, CallFinding{Kind: FindingTestNotUpdated, Func: byFile[p], Sites: sites})
+			d.cg.Findings = append(d.cg.Findings, CallFinding{Kind: FindingTestNotUpdated, Func: byFile[p], Sites: sites})
 		}
 	}
-	g.flush()
 }
 
 // reachedByTest returns the first test function found that calls id within
