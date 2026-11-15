@@ -1536,7 +1536,12 @@ function main() {
     es = stream;
     stream.addEventListener("transcript", (e) => {
       if (es !== stream) return; // a late event from a stream we've since replaced
-      const line = JSON.parse(e.data);
+      let line;
+      try {
+        line = JSON.parse(e.data);
+      } catch {
+        return; // a malformed line: skip it, keep the stream
+      }
       view.onLine(line);
       overview.onTranscriptLine(line);
       if (queueTracker.onLine(line)) renderQueue();
@@ -1545,6 +1550,13 @@ function main() {
     // Sent once the stored backlog is out; live lines follow.
     stream.addEventListener("caught-up", () => {
       if (es === stream) view.endBatch();
+    });
+    // The server dropped this stream for falling behind: reconnect from
+    // the start, through here so the queue and model trackers reset too.
+    stream.addEventListener("resync", () => {
+      if (es !== stream) return;
+      stream.close();
+      connectTranscript(sessionID);
     });
   }
 

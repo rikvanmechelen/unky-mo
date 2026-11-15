@@ -311,26 +311,31 @@ func newTranscriptHub() *transcriptHub {
 // subscribe returns the full current backlog for sessionID/path plus a
 // channel that receives newly-appended messages, and an unsubscribe func
 // that must be called exactly once when the caller (an SSE handler) is done.
+//
+// The backlog is read under the hub's lock, after the shared cursor has
+// caught up with the file: every line is then either in the backlog or
+// still ahead of the cursor (a line can be in both, which the browser
+// already drops by uuid, but never in neither).
 func (h *transcriptHub) subscribe(sessionID, path string) (backlog []json.RawMessage, ch chan json.RawMessage, unsubscribe func(), err error) {
-	backlog, err = newTranscriptCursor(path).readNew()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	h.mu.Lock()
 	ts, ok := h.sessions[sessionID]
-	if !ok {
+	if ok {
+		// Hand the existing subscribers what the cursor hasn't read yet,
+		// so it sits at (or before) the end of the backlog read below.
+		h.fanOut(ts)
+	} else {
 		ts = &transcriptSession{
 			cursor:      newTranscriptCursor(path),
 			subscribers: make(map[chan json.RawMessage]struct{}),
 		}
-		// Prime the shared tail cursor to the current EOF so it only ever
-		// reports messages that arrive after this moment — backlog delivery
-		// above already covered everything up to here. (A write landing in
-		// the gap between this and WatchSession below is the same class of
-		// race status.Watcher already accepts for status reconciliation —
-		// self-heals on the next write.)
 		_, _ = ts.cursor.readNew()
+	}
+	backlog, err = newTranscriptCursor(path).readNew()
+	if err != nil {
+		h.mu.Unlock()
+		return nil, nil, nil, err
+	}
+	if !ok {
 		h.sessions[sessionID] = ts
 		// The watcher watches the transcript's directory, which won't exist
 		// yet for a session just launched in a checkout Claude has never run
@@ -353,8 +358,10 @@ func (h *transcriptHub) subscribe(sessionID, path string) (backlog []json.RawMes
 		if !ok {
 			return
 		}
-		delete(ts.subscribers, ch)
-		close(ch)
+		if _, ok := ts.subscribers[ch]; ok {
+			delete(ts.subscribers, ch)
+			close(ch)
+		}
 		if len(ts.subscribers) == 0 {
 			delete(h.sessions, sessionID)
 			if h.watcher != nil {
@@ -382,10 +389,17 @@ func ensureTranscriptDir(path string) {
 func (h *transcriptHub) onFileChange(sessionID, _ string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ts, ok := h.sessions[sessionID]
-	if !ok {
-		return
+	if ts, ok := h.sessions[sessionID]; ok {
+		h.fanOut(ts)
 	}
+}
+
+// fanOut sends the lines appended since the cursor last read to every
+// subscriber. One whose buffer is full (a phone in the background, a
+// stalled connection) is disconnected rather than sent a stream with holes
+// in it: its channel is closed, and the handler tells the browser to
+// reconnect, which replays the file. Must be called with h.mu held.
+func (h *transcriptHub) fanOut(ts *transcriptSession) {
 	msgs, err := ts.cursor.readNew()
 	if err != nil || len(msgs) == 0 {
 		return
@@ -394,8 +408,12 @@ func (h *transcriptHub) onFileChange(sessionID, _ string) {
 		for _, msg := range msgs {
 			select {
 			case ch <- msg:
-			default: // stalled subscriber: drop rather than block the shared fsnotify-callback goroutine
+				continue
+			default:
 			}
+			delete(ts.subscribers, ch)
+			close(ch)
+			break
 		}
 	}
 }

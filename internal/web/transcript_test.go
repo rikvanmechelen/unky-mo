@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,5 +226,48 @@ func TestTranscriptCursorMissingFileIsEmpty(t *testing.T) {
 	msgs, err := c.readNew()
 	if err != nil || len(msgs) != 0 {
 		t.Fatalf("want no messages and no error, got %v, %v", msgs, err)
+	}
+}
+
+// A subscriber that falls more than its buffer behind is disconnected (its
+// channel closed) instead of silently missing lines; others keep theirs.
+func TestTranscriptHubDisconnectsStalledSubscriber(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"user","uuid":"u0"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &transcriptHub{sessions: map[string]*transcriptSession{}} // no watcher: changes are fed by hand
+	_, stalled, unsubStalled, err := h.subscribe("s", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubStalled()
+	_, live, unsubLive, _ := h.subscribe("s", path)
+	defer unsubLive()
+
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	for i := range 300 {
+		fmt.Fprintf(f, `{"type":"user","uuid":"u%d"}`+"\n", i+1)
+		if i%50 == 49 {
+			f.Sync()
+			h.onFileChange("s", path)
+			for len(live) > 0 { // the live one keeps up
+				<-live
+			}
+		}
+	}
+	f.Close()
+	got := 0
+	for range stalled {
+		got++
+	}
+	if got == 0 || got > 256 {
+		t.Errorf("stalled subscriber got %d lines before being closed", got)
+	}
+	h.mu.Lock()
+	n := len(h.sessions["s"].subscribers)
+	h.mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d subscribers left, want the live one", n)
 	}
 }

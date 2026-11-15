@@ -70,6 +70,9 @@ func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, key, p
 			return
 		case msg, ok := <-ch:
 			if !ok {
+				// Disconnected for falling behind (see fanOut): start over.
+				fmt.Fprint(out, "event: resync\ndata: {}\n\n")
+				flush()
 				return
 			}
 			fmt.Fprintf(out, "event: transcript\ndata: %s\n\n", msg)

@@ -91,7 +91,17 @@ function createSubagents(strip, { bashChanges, onOpenDiff } = {}) {
     dlgStream = stream;
     stream.addEventListener("transcript", (e) => {
       if (dlgStream !== stream) return;
-      view.onLine(JSON.parse(e.data));
+      let line;
+      try {
+        line = JSON.parse(e.data);
+      } catch {
+        return; // a malformed line: skip it, keep the stream
+      }
+      view.onLine(line);
+    });
+    // Dropped for falling behind: open it again from the start.
+    stream.addEventListener("resync", () => {
+      if (dlgStream === stream) open(id);
     });
     if (!dialog.open) dialog.showModal();
     view.scrollToBottom();
