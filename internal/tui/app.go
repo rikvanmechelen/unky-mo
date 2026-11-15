@@ -2493,7 +2493,7 @@ func (m Model) refreshSessions() tea.Cmd {
 		// Taken before the CLI call so any hook landing during it counts as
 		// fresher than this snapshot (see status.Manager.ProcessAgentStatus).
 		observedAt := time.Now()
-		sessions, _ := claudeClient.LiveSessions()
+		sessions, listErr := claudeClient.LiveSessions()
 		var hostPIDs map[int]bool
 		if tmuxClient != nil {
 			hostPIDs, _ = tmuxClient.PanePIDs()
@@ -2630,6 +2630,18 @@ func (m Model) refreshSessions() tea.Cmd {
 			}
 
 			views = append(views, v)
+		}
+
+		// Sessions that ended without their SessionEnd hook (killed, the
+		// window closed) are forgotten, and their JSONL is no longer
+		// watched. Only from a listing that worked: a failed one lists
+		// nobody.
+		if listErr == nil && mgr != nil {
+			for _, id := range mgr.Prune(liveSIDs, observedAt) {
+				if watcher != nil {
+					watcher.UnwatchSession(id)
+				}
+			}
 		}
 
 		// Claude Code can run a window's actual conversation through a

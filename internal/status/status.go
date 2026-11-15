@@ -380,6 +380,26 @@ func (m *Manager) MarkDead(sessionID string) {
 	}
 }
 
+// Prune forgets every session that isn't in live, unless a hook updated it
+// after observedAt (when the live list was taken: it may have started
+// since). It returns the ids it removed. Without it a session whose
+// SessionEnd hook was lost (killed, window closed) stayed in memory for
+// good, pending tool input included.
+func (m *Manager) Prune(live map[string]bool, observedAt time.Time) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var gone []string
+	for id, s := range m.sessions {
+		if live[id] || s.LastHookAt.After(observedAt) {
+			continue
+		}
+		delete(m.sessions, id)
+		gone = append(gone, id)
+		m.emit(StatusChange{SessionID: id, Old: s.Status, New: StatusNone})
+	}
+	return gone
+}
+
 // emit sends a status change to all subscribers (non-blocking).
 // Must be called with m.mu held.
 func (m *Manager) emit(change StatusChange) {

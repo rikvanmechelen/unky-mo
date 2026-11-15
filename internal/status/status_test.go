@@ -517,3 +517,24 @@ func TestAgentStatus_NonQuestion_NotTouched(t *testing.T) {
 		t.Errorf("got %v, want StatusActive (JSONL/hooks own non-question states)", got)
 	}
 }
+
+// Prune forgets sessions that aren't live any more, keeps live ones and
+// any a hook touched after the live list was taken.
+func TestManagerPrune(t *testing.T) {
+	m := NewManager()
+	m.ProcessHookEvent(HookEvent{SessionID: "live", Type: EventUserPromptSubmit})
+	m.ProcessHookEvent(HookEvent{SessionID: "gone", Type: EventPreToolUse, ToolName: "AskUserQuestion", ToolInput: []byte(`{"questions":[]}`)})
+	observed := time.Now()
+	time.Sleep(time.Millisecond)
+	m.ProcessHookEvent(HookEvent{SessionID: "new", Type: EventSessionStart})
+	gone := m.Prune(map[string]bool{"live": true}, observed)
+	if len(gone) != 1 || gone[0] != "gone" {
+		t.Fatalf("pruned %v", gone)
+	}
+	if _, _, ok := m.Pending("gone"); ok || m.Status("gone") != StatusNone {
+		t.Error("the gone session's state is still there")
+	}
+	if m.Status("live") == StatusNone || m.Status("new") == StatusNone {
+		t.Error("a live or new session was pruned")
+	}
+}
