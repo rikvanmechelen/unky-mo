@@ -442,399 +442,81 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
-		// Clear sticky error messages on any keypress
-		if m.statusMsg != "" && (m.statusSticky || isErrorStatus(m.statusMsg)) {
-			m.statusMsg = ""
-			m.statusSticky = false
-		}
-
-		// Don't intercept keys when filtering
-		if m.list.FilterState() == list.Filtering {
-			break
-		}
-
-		// Ticket-screen picker + remember-prompt capture all input while active
-		// so normal key bindings don't fire.
-		if m.screen == ScreenTicket && m.pickerRememberActive {
-			newModel, cmd := m.handleTicketPickerRemember(msg)
-			return newModel, cmd
-		}
-		if m.screen == ScreenTicket && m.pickerActive {
-			newModel, cmd := m.handleTicketPickerActive(msg)
-			return newModel, cmd
-		}
-		// `y` on ticket detail yanks the derived branch name.
-		if m.screen == ScreenTicket && msg.String() == "y" {
-			return m.handleTicketYank()
-		}
-
-		// The open prompt takes the key (see promptKeys for the order).
-		if keys := m.promptKeys(); keys != nil {
-			return keys(m, msg)
-		}
-
-		if m2, cmd, ok := m.updateKeyGlobal(msg); ok {
-			return m2, cmd
-		}
-		if m2, cmd, ok := m.updateKeyScreen(msg); ok {
-			return m2, cmd
-		}
-		// Any other key falls through to the screen's navigation below.
+		return m.onKey(msg)
 
 	case sessionTickMsg:
-		m.pruneOrphanedTermSessions()
-		return m, tea.Batch(sessionTick(), m.refreshSessions(), m.refreshGitStatuses())
+		return m.onSessionTick(msg)
 
 	case projectsRefreshMsg:
-		items := mergeRefreshedProjects(m.list.Items(), msg.projects)
-		m.list.SetItems(items)
-		// Update the flat projects slice so refreshGitStatuses and other
-		// paths that iterate m.projects see the new set.
-		updated := make([]project.Project, len(items))
-		for i, item := range items {
-			updated[i] = item.(ProjectItem).project
-		}
-		m.projects = updated
-		return m, nil
+		return m.onProjectsRefresh(msg)
 
 	case newProjectCreatedMsg:
-		agent := m.defaultAgent()
-		p := ops.LaunchParams{
-			WindowName:    msg.name,
-			Cwd:           msg.path,
-			ShellCmd:      agent.Cmd,
-			AgentKey:      agent.Key,
-			AttachSidebar: true,
-			SwitchFocus:   true,
-		}
-		opsCtx := m.ops
-		return m, tea.Batch(
-			func() tea.Msg {
-				if _, err := ops.LaunchSession(opsCtx, p); err != nil {
-					return statusMsgEvent(fmt.Sprintf("launch session: %v", err))
-				}
-				return statusMsgEvent(fmt.Sprintf("Created and launched %s", msg.name))
-			},
-			m.refreshProjects(),
-		)
+		return m.onNewProjectCreated(msg)
 
 	case suspendCompleteMsg:
-		if msg.err != nil {
-			return m, func() tea.Msg {
-				return statusMsgEvent(fmt.Sprintf("suspend failed: %v", msg.err))
-			}
-		}
-		m.disableHomeRespawn()
-		return m, tea.Quit
+		return m.onSuspendComplete(msg)
 
 	case sessionRefreshMsg:
-		m.updateProjectStatuses(msg)
-		// Rebuild the detail view so session rows reflect fresh live data
-		// (needed e.g. after a lift, where a refresh kicked off by the handler
-		// must land without the user leaving + re-entering the screen).
-		if m.screen == ScreenProject && m.detailProject != nil {
-			m.buildDetailRows()
-		}
-		return m, nil
+		return m.onSessionRefresh(msg)
 
 	case usageTickMsg:
-		return m, tea.Batch(usageTick(), m.fetchUsage())
+		return m.onUsageTick(msg)
 
 	case usageRefreshMsg:
-		if msg.authErr {
-			m.usageAuth = true
-		} else {
-			m.usage = msg.snap
-			m.usageAuth = false
-		}
-		m.usageReady = true
-		m.writeStateFile()
-		return m, nil
+		return m.onUsageRefresh(msg)
 
 	case ticketsTickMsg:
-		if len(m.ticketsProviders) == 0 {
-			return m, nil
-		}
-		m.ticketsLoading = true
-		return m, tea.Batch(ticketsTick(m.ticketsRefreshPeriod), m.fetchTickets())
+		return m.onTicketsTick(msg)
 
 	case ticketsRefreshMsg:
-		m.ticketsGroups = msg.groups
-		m.ticketsErrors = msg.results
-		m.ticketsLoaded = true
-		m.ticketsLoading = false
-		m.ticketsLastFetch = time.Now()
-		if m.ticketsCursor >= m.ticketsVisibleLen() {
-			m.ticketsCursor = max(0, m.ticketsVisibleLen()-1)
-		}
-		return m, nil
+		return m.onTicketsRefresh(msg)
 
 	case ticketDetailMsg:
-		m.detailTicketLoading = false
-		if msg.err != nil {
-			m.detailTicketErr = msg.err.Error()
-			return m, nil
-		}
-		m.detailTicket = msg.detail
-		return m, nil
+		return m.onTicketDetail(msg)
 
 	case gitStatusMsg:
-		m.gitStatuses = map[string]project.GitStatus(msg)
-		// Update ProjectItems with git info
-		items := m.list.Items()
-		for i, item := range items {
-			pi, ok := item.(ProjectItem)
-			if !ok {
-				continue
-			}
-			if gs, ok := m.gitStatuses[pi.project.Path]; ok {
-				pi.git = gs
-				items[i] = pi
-			}
-		}
-		m.list.SetItems(items)
-		return m, nil
+		return m.onGitStatus(msg)
 
 	case notificationMsg:
-		if msg.Type == notify.NotifyRestart {
-			// `mo restart` or the web dashboard's "Restart mo" — the same
-			// as ctrl+alt+r, but immune to whatever input has the keyboard.
-			return m.beginRestart()
-		}
-		m.routeNotificationToStatusMgr(notify.Notification(msg))
-		cmds := []tea.Cmd{m.refreshSessions()}
-		if m.notifServer != nil {
-			cmds = append(cmds, m.waitForNotification())
-		}
-		return m, tea.Batch(cmds...)
+		return m.onNotification(msg)
 
 	case statusChangeMsg:
-		// Status manager detected a change — refresh immediately.
-		cmds := []tea.Cmd{m.refreshSessions()}
-		if m.statusSub != nil {
-			cmds = append(cmds, m.waitForStatusChange())
-		}
-		return m, tea.Batch(cmds...)
+		return m.onStatusChange(msg)
 
 	case sessionImportedMsg:
-		m.statusMsg = msg.status
-		m.list.NewStatusMessage(m.statusMsg)
-		// Refresh immediately so the newly-imported session appears in the
-		// dashboard / sidebar without waiting for the next 5s tick, and so the
-		// state file the sidebar polls is up to date within a cycle.
-		return m, tea.Batch(
-			m.refreshSessions(),
-			tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
-				return clearStatusMsg{}
-			}),
-		)
+		return m.onSessionImported(msg)
 
 	case stickyStatusMsgEvent:
-		// Rendered as its own block (dashboardView), not in the list's
-		// half-width status line.
-		m.statusMsg = string(msg)
-		m.statusSticky = true
-		m.list.NewStatusMessage("")
-		return m, nil
+		return m.onStickyStatusMsgEvent(msg)
 
 	case statusMsgEvent:
-		m.statusMsg = string(msg)
-		m.statusSticky = false
-		m.list.NewStatusMessage(m.statusMsg)
-		// Auto-clear success messages after 4s; errors stay until user presses a key
-		if !isErrorStatus(m.statusMsg) {
-			return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
-				return clearStatusMsg{}
-			})
-		}
-		return m, nil
+		return m.onStatusMsgEvent(msg)
 
 	case clearStatusMsg:
-		if m.statusSticky {
-			return m, nil // an earlier message's timer; the sticky one waits for a key
-		}
-		m.statusMsg = ""
-		return m, nil
+		return m.onClearStatus(msg)
 
 	case prFetchMsg:
-		if msg.err != nil {
-			m.detailPRErr = msg.err.Error()
-		} else {
-			m.detailPRs = msg.prs
-		}
-		return m, nil
+		return m.onPRFetch(msg)
 
 	case prDetailMsg:
-		if msg.err == nil {
-			m.detailPRDetail = msg.detail
-		}
-		return m, nil
+		return m.onPRDetail(msg)
 
 	case syncPullMsg:
-		m.syncedSessions = msg.synced
-		m.remoteSynced = msg.remoteOnly
-		if m.detailProject != nil {
-			// Rebuild rows to reflect newly-pulled sessions AND remote-only
-			// entries that the detail view surfaces as "pull + create worktree"
-			// rows under their matching branch.
-			m.buildDetailRows()
-			m.loadRecap()
-		}
-		if msg.err != nil {
-			return m, func() tea.Msg {
-				return statusMsgEvent("sync failed: " + msg.err.Error())
-			}
-		}
-		return m, nil
+		return m.onSyncPull(msg)
 
 	case worktreeExistsMsg:
-		if m.detailProject != nil {
-			m.worktreeExists = &worktreeExistsPrompt{
-				branch:      msg.branch,
-				projectPath: m.detailProject.Path,
-				projectName: m.detailProject.Name,
-				wtPath:      msg.worktreePath,
-				prBranch:    msg.prBranch,
-			}
-		}
-		return m, nil
+		return m.onWorktreeExists(msg)
 
 	case worktreeCreatedMsg:
-		if m.detailProject != nil {
-			m.detailWorktrees, _ = project.ListWorktrees(m.detailProject.Path)
-			m.detailBranches, _ = project.ListBranches(m.detailProject.Path)
-			m.buildDetailRows()
-		}
-		status := msg.status
-		return m, func() tea.Msg { return statusMsgEvent(status) }
+		return m.onWorktreeCreated(msg)
 
 	case sessionLiftedMsg:
-		// Rebuild branches + worktrees + rows so the new session row lands on
-		// the new branch, and kick off a session refresh so live-status data
-		// (the old PID is now gone) is up to date.
-		if m.detailProject != nil {
-			m.detailWorktrees, _ = project.ListWorktrees(m.detailProject.Path)
-			m.detailBranches, _ = project.ListBranches(m.detailProject.Path)
-			m.buildDetailRows()
-		}
-		status := msg.status
-		return m, tea.Batch(
-			m.refreshSessions(),
-			func() tea.Msg { return statusMsgEvent(status) },
-		)
+		return m.onSessionLifted(msg)
 
 	case branchesChangedMsg:
-		if m.detailProject != nil {
-			m.detailWorktrees, _ = project.ListWorktrees(m.detailProject.Path)
-			m.detailBranches, _ = project.ListBranches(m.detailProject.Path)
-			m.buildDetailRows()
-		}
-		if msg.status != "" {
-			return m, func() tea.Msg { return statusMsgEvent(msg.status) }
-		}
-		return m, nil
+		return m.onBranchesChanged(msg)
 	}
-
-	switch m.screen {
-	case ScreenDashboard:
-		// Right panel: sessions (top) + optional tickets (bottom). Up/down
-		// moves within the focused section and crosses the boundary at the
-		// ends (down past the last session → first ticket; up past the first
-		// ticket → last session). Wraps within each section if tickets isn't
-		// rendered.
-		if !m.dashFocusLeft {
-			if msg, ok := msg.(tea.KeyPressMsg); ok {
-				sess := len(m.dashSessionItems)
-				ticketsLen := 0
-				if m.ticketsShouldRender() {
-					ticketsLen = m.ticketsVisibleLen()
-				}
-				switch msg.String() {
-				case "up", "k":
-					if m.dashRightFocus == dashRightSessions {
-						if sess > 0 {
-							if m.dashSessionCursor == 0 && ticketsLen > 0 {
-								m.dashRightFocus = dashRightTickets
-								m.ticketsCursor = ticketsLen - 1
-							} else {
-								m.dashSessionCursor = (m.dashSessionCursor - 1 + sess) % sess
-							}
-						}
-					} else {
-						if ticketsLen > 0 {
-							if m.ticketsCursor == 0 && sess > 0 {
-								m.dashRightFocus = dashRightSessions
-								m.dashSessionCursor = sess - 1
-							} else {
-								m.ticketsCursor = (m.ticketsCursor - 1 + ticketsLen) % ticketsLen
-							}
-						}
-					}
-				case "down", "j":
-					if m.dashRightFocus == dashRightSessions {
-						if sess > 0 {
-							if m.dashSessionCursor == sess-1 && ticketsLen > 0 {
-								m.dashRightFocus = dashRightTickets
-								m.ticketsCursor = 0
-							} else {
-								m.dashSessionCursor = (m.dashSessionCursor + 1) % sess
-							}
-						} else if ticketsLen > 0 {
-							m.dashRightFocus = dashRightTickets
-							m.ticketsCursor = 0
-						}
-					} else {
-						if ticketsLen > 0 {
-							if m.ticketsCursor == ticketsLen-1 && sess > 0 {
-								m.dashRightFocus = dashRightSessions
-								m.dashSessionCursor = 0
-							} else {
-								m.ticketsCursor = (m.ticketsCursor + 1) % ticketsLen
-							}
-						}
-					}
-				}
-			}
-			return m, nil
-		}
-		// Left panel: delegate to bubbles list
-		var cmd tea.Cmd
-		m.list, cmd = m.list.Update(msg)
-		return m, cmd
-	case ScreenProject:
-		if msg, ok := msg.(tea.KeyPressMsg); ok {
-			switch msg.String() {
-			case "up", "k":
-				if m.detailFocusLeft {
-					n := m.detailCombinedLen()
-					if n > 0 {
-						m.detailCursor = (m.detailCursor - 1 + n) % n
-						m.loadRecap()
-					}
-				} else {
-					n := len(m.detailPRs)
-					if n > 0 {
-						m.detailPRCursor = (m.detailPRCursor - 1 + n) % n
-					}
-				}
-			case "down", "j":
-				if m.detailFocusLeft {
-					n := m.detailCombinedLen()
-					if n > 0 {
-						m.detailCursor = (m.detailCursor + 1) % n
-						m.loadRecap()
-					}
-				} else {
-					n := len(m.detailPRs)
-					if n > 0 {
-						m.detailPRCursor = (m.detailPRCursor + 1) % n
-					}
-				}
-			}
-		}
-	}
-
-	return m, nil
+	return m.updateNav(msg)
 }
 
 func (m Model) View() tea.View {
