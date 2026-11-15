@@ -87,7 +87,7 @@ function createSubagents(strip, { bashChanges, onOpenDiff } = {}) {
     view.clear();
     dlgAgent = id;
     fillDialogHead();
-    const stream = new EventSource(`/api/sessions/${encodeURIComponent(windowID)}/subagents/${encodeURIComponent(id)}/transcript`);
+    const stream = new EventSource(authURL(`/api/sessions/${encodeURIComponent(windowID)}/subagents/${encodeURIComponent(id)}/transcript`));
     dlgStream = stream;
     stream.addEventListener("transcript", (e) => {
       if (dlgStream !== stream) return;

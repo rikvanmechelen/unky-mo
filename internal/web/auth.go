@@ -44,9 +44,22 @@ func RequireLogin(h http.Handler, creds *Credentials, devices *DeviceStore) http
 	verified := map[[32]byte]bool{}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isPublicPath(r) || (r.Method == http.MethodPost && r.URL.Path == "/api/hub/pair") {
+		if isPublicPath(r) || (r.Method == http.MethodPost && r.URL.Path == "/api/hub/pair") ||
+			(r.Method == http.MethodOptions && hubCORSPaths[r.URL.Path]) {
 			h.ServeHTTP(w, r)
 			return
+		}
+		if devices != nil && embeddedStaticRequest(r) {
+			h.ServeHTTP(w, r)
+			return
+		}
+		if devices != nil && ticketPath(r) {
+			if t := r.URL.Query().Get("mo_ticket"); t != "" {
+				if d, ok := devices.CheckTicket(t); ok {
+					h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), deviceKey{}, d)))
+					return
+				}
+			}
 		}
 		if devices != nil {
 			token, fromCookie := "", false
@@ -98,6 +111,25 @@ func RequireLogin(h http.Handler, creds *Credentials, devices *DeviceStore) http
 		w.Header().Set("WWW-Authenticate", `Basic realm="mo web", charset="UTF-8"`)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+// embeddedStaticRequest reports a request for one of the dashboard's static files
+// from a page that embeds it (docs/plans/pwa.md step 4): an iframe's first
+// load and its scripts and styles can't carry the token, and they're the
+// repo's own files. Data (/api, /ca.crt) still needs a login, and so does a
+// top-level page, which goes to the login form instead.
+func embeddedStaticRequest(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/ca.crt" {
+		return false
+	}
+	switch r.Header.Get("Sec-Fetch-Dest") {
+	case "iframe", "frame", "script", "style", "image", "font", "manifest":
+		return true
+	}
+	return false
 }
 
 // setDeviceCookie keeps a device logged in on this address. HttpOnly, so

@@ -43,7 +43,7 @@ function core(release, extra = {}) {
 
 const ORIGIN = "https://o.test";
 const req = (path, init = {}) => new Request(ORIGIN + path, init);
-const nav = (path) => ({ url: ORIGIN + path, method: "GET", mode: "navigate", headers: new Headers() });
+const nav = (path, destination = "document") => ({ url: ORIGIN + path, method: "GET", mode: "navigate", destination, headers: new Headers() });
 
 function env(caches, fetchImpl) {
   return {
@@ -172,4 +172,16 @@ test("cleanup keeps only current, previous and installed cores", async () => {
   await sw.cleanup(caches);
   const names = (await caches.keys()).filter((n) => n.startsWith("mo-core-")).sort();
   assert.deepEqual(names, ["mo-core-1", "mo-core-3", "mo-core-4"]);
+});
+
+test("a navigation inside a frame is left alone", async () => {
+  const e = env(fakeCaches());
+  await install(e, core(1));
+  assert.equal(await sw.handleFetch(nav("/chat?window=@1", "iframe"), e), null);
+  assert.equal(await sw.handleFetch(nav("/hub", "iframe"), e), null);
+  assert.equal(sw.handlesRequest(nav("/", "iframe")), false);
+  assert.equal(sw.handlesRequest(nav("/")), true);
+  assert.equal(sw.handlesRequest(req("/hub/hub.js")), true);
+  assert.equal(sw.handlesRequest(req("/api/state")), false);
+  assert.equal(sw.handlesRequest(req("/__mo/state")), true);
 });

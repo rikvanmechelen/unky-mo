@@ -170,7 +170,7 @@ function createAttachments({ strip, button, pasteTarget, dropTarget, getWindowID
     fromStored(windowID, list) {
       return list.map(({ id, name }) => ({
         file: null, name, windowID, id, state: "ready",
-        url: `/api/sessions/${encodeURIComponent(windowID)}/attachments/${encodeURIComponent(id)}`,
+        url: authURL(`/api/sessions/${encodeURIComponent(windowID)}/attachments/${encodeURIComponent(id)}`),
       }));
     },
     // discard forgets detached images whose prompt was sent elsewhere.

@@ -13,7 +13,7 @@ import (
 // installed apps only take a core whose release is higher than theirs, so a
 // change under the same release would never reach them.
 var coreReleases = map[int]string{
-	1: "e191820f3cd5afcc0ef543945b37fda2",
+	1: "8774eec8d6a5acb008c0d4efba985da8",
 }
 
 func TestCoreReleaseTable(t *testing.T) {

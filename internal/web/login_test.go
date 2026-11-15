@@ -10,10 +10,17 @@ import (
 
 func newLoginServer(t *testing.T) (http.Handler, *DeviceStore, *clock) {
 	t.Helper()
-	creds := testCredentials(t, "mo", "s3cret")
 	devices, c, _ := newTestDevices(t)
+	h, _, _ := newLoginServerWith(t, devices)
+	return h, devices, c
+}
+
+// newLoginServerWith is a logged-in server over an existing device store.
+func newLoginServerWith(t *testing.T, devices *DeviceStore) (http.Handler, *DeviceStore, *Credentials) {
+	t.Helper()
+	creds := testCredentials(t, "mo", "s3cret")
 	srv := NewServer(Deps{Hub: testHub(), Devices: devices, Login: creds}, 0, "test")
-	return RequireLogin(srv, creds, devices), devices, c
+	return RequireLogin(srv, creds, devices), devices, creds
 }
 
 func loginDo(h http.Handler, method, path, body string, edit func(*http.Request)) *httptest.ResponseRecorder {
@@ -142,14 +149,7 @@ func TestPairEndpoint(t *testing.T) {
 		}
 	}
 
-	// Another site may not pair (yet: the shell comes in step 4).
-	rec = loginDo(h, http.MethodPost, "/api/hub/pair", `{"username":"mo","password":"s3cret","label":"x"}`, func(r *http.Request) {
-		r.Header.Set("Origin", "https://evil.example")
-	})
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("cross-origin pair: %d", rec.Code)
-	}
-	// Its own origin may.
+	// Its own origin may (another one too, since step 4: TestCrossOriginPair).
 	rec = loginDo(h, http.MethodPost, "/api/hub/pair", `{"username":"mo","password":"s3cret","label":"x"}`, func(r *http.Request) {
 		r.Header.Set("Origin", "http://example.com")
 	})

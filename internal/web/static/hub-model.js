@@ -233,9 +233,69 @@ function hubDeviceLabel(ua, standalone) {
   return os ? `${name} on ${os}` : name;
 }
 
+// The shell keeps a device token per machine (docs/plans/pwa.md step 4),
+// never a password.
+const TOKENS_KEY = "mo.hub.tokens";
+
+function loadTokens(storage) {
+  try {
+    const t = JSON.parse(storage.getItem(TOKENS_KEY) || "{}");
+    if (!t || typeof t !== "object" || Array.isArray(t)) return {};
+    const out = {};
+    for (const [id, token] of Object.entries(t)) if (isMachineID(id) && typeof token === "string") out[id] = token;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveToken(storage, id, token) {
+  if (!isMachineID(id)) return;
+  const t = loadTokens(storage);
+  t[id] = token;
+  try {
+    storage.setItem(TOKENS_KEY, JSON.stringify(t));
+  } catch {
+    // the shell asks for the password again next time
+  }
+}
+
+function dropToken(storage, id) {
+  const t = loadTokens(storage);
+  delete t[id];
+  try {
+    storage.setItem(TOKENS_KEY, JSON.stringify(t));
+  } catch {
+    // nothing to do
+  }
+}
+
+const FRAME_MESSAGES = new Set(["mo-ready", "mo-path", "mo-lost", "mo-unauthorized", "mo-machines"]);
+
+// frameMessage returns a message the embedded machine sent, or null for
+// anything from another window or origin, or that the shell doesn't know.
+function frameMessage(event, frameWin, frameOrigin) {
+  if (!event || event.source !== frameWin || event.origin !== frameOrigin) return null;
+  const m = event.data;
+  if (!m || typeof m !== "object" || !FRAME_MESSAGES.has(m.type)) return null;
+  if (m.type === "mo-path") {
+    if (typeof m.path !== "string" || !m.path.startsWith("/") || m.path.startsWith("//")) return null;
+    return { type: "mo-path", path: m.path, title: typeof m.title === "string" ? m.title : "" };
+  }
+  return { type: m.type };
+}
+
+// shouldEmbed: the installed app shows another address in a frame, so it
+// never leaves its own origin. Its own address, and a browser tab, open
+// the page directly.
+function shouldEmbed({ shell, url, own }) {
+  return Boolean(shell) && url !== own;
+}
+
 if (typeof module === "object" && module.exports) {
   module.exports = {
     CORE_RELEASE, normalizeAddress, loadHub, saveHub, learnMachine, mergeAddrs, addManual, markFailed,
     orderCandidates, probe, findMachine, targetPath, forwardDecision, isMachineID, safeNext, hubDeviceLabel,
+    loadTokens, saveToken, dropToken, frameMessage, shouldEmbed,
   };
 }

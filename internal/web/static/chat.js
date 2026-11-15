@@ -1348,7 +1348,7 @@ function main() {
     editor.open(root && absPath.startsWith(root + "/") ? absPath.slice(root.length + 1) : absPath);
   };
   const view = createTranscriptView(transcript, transcriptScroll, {
-    toolImageURL: (toolUseID, i) => `/api/sessions/${encodeURIComponent(windowID)}/tool-image/${encodeURIComponent(toolUseID)}?i=${i}`,
+    toolImageURL: (toolUseID, i) => authURL(`/api/sessions/${encodeURIComponent(windowID)}/tool-image/${encodeURIComponent(toolUseID)}?i=${i}`),
     onToolCard: subagents.decorateCard,
     onOpenFile: openAbsFile,
     onOpenDiff,
@@ -1532,7 +1532,7 @@ function main() {
     view.beginBatch();
     streamSessionID = sessionID;
     bashChanges.setWindow(windowID);
-    const stream = new EventSource(`/api/transcript/${encodeURIComponent(windowID)}`);
+    const stream = new EventSource(authURL(`/api/transcript/${encodeURIComponent(windowID)}`));
     es = stream;
     stream.addEventListener("transcript", (e) => {
       if (es !== stream) return; // a late event from a stream we've since replaced

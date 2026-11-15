@@ -178,6 +178,23 @@ function fetchWithTimeout(env, request, ms) {
   });
 }
 
+// isTopNavigation is a navigation of the app's own window. A navigation
+// inside a frame (the shell's iframe of another address, or this address
+// framed by another shell) is never touched: the fallback is for the app's
+// window, and re-fetching a frame's navigation here would lose what makes
+// the server serve it to a frame.
+function isTopNavigation(request) {
+  return request.mode === "navigate" && (request.destination === "document" || request.destination === undefined || request.destination === "");
+}
+
+// handlesRequest says, without reading the cache, whether handleFetch can
+// answer a request: the worker's own API, the core's files, and top-level
+// navigations. Everything else never passes through the worker.
+function handlesRequest(request) {
+  const path = new URL(request.url).pathname;
+  return isTopNavigation(request) || path.startsWith("/__mo/") || (request.method === "GET" && request.mode !== "navigate" && isCorePath(path));
+}
+
 // handleFetch answers a request, or returns null to let the browser handle
 // it: /__mo/* is this worker's API, the current core's files come from its
 // cache, and a navigation falls back to the core's entry when the network
@@ -187,6 +204,7 @@ async function handleFetch(request, env) {
   if (url.origin !== env.origin) return null;
   if (url.pathname.startsWith("/__mo/")) return api(request, url.pathname, env);
   if (request.method !== "GET") return null;
+  if (request.mode === "navigate" && !isTopNavigation(request)) return null;
 
   const p = await readPointer(env.caches);
   if (p.current && p.current.files.includes(url.pathname) && request.mode !== "navigate") {
@@ -223,7 +241,7 @@ async function installFromOrigin(env) {
 }
 
 if (typeof module === "object" && module.exports) {
-  module.exports = { SW_VERSION, handleFetch, cleanup, installCore, readPointer };
+  module.exports = { SW_VERSION, handleFetch, handlesRequest, cleanup, installCore, readPointer };
 } else if (typeof ServiceWorkerGlobalScope !== "undefined" && self instanceof ServiceWorkerGlobalScope) {
   const env = () => ({
     caches: self.caches,
@@ -245,9 +263,7 @@ if (typeof module === "object" && module.exports) {
     if (url.origin !== self.location.origin) return;
     // Only these can ever be answered here; everything else isn't touched,
     // so the dashboard's polls and streams never pass through the worker.
-    const mine = event.request.mode === "navigate" || url.pathname.startsWith("/__mo/") ||
-      (event.request.method === "GET" && isCorePath(url.pathname));
-    if (!mine) return;
+    if (!handlesRequest(event.request)) return;
     event.respondWith((async () => (await handleFetch(event.request, env())) || self.fetch(event.request))());
   });
 

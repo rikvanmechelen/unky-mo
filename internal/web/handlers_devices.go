@@ -84,10 +84,6 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 	if !s.devicesEnabled(w, r) {
 		return
 	}
-	if !sameOrigin(r) {
-		writeError(w, http.StatusForbidden, errors.New("pairing from another site isn't allowed"))
-		return
-	}
 	now := s.deps.Devices.now()
 	ip := clientIP(r)
 	if s.pairs.blocked(ip, now) {
@@ -118,7 +114,11 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	setDeviceCookie(w, r, token)
+	// Another origin (the installed app's shell) keeps the token itself: a
+	// cookie would be a third-party one.
+	if sameOrigin(r) {
+		setDeviceCookie(w, r, token)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, map[string]any{"token": token, "device": deviceView(d, d.ID)})
 }

@@ -200,7 +200,7 @@ async function showTrustDialog(info) {
     for (const step of p.steps) ol.appendChild(dialogNode("li", "", step));
     block.appendChild(ol);
     const dl = dialogNode("a", "btn btn--small btn--primary", `Download for ${p.title}`);
-    dl.href = p.href;
+    dl.href = authURL(p.href); // a ticket inside the installed app's shell
     dl.setAttribute("download", "unky-mo-ca.crt");
     block.appendChild(dl);
     dialog.appendChild(block);

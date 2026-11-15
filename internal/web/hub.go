@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -109,6 +110,37 @@ func HubAddrs(scheme, listenAddr string, hosts []string) []string {
 		out = append(out, scheme+"://"+net.JoinHostPort(h, port))
 	}
 	return out
+}
+
+// hubCORSPaths can be called from another origin: the installed app's
+// shell, served from wherever it was installed, talking to this machine.
+// Without credentials mode, so cookies never cross; the shell sends its
+// own token.
+var hubCORSPaths = map[string]bool{
+	"/api/hub/pair":   true,
+	"/api/hub/whoami": true,
+	"/api/hub/addrs":  true,
+}
+
+var originRE = regexp.MustCompile(`^https?://[a-z0-9.\-]+(:\d{1,5})?$|^https?://\[[0-9a-f:.]+\](:\d{1,5})?$`)
+
+// frameAncestors is the Content-Security-Policy that lets only this origin
+// and the shells devices paired from frame the dashboard.
+func (s *Server) frameAncestors() string {
+	policy := "frame-ancestors 'self'"
+	if s.deps.Devices == nil {
+		return policy
+	}
+	seen := map[string]bool{}
+	for _, d := range s.deps.Devices.List() {
+		o := strings.ToLower(d.Origin)
+		if o == "" || seen[o] || !originRE.MatchString(o) {
+			continue
+		}
+		seen[o] = true
+		policy += " " + o
+	}
+	return policy
 }
 
 func (s *Server) handleHubHello(w http.ResponseWriter, r *http.Request) {

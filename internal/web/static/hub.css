@@ -81,3 +81,7 @@ body {
 
 .hub__foot { color: var(--ink-3); font-size: 13px; }
 .hub__foot a { color: inherit; }
+
+/* The shell's frame: another address's dashboard, full window. */
+.hub-frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: var(--paper); }
+body.is-embedded .hub { display: none; }

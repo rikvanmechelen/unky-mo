@@ -43,6 +43,7 @@ type DeviceStore struct {
 	mu      sync.Mutex
 	devices []Device
 	stamp   fileStamp // of the file as last read or written
+	key     []byte    // the ticket signing key, once loaded
 }
 
 type fileStamp struct {

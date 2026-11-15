@@ -135,4 +135,5 @@ function renderUsage(container, usage, opts) {
 // Every page registers the service worker: it keeps the launcher working
 // when this address doesn't answer (docs/plans/pwa.md), and notify.js uses
 // it for push.
-if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
+// Not inside the installed app's shell, which has its own.
+if ("serviceWorker" in navigator && window.isSecureContext && window.top === window) navigator.serviceWorker.register("/sw.js").catch(() => {});

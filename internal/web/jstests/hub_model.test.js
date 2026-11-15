@@ -192,3 +192,40 @@ test("hubDeviceLabel names the browser and system", () => {
   assert.equal(hubDeviceLabel("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36", true), "Chrome app on Linux");
   assert.equal(hubDeviceLabel("curl/8", false), "Browser");
 });
+
+test("tokens are kept per machine", () => {
+  const { loadTokens, saveToken, dropToken } = require("../static/hub-model.js");
+  const s = memStorage();
+  assert.deepEqual(loadTokens(s), {});
+  saveToken(s, ID, "T1");
+  saveToken(s, OTHER, "T2");
+  assert.deepEqual(loadTokens(s), { [ID]: "T1", [OTHER]: "T2" });
+  dropToken(s, ID);
+  assert.deepEqual(loadTokens(s), { [OTHER]: "T2" });
+  saveToken(s, "not-an-id", "T3");
+  assert.deepEqual(loadTokens(s), { [OTHER]: "T2" });
+  s.setItem("mo.hub.tokens", "[1,2]");
+  assert.deepEqual(loadTokens(s), {});
+});
+
+test("frameMessage only takes known messages from the frame and its origin", () => {
+  const { frameMessage } = require("../static/hub-model.js");
+  const frame = {};
+  const origin = "https://10.1.4.7:7890";
+  const ok = (data) => frameMessage({ source: frame, origin, data }, frame, origin);
+  assert.deepEqual(ok({ type: "mo-ready" }), { type: "mo-ready" });
+  assert.deepEqual(ok({ type: "mo-path", path: "/chat?window=@1", title: "Chat" }), { type: "mo-path", path: "/chat?window=@1", title: "Chat" });
+  assert.equal(ok({ type: "mo-path", path: "https://evil.example/" }), null, "a path must stay on the machine");
+  assert.equal(ok({ type: "mo-auth", token: "x" }), null, "the frame never sends auth");
+  assert.equal(ok("mo-ready"), null);
+  assert.equal(frameMessage({ source: {}, origin, data: { type: "mo-ready" } }, frame, origin), null, "another window");
+  assert.equal(frameMessage({ source: frame, origin: "https://evil.example", data: { type: "mo-ready" } }, frame, origin), null, "another origin");
+});
+
+test("shouldEmbed: only in the installed app, only for another address", () => {
+  const { shouldEmbed } = require("../static/hub-model.js");
+  const own = "https://192.168.1.20:7890";
+  assert.equal(shouldEmbed({ shell: true, url: "https://10.1.4.7:7890", own }), true);
+  assert.equal(shouldEmbed({ shell: true, url: own, own }), false);
+  assert.equal(shouldEmbed({ shell: false, url: "https://10.1.4.7:7890", own }), false);
+});

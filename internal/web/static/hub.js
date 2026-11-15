@@ -14,6 +14,10 @@
   let hub = loadHub(storage);
   const params = new URLSearchParams(location.search);
   const stay = params.has("stay");
+  // The installed app shows another address in a frame, so it never leaves
+  // its own origin (docs/plans/pwa.md step 4). ?embed=1 tries it in a tab.
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const shell = standalone || params.has("embed");
   const target = safeNext(params.get("next")) || targetPath(location);
   const env = {
     fetch: (u, o) => fetch(u, o),
@@ -77,9 +81,9 @@
       const open = el("button", up ? "btn" : "btn btn--quiet", up ? "Open" : "Try");
       open.type = "button";
       open.disabled = !best;
-      // "Try" opens the best address anyway, so a certificate this device
+      // "Try" opens the best address directly, so a certificate this device
       // doesn't trust shows the browser's own error.
-      open.addEventListener("click", () => { location.href = pageAt(best); });
+      open.addEventListener("click", () => (up ? openMachine(id, best) : (location.href = pageAt(best))));
       li.append(dot, text, open);
       list.append(li);
     }
@@ -117,6 +121,119 @@
     location.replace(url);
   }
 
+  // openMachine opens the page on a machine found at url: in the shell's
+  // frame, or directly.
+  function openMachine(id, url, path = target) {
+    if (shouldEmbed({ shell, url, own: location.origin })) return embedMachine(id, url, path);
+    return go(url + path);
+  }
+
+  // ── The shell's frame ───────────────────────────────────────────────
+  let frame = null;
+  let frameOrigin = null;
+  let frameMachine = null;
+  let framePath = target;
+  let relocating = false;
+
+  function closeFrame() {
+    if (frame) frame.remove();
+    frame = null;
+    frameOrigin = null;
+    document.body.classList.remove("is-embedded");
+    document.title = "Unky Mo";
+  }
+
+  async function embedMachine(id, base, path) {
+    const name = (hub.machines[id] && hub.machines[id].name) || "this machine";
+    const again = () => embedMachine(id, base, framePath);
+    const token = loadTokens(storage)[id];
+    if (!token) return showLogin({ id, name, base, done: again });
+    let check = null;
+    try {
+      check = await fetch(base + "/api/hub/whoami", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+    } catch {
+      check = null;
+    }
+    if (check && check.status === 401) {
+      dropToken(storage, id);
+      return showLogin({ id, name, base, done: again });
+    }
+    if (!check || !check.ok) {
+      setStatus(`${name} doesn't answer at ${base}.`);
+      return;
+    }
+    closeFrame();
+    framePath = path;
+    frameMachine = id;
+    frameOrigin = new URL(base).origin;
+    hub = { ...hub, last: id };
+    save();
+    frame = el("iframe", "hub-frame");
+    frame.title = name;
+    frame.allow = "clipboard-read; clipboard-write; fullscreen";
+    frame.src = base + path;
+    document.body.append(frame);
+    document.body.classList.add("is-embedded");
+  }
+
+  // relocate finds the framed machine again after it stopped answering
+  // (another network), and reopens the same page at its new address.
+  async function relocate() {
+    if (relocating || !frame) return;
+    relocating = true;
+    const id = frameMachine;
+    const hello = await probe(frameOrigin, env);
+    if (hello && hello.machine === id) {
+      relocating = false; // a hiccup: the address still answers
+      return;
+    }
+    const url = await findMachine(id, hub.machines[id], env);
+    relocating = false;
+    if (url) {
+      hub = learnMachine(hub, { machine: id }, url, Date.now());
+      save();
+      embedMachine(id, url, framePath);
+      return;
+    }
+    closeFrame();
+    found[id] = null;
+    render();
+    setStatus(`${hub.machines[id].name || "The machine"} stopped answering on this network.`);
+  }
+
+  window.addEventListener("message", (e) => {
+    if (!frame) return;
+    const m = frameMessage(e, frame.contentWindow, frameOrigin);
+    if (!m) return;
+    const id = frameMachine;
+    switch (m.type) {
+      case "mo-ready": {
+        const token = loadTokens(storage)[id];
+        if (token) frame.contentWindow.postMessage({ type: "mo-auth", token }, frameOrigin);
+        break;
+      }
+      case "mo-path":
+        framePath = m.path;
+        if (m.title) document.title = m.title;
+        break;
+      case "mo-unauthorized": {
+        const base = frameOrigin;
+        dropToken(storage, id);
+        closeFrame();
+        showLogin({ id, name: hub.machines[id].name, base, done: () => embedMachine(id, base, framePath) });
+        break;
+      }
+      case "mo-machines":
+        closeFrame();
+        setStatus("Your machines.");
+        render();
+        break;
+      case "mo-lost":
+        relocate();
+        break;
+    }
+  });
+
   async function findAll() {
     const ids = Object.keys(hub.machines);
     if (!ids.length) {
@@ -137,7 +254,7 @@
           save();
           render();
           const d = forwardDecision({ own: null, stay, found, hub });
-          if (d.kind === "go") go(pageAt(d.url));
+          if (d.kind === "go") openMachine(hub.last, d.url);
           if (--left === 0) resolve();
         });
       }
@@ -158,11 +275,14 @@
     }
   }
 
-  function showLogin(own) {
-    setStatus(`Log in to ${own.name || "this machine"}.`);
+  // showLogin asks for the login of a machine: this address's (base "",
+  // which sets the cookie) or another one the shell frames (which answers
+  // with a token the shell keeps).
+  function showLogin({ id, name, base, done }) {
+    name = name || "this machine";
+    setStatus(`Log in to ${name}.`);
     $("login").hidden = false;
-    $("login-heading").textContent = `Log in to ${own.name || "this machine"}`;
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    $("login-heading").textContent = `Log in to ${name}`;
     if (!$("login-label").value) $("login-label").value = hubDeviceLabel(navigator.userAgent, standalone);
     $("login-user").focus();
     $("login-form").onsubmit = async (e) => {
@@ -172,9 +292,9 @@
       const body = { username: $("login-user").value.trim(), password: $("login-pass").value, label: $("login-label").value.trim() };
       let res;
       try {
-        res = await fetch("/api/hub/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        res = await fetch(base + "/api/hub/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       } catch {
-        err.textContent = "This address stopped answering.";
+        err.textContent = "That address stopped answering.";
         return;
       }
       $("login-pass").value = "";
@@ -182,8 +302,9 @@
       else if (res.status === 429) err.textContent = "Too many attempts. Wait a minute and try again.";
       else if (!res.ok) err.textContent = (await res.json().catch(() => ({}))).error || `Logging in failed (${res.status}).`;
       else {
+        if (base) saveToken(storage, id, (await res.json()).token);
         $("login").hidden = true;
-        openHere(own);
+        done();
       }
     };
   }
@@ -228,7 +349,7 @@
     found[own.machine] = location.origin;
     save();
     render();
-    if ((await whoami()) === "out") return showLogin(own);
+    if ((await whoami()) === "out") return showLogin({ id: own.machine, name: own.name, base: "", done: () => openHere(own) });
     return openHere(own);
   }
 
@@ -257,9 +378,21 @@
     setStatus(`Added ${hello.name || url}.`);
   });
 
+  // The login form is only ever sent by showLogin's handler: a native
+  // submit would put the password in the URL.
+  $("login-form").addEventListener("submit", (e) => e.preventDefault());
+
   // Confirm this core to the worker, so it isn't rolled back.
   fetch("/__mo/booted", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ release: CORE_RELEASE }) }).catch(() => {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  // Inside another shell's frame (a login redirect lands here) the shell
+  // takes over: it shows its own login or list. No worker is registered
+  // there, since it would answer the frame's navigations.
+  if (window.top !== window) {
+    window.parent.postMessage({ type: params.has("login") ? "mo-unauthorized" : "mo-machines" }, "*");
+    setStatus("");
+    return;
+  }
   if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
   main();
 })();

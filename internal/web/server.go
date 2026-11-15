@@ -109,7 +109,22 @@ func NewServer(deps Deps, ticketRefresh time.Duration, tmuxSession string) *Serv
 	return s
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Security-Policy", s.frameAncestors())
+	if origin := r.Header.Get("Origin"); origin != "" && hubCORSPaths[r.URL.Path] && !sameOrigin(r) {
+		hdr := w.Header()
+		hdr.Set("Access-Control-Allow-Origin", origin)
+		hdr.Add("Vary", "Origin")
+		if r.Method == http.MethodOptions {
+			hdr.Set("Access-Control-Allow-Methods", "GET, POST")
+			hdr.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			hdr.Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	s.mux.ServeHTTP(w, r)
+}
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/state", s.handleState)
@@ -189,6 +204,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/hub/devices", s.handleDevices)
 	s.mux.HandleFunc("DELETE /api/hub/devices/{id}", s.handleRevokeDevice)
 	s.mux.HandleFunc("POST /api/hub/logout", s.handleLogout)
+	s.mux.HandleFunc("POST /api/hub/ticket", s.handleTicket)
 	s.mux.HandleFunc("GET /hub", s.handleHubFile)
 	s.mux.HandleFunc("GET /hub/{name}", s.handleHubFile)
 	s.mux.HandleFunc("GET /api/push", s.handlePushInfo)

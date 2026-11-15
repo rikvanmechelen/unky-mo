@@ -1,6 +1,6 @@
 # mo web as an installed app that finds its machine
 
-**Status:** steps 1–3 built on main, 2026-11-14.
+**Status:** steps 1–4 built on main, 2026-11-14.
 
 ## Goal
 
@@ -204,6 +204,32 @@ Run on Android Chrome (emulator + a real phone), iOS Safari as a Home Screen app
 - **Launcher:** when its own origin answers but `whoami` is a 401 (or `?login`), it shows a login form (username, password, a device name defaulting to `deviceLabel`'s guess), posts `pair`, then opens `next`. The password is never stored. (A core change: the launcher hasn't left this machine yet, so release 1's recorded hash is updated rather than raising the release.)
 - **Dashboard:** a "Devices" button next to "Machines" opens a dialog: this machine's paired devices with label, last used, "this device", Revoke, and "Log out" for this one.
 - Tests: `DeviceStore` (pair/lookup, hash only on disk, mode 0600, expiry, hourly `lastUsed`, revoke, re-read after an outside change, the cap); `RequireLogin` (each credential kind, a revoked or expired token refused at once, the navigation/fetch/curl split, public paths); the endpoints (pair sets the cookie and stores only the hash, wrong password, the rate limit, a cross-origin pair refused, no login → 404, whoami, list/revoke/logout).
+
+## Step 4 in detail: the shell
+
+The device probes (1–7) need phones; they're listed under step 7 as still to do. What desktop Chrome can show is checked headless. If a device fails a probe, the launcher falls back to phase A (top-level navigation), which keeps working.
+
+- **When the launcher embeds.** In the installed app (`display-mode: standalone`, or `?embed=1` for testing), a machine found at an address other than the launcher's own is shown in a full-window iframe. Its own address still opens top level, as in phase A, since the cookie works there.
+- **The shell's tokens.** `mo.hub.tokens` in localStorage: `{machineId: token}`. With no token for a machine, the shell shows the login form for that machine and pairs cross-origin (`POST <machine>/api/hub/pair`). Before embedding it checks the token (`GET <machine>/api/hub/whoami` with `Authorization: Bearer`). A 401 drops the token and asks again.
+- **Server changes:**
+  - **CORS** on `/api/hub/pair`, `/api/hub/whoami`, `/api/hub/addrs`: the request's `Origin` is echoed (no credentials mode: cookies never cross), and an `OPTIONS` preflight for them is answered without a login (`Authorization`, `Content-Type`; `GET`, `POST`). **Change from step 3:** pairing from another origin is allowed (it still needs the password); no cookie is set then, since it would be a third-party cookie.
+  - **Embedded static files without a login.** A `GET` whose `Sec-Fetch-Dest` is `iframe`, `frame`, `script`, `style`, `image`, `font` or `manifest`, for anything but `/api/*` and `/ca.crt`, is served without a login: the frame's first page load and its scripts can't carry a header. They're the repo's static files; data still needs the token. A top-level document navigation still goes to the login form.
+  - **`frame-ancestors`** on every response: `'self'` plus the `Origin` of every paired device (valid `http(s)://host[:port]` only), so only a shell a device paired from can frame the UI.
+  - **URL tickets** for what can't send a header: `POST /api/hub/ticket` (a device login only, not basic auth) → `{ticket, expires}`, valid 12 h. A ticket is `base64url(device id ‖ expiry ‖ HMAC-SHA256)`, keyed by `<config dir>/web-devices.key` (0600, created once, so tickets survive `mo restart`). `RequireLogin` accepts `?mo_ticket=` only on `GET` of `/api/transcript/{w}`, `/api/sessions/{w}/subagents/{a}/transcript`, `/api/sessions/{w}/attachments/{id}`, `/api/sessions/{w}/tool-image/{id}` and `/ca.crt`, and only while the device still exists.
+- **Frame side** (`static/embed.js`, loaded first on every dashboard page, Node-tested through `createEmbed(win)`):
+  - Embedded when `window.top !== window`. It posts `{type: "mo-ready"}` to the parent (`"*"`: no secret in it) and waits for `{type: "mo-auth", token}` from `window.parent`. The parent's origin is remembered from that message. The token and a ticket (from `POST /api/hub/ticket`) are kept in sessionStorage, so the frame's own navigations (dashboard ↔ chat) don't ask again.
+  - `window.fetch` is wrapped: it waits for the handshake (4 s at most), adds `Authorization: Bearer` to same-origin requests, posts `mo-unauthorized` on a 401 and `mo-lost` on a network failure.
+  - `authURL(u)` adds `mo_ticket` (embedded only). Used for both transcript streams, attachment thumbnails, tool images and the CA download.
+  - Links to `/hub` post `mo-machines` instead of navigating the frame. `pushState`, `replaceState` and loads post `{type: "mo-path", path, title}`. The worker isn't registered inside the frame.
+- **Shell side** (`hub.js`; message checks in `hub-model.js`): it accepts a message only from the iframe's window and the machine's origin. It answers `mo-ready` with the token, mirrors the title, keeps the path, and on `mo-lost` re-finds the machine and reopens the same path at the new address. On `mo-unauthorized` it drops the token and shows the login; on `mo-machines` it closes the frame and shows the list.
+- **Built as planned, plus two fixes found in the browser:**
+  - The worker only takes *top-level* navigations. A machine's own worker answering its framed pages re-fetched each iframe navigation itself, which reached the server without the frame's fetch metadata and was redirected to the login (`isTopNavigation`, `handlesRequest`).
+  - The launcher loaded inside a frame (a login redirect) hands over to the shell (`mo-unauthorized` / `mo-machines`) and registers no worker.
+  - `embed.js` keeps the browser's own `fetch` from before the page replaces `window.fetch` with the wrapper, which otherwise called itself and hung on its own handshake (test: "the wrapper can replace window.fetch").
+  - Checked in headless Chrome with two scratch servers as two cross-site machines: add, log in through the shell, dashboard and a session's chat (transcript over a ticket) in the frame, the frame's Machines link back to the list.
+- Tests:
+  - Go: embedded static vs top-level navigation vs API; tickets (issued only to a device, accepted only on the listed GETs, expiry, tampering, a revoked device); CORS and its preflight without a login; a cross-origin pair (token, no cookie, origin recorded); `frame-ancestors`.
+  - Node: `createEmbed` (not embedded → untouched; the handshake only from the parent; the header only same-origin; 401 and network failure reported to the parent's origin; `authURL`; sessionStorage restore) and the shell's message filter and token storage.
 
 ## Decisions
 
