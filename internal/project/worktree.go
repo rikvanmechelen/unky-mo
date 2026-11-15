@@ -3,7 +3,6 @@ package project
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -29,8 +28,7 @@ type Worktree struct {
 
 // ListWorktrees returns the git worktrees for the given project path.
 func ListWorktrees(projectPath string) ([]Worktree, error) {
-	cmd := exec.Command("git", "-C", projectPath, "worktree", "list", "--porcelain")
-	out, err := cmd.Output()
+	out, err := gitOutput(projectPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -116,13 +114,13 @@ func CreateWorktree(projectPath, branch string) (string, error) {
 	wtPath := filepath.Join(siblingDir, branch)
 
 	// First try creating a new branch; fall back to checking out an existing one.
-	out, err := exec.Command("git", "-C", projectPath, "worktree", "add", "-b", branch, wtPath).CombinedOutput()
+	out, err := gitCombined(projectPath, "worktree", "add", "-b", branch, wtPath)
 	if err == nil {
 		return wtPath, nil
 	}
 	firstErr := strings.TrimSpace(string(out))
 
-	out2, err2 := exec.Command("git", "-C", projectPath, "worktree", "add", wtPath, branch).CombinedOutput()
+	out2, err2 := gitCombined(projectPath, "worktree", "add", wtPath, branch)
 	if err2 == nil {
 		return wtPath, nil
 	}
@@ -147,8 +145,7 @@ func CreateNewBranchWorktree(projectPath, branch string) (string, error) {
 	}
 
 	// Pre-flight: refuse if the branch already exists.
-	check := exec.Command("git", "-C", projectPath, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
-	if err := check.Run(); err == nil {
+	if err := runGit(projectPath, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
 		return "", fmt.Errorf("branch %q already exists", branch)
 	}
 
@@ -157,7 +154,7 @@ func CreateNewBranchWorktree(projectPath, branch string) (string, error) {
 		return "", fmt.Errorf("creating %s: %w", siblingDir, err)
 	}
 	wtPath := filepath.Join(siblingDir, branch)
-	out, err := exec.Command("git", "-C", projectPath, "worktree", "add", "-b", branch, wtPath).CombinedOutput()
+	out, err := gitCombined(projectPath, "worktree", "add", "-b", branch, wtPath)
 	if err != nil {
 		return "", fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
 	}
@@ -186,7 +183,7 @@ func RemoveWorktree(projectPath, branch string) error {
 	if wtPath == "" {
 		return fmt.Errorf("no worktree found for branch %q", branch)
 	}
-	out, err := exec.Command("git", "-C", projectPath, "worktree", "remove", "--force", wtPath).CombinedOutput()
+	out, err := gitCombined(projectPath, "worktree", "remove", "--force", wtPath)
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -204,7 +201,7 @@ func DeleteBranch(projectPath, branch string) error {
 	if mainBranch != "" && branch == mainBranch {
 		return fmt.Errorf("cannot delete the branch currently checked out in main")
 	}
-	out, err := exec.Command("git", "-C", projectPath, "branch", "-D", branch).CombinedOutput()
+	out, err := gitCombined(projectPath, "branch", "-D", branch)
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}

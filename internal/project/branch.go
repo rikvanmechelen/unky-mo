@@ -3,7 +3,6 @@ package project
 import (
 	"bytes"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,9 +25,8 @@ type Branch struct {
 // main-checkout branch pinned first, then remaining branches by LastCommit
 // descending.
 func ListBranches(projectPath string) ([]Branch, error) {
-	cmd := exec.Command("git", "-C", projectPath, "for-each-ref",
+	out, err := gitOutput(projectPath, "for-each-ref",
 		"--format=%(refname:short)%09%(committerdate:unix)", "refs/heads/")
-	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("git for-each-ref: %w", err)
 	}
@@ -111,8 +109,7 @@ func mergedBranchSet(projectPath, mainBranch string) map[string]bool {
 	if mainBranch == "" {
 		return set
 	}
-	cmd := exec.Command("git", "-C", projectPath, "branch", "--merged", mainBranch)
-	out, err := cmd.Output()
+	out, err := gitOutput(projectPath, "branch", "--merged", mainBranch)
 	if err != nil {
 		return set
 	}
@@ -130,9 +127,8 @@ func mergedBranchSet(projectPath, mainBranch string) map[string]bool {
 // detected by the `[gone]` marker from `for-each-ref`'s upstream:track column.
 func remoteGoneBranchSet(projectPath string) map[string]bool {
 	set := map[string]bool{}
-	cmd := exec.Command("git", "-C", projectPath, "for-each-ref",
+	out, err := gitOutput(projectPath, "for-each-ref",
 		"--format=%(refname:short)%09%(upstream:track)", "refs/heads/")
-	out, err := cmd.Output()
 	if err != nil {
 		return set
 	}
@@ -151,8 +147,7 @@ func remoteGoneBranchSet(projectPath string) map[string]bool {
 // MainCheckoutBranch returns the branch currently checked out at projectPath.
 // Returns an empty string (no error) if HEAD is detached.
 func MainCheckoutBranch(projectPath string) (string, error) {
-	cmd := exec.Command("git", "-C", projectPath, "symbolic-ref", "--quiet", "--short", "HEAD")
-	out, err := cmd.Output()
+	out, err := gitOutput(projectPath, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil {
 		// Detached HEAD or other non-symbolic state: not an error for callers.
 		return "", nil
@@ -163,8 +158,7 @@ func MainCheckoutBranch(projectPath string) (string, error) {
 // IsDirty returns true when `git status --porcelain` at projectPath reports
 // any staged, unstaged, or untracked changes.
 func IsDirty(projectPath string) (bool, error) {
-	cmd := exec.Command("git", "-C", projectPath, "status", "--porcelain")
-	out, err := cmd.Output()
+	out, err := gitOutput(projectPath, "status", "--porcelain")
 	if err != nil {
 		return false, fmt.Errorf("git status: %w", err)
 	}
@@ -177,12 +171,12 @@ func IsDirty(projectPath string) (bool, error) {
 // verbatim so callers can surface informative messages such as "'branch' is
 // already checked out at <path>".
 func CheckoutInMain(projectPath, branch string) error {
-	out, err := exec.Command("git", "-C", projectPath, "checkout", branch).CombinedOutput()
+	out, err := gitCombined(projectPath, "checkout", branch)
 	if err == nil {
 		return nil
 	}
 	firstErr := strings.TrimSpace(string(out))
-	out2, err2 := exec.Command("git", "-C", projectPath, "checkout", "-b", branch).CombinedOutput()
+	out2, err2 := gitCombined(projectPath, "checkout", "-b", branch)
 	if err2 == nil {
 		return nil
 	}
@@ -201,8 +195,7 @@ func StashMain(projectPath, branch string) error {
 // were no local changes — git exits 0 with a "No local changes to save"
 // notice, which is expected for callers that opt in without pre-checking.
 func Stash(path, msg string) error {
-	cmd := exec.Command("git", "-C", path, "stash", "push", "-u", "-m", msg)
-	out, err := cmd.CombinedOutput()
+	out, err := gitCombined(path, "stash", "push", "-u", "-m", msg)
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -212,8 +205,7 @@ func Stash(path, msg string) error {
 // StashPop runs `git stash pop` at path. Errors carry git's stderr verbatim
 // so conflict messages can be surfaced to the user.
 func StashPop(path string) error {
-	cmd := exec.Command("git", "-C", path, "stash", "pop")
-	out, err := cmd.CombinedOutput()
+	out, err := gitCombined(path, "stash", "pop")
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
