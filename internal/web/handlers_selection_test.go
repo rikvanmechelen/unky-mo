@@ -229,7 +229,9 @@ func TestSelectionWorktreeFile(t *testing.T) {
 	}
 
 	git.EXPECT().ReadFile("/ws/foo", "a.go").Return(&gitfiles.Content{Path: "a.go", Exists: true, Text: "new", Hash: "h1"}, nil)
-	git.EXPECT().ReadFile("/ws/foo", "gone.go").Return(&gitfiles.Content{Path: "gone.go"}, nil)
+	// gone.go is listed only by the selection (deleted in a selected
+	// commit): it's served as absent, without reading the disk, where
+	// anything under that name now would be an ignored file.
 	for _, path := range []string{"a.go", "gone.go"} {
 		rec := get(t, srv, "/api/sessions/@5/file?path="+path+"&"+q)
 		var got fileResponse

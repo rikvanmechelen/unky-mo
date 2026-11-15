@@ -121,6 +121,12 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, dir, path, re
 	case "base":
 		c, err = s.readBase(dir, root, path)
 	default:
+		if !s.workingCopyListed(dir, path) {
+			// Listed only as deleted: whatever is on disk under that name
+			// now is ignored (see workingCopyListed), so it isn't read.
+			c = &gitfiles.Content{Path: path}
+			break
+		}
 		c, err = s.deps.Git.ReadFile(root, path)
 	}
 	if errors.Is(err, gitfiles.ErrOutsideRoot) {
@@ -150,7 +156,14 @@ func (s *Server) serveSelectionWorktreeFile(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusNotFound, fmt.Errorf("%s is not a file in this checkout", path))
 			return
 		}
-		root = o.Root
+		// Listed by the selection only (deleted in a selected commit): not
+		// in the working tree's listing, so anything on disk is ignored.
+		writeContent(w, r, &gitfiles.Content{Path: path}, false)
+		return
+	}
+	if !s.workingCopyListed(dir, path) {
+		writeContent(w, r, &gitfiles.Content{Path: path}, false)
+		return
 	}
 	c, err := s.deps.Git.ReadFile(root, path)
 	if errors.Is(err, gitfiles.ErrOutsideRoot) {
@@ -218,6 +231,33 @@ func (s *Server) listedPath(dir, path string) (root string, status int, err erro
 	return "", http.StatusNotFound, fmt.Errorf("%s is not a file in this checkout", path)
 }
 
+// workingCopyListed reports whether path's working copy may be read or
+// written: it's in the tree (tracked, or untracked and not ignored) or a
+// change that isn't a deletion. A path listed only as deleted is either
+// gone or ignored: `git rm --cached .env` (the usual fix for a committed
+// secret) leaves .env on disk, ignored, while the change list still shows
+// it as deleted, and serving the disk then would hand out the secret.
+func (s *Server) workingCopyListed(dir, path string) bool {
+	if v, err := s.treeCache.get(dir, func() (any, error) {
+		root, paths, err := s.deps.Git.Tree(dir)
+		return treeResponse{Repo: true, Root: root, Paths: paths}, err
+	}); err == nil {
+		if _, found := slices.BinarySearch(v.(treeResponse).Paths, path); found {
+			return true
+		}
+	}
+	v, err := s.filesCache.get(dir, func() (any, error) { return s.deps.Git.Changes(dir) })
+	if err != nil {
+		return false
+	}
+	for _, f := range v.(*gitfiles.Changes).Files {
+		if f.Path == path {
+			return f.Status != "D"
+		}
+	}
+	return false
+}
+
 // contentETag is a strong ETag for one file version: its hash, or a marker
 // for a missing or too-large file (which has no hash).
 func contentETag(c *gitfiles.Content) string {
@@ -276,6 +316,10 @@ func (s *Server) saveFile(w http.ResponseWriter, r *http.Request, dir string) {
 	root, status, err := s.listedPath(dir, body.Path)
 	if err != nil {
 		writeError(w, status, err)
+		return
+	}
+	if !s.workingCopyListed(dir, body.Path) {
+		writeError(w, http.StatusNotFound, fmt.Errorf("%s is deleted in this checkout", body.Path))
 		return
 	}
 

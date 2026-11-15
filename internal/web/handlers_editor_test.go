@@ -48,6 +48,30 @@ func TestSessionFileFallsBackToChanges(t *testing.T) {
 	}
 }
 
+// `git rm --cached .env` (then ignoring it) leaves the secret on disk while
+// the changes list shows .env as deleted. Its HEAD version is readable like
+// any deleted file's, but the working copy is never read or written.
+func TestSessionFileIndexDeletedIgnoredFile(t *testing.T) {
+	srv, git := filesFixture(t)
+	git.EXPECT().Tree("/ws/foo/sub").Return("/ws/foo", []string{"a.go"}, nil).AnyTimes()
+	git.EXPECT().Changes("/ws/foo/sub").Return(&gitfiles.Changes{Root: "/ws/foo", Files: []gitfiles.File{{Path: ".env", Status: "D"}}}, nil).AnyTimes()
+	git.EXPECT().Overview("/ws/foo/sub", gitfiles.ModeBranch).Return(&gitfiles.Overview{Root: "/ws/foo"}, nil).AnyTimes()
+	git.EXPECT().ReadHEAD("/ws/foo", ".env").Return(&gitfiles.Content{Path: ".env", Exists: true, Hash: "h", Text: "OLD=1"}, nil)
+	// No ReadFile / WriteFile expectations: any disk access fails the test.
+
+	if rec := get(t, srv, "/api/sessions/@5/file?path=.env&rev=HEAD"); rec.Code != http.StatusOK {
+		t.Errorf("HEAD: want 200, got %d: %s", rec.Code, rec.Body)
+	}
+	rec := get(t, srv, "/api/sessions/@5/file?path=.env")
+	var got gitfiles.Content
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil || got.Exists || got.Text != "" {
+		t.Errorf("working copy: %d %s", rec.Code, rec.Body)
+	}
+	if rec := put(t, srv, "/api/sessions/@5/file", `{"path":".env","text":"X=1","baseHash":"h"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("save: want 404, got %d: %s", rec.Code, rec.Body)
+	}
+}
+
 // Paths the Files panel doesn't list (ignored files, traversal, absolute
 // paths) never reach a read.
 func TestSessionFileRejectsUnlistedPaths(t *testing.T) {
