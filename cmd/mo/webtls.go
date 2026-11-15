@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -17,9 +16,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// webTLSDir holds mo web's local CA and server cert.
+// webTLSDir holds mo web's local CA and server cert (see secretPath).
 func webTLSDir() string {
-	return filepath.Join(config.DefaultConfigDir(), "tls")
+	return secretPath("tls")
 }
 
 // loadWebTLS returns the cert mo web serves for addr: [web] cert_file +

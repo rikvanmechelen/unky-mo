@@ -72,7 +72,7 @@ func webCmd() *cobra.Command {
 			}
 
 			if !cfg.Web.DisablePush {
-				if deps.Push, err = web.NewPushService(filepath.Join(config.DefaultConfigDir(), "push"), nil, nil); err != nil {
+				if deps.Push, err = web.NewPushService(secretPath("push"), nil, nil); err != nil {
 					return fmt.Errorf("push: %w", err)
 				}
 			}
@@ -195,7 +195,8 @@ func webCredentialsPath() string {
 // webDevicesPath holds the devices paired with the login (token hashes,
 // mode 0600).
 func webDevicesPath() string {
-	return filepath.Join(config.DefaultConfigDir(), "web-devices.json")
+	secretPath("web-devices.key") // the ticket key moves with the device list
+	return secretPath("web-devices.json")
 }
 
 func webDevicesCmd() *cobra.Command {
@@ -365,4 +366,26 @@ func jiraInstancesFromConfig(cfg config.TicketsConfig) []jira.Instance {
 		})
 	}
 	return out
+}
+
+// secretPath is where one of mo web's long-lived secrets lives (name is a
+// file or directory: "tls", "push", "web-devices.json", "web-devices.key"):
+// the state dir, only this user's, and not the config dir, which dotfiles
+// repos often share (a published CA key would let anyone impersonate this
+// machine to every device that trusts it). A secret still in the config
+// dir from an earlier version is moved over, unchanged, the first time:
+// renamed, so the CA every device trusts stays the same one.
+func secretPath(name string) string {
+	stateDir := config.DefaultStateDir()
+	newPath := filepath.Join(stateDir, name)
+	if _, err := os.Lstat(newPath); err == nil {
+		return newPath
+	}
+	oldPath := filepath.Join(config.DefaultConfigDir(), name)
+	if _, err := os.Lstat(oldPath); err == nil {
+		if config.PrivateStateDir(stateDir) != nil || os.Rename(oldPath, newPath) != nil {
+			return oldPath // couldn't move it (another filesystem?): keep using it
+		}
+	}
+	return newPath
 }

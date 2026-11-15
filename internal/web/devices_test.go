@@ -112,3 +112,18 @@ func TestDeviceCap(t *testing.T) {
 		t.Error("pairing past the cap succeeded")
 	}
 }
+
+// A device list left readable by others (an older version, a dotfiles
+// checkout) is made the owner's only when loaded.
+func TestDeviceStoreTightensMode(t *testing.T) {
+	devices, _, path := newTestDevices(t)
+	devices.Pair("x", "")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	again := NewDeviceStore(path, nil)
+	again.List()
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v", info.Mode().Perm())
+	}
+}

@@ -71,7 +71,10 @@ func EnsureTLS(dir string, hosts []string, now time.Time) (*TLSResult, error) {
 	if err := os.MkdirAll(dir, tlsDirMode); err != nil {
 		return nil, err
 	}
+	keepPrivate(dir, tlsDirMode)
 	files := TLSFilesIn(dir)
+	keepPrivate(files.CAKey, 0o600)
+	keepPrivate(files.Key, 0o600)
 	res := &TLSResult{Files: files}
 
 	ca, caKey, err := loadCA(files, now)

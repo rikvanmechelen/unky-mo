@@ -86,6 +86,7 @@ func (s *DeviceStore) load() {
 	if err != nil {
 		return
 	}
+	keepPrivate(s.path, 0o600)
 	var list []Device
 	if json.Unmarshal(raw, &list) == nil {
 		s.devices = list
@@ -225,4 +226,17 @@ func (s *DeviceStore) Revoke(id string) bool {
 		}
 	}
 	return false
+}
+
+// keepPrivate takes group and other permissions off a secret file or
+// directory that has them (written by an older version, or copied with a
+// dotfiles checkout). Nothing happens when it doesn't exist.
+func keepPrivate(path string, mode os.FileMode) {
+	info, err := os.Lstat(path)
+	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
+		return // missing, or a symlink: not followed
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(path, mode)
+	}
 }

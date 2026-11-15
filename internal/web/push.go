@@ -84,6 +84,7 @@ func NewPushService(dir string, client webpush.Doer, now func() time.Time) (*Pus
 		now:      now,
 		presence: map[string]map[string]time.Time{},
 	}
+	keepPrivate(filepath.Dir(p.path), 0o700)
 	data, err := os.ReadFile(p.path)
 	switch {
 	case err == nil:

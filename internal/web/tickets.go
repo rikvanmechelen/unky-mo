@@ -53,6 +53,7 @@ func (s *DeviceStore) ticketKey() ([]byte, error) {
 	}
 	path := s.path[:len(s.path)-len(".json")] + ".key"
 	if raw, err := os.ReadFile(path); err == nil {
+		keepPrivate(path, 0o600)
 		if key, err := hex.DecodeString(string(raw)); err == nil && len(key) == 32 {
 			s.key = key
 			return key, nil
