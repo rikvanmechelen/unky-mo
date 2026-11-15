@@ -178,6 +178,7 @@ type Model struct {
 	detailSession   *claude.Session
 	detailWorktrees []project.Worktree
 	detailBranches  []project.Branch
+	detailLoading   bool // the branches are being listed (loadDetail)
 	// detailRows is a flat list of navigable items in the project detail view:
 	// one row per local branch, each followed by the sessions discovered at
 	// that branch's checkout location (main path or worktree path).
@@ -503,6 +504,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncPullMsg:
 		return m.onSyncPull(msg)
+
+	case detailLoadedMsg:
+		return m.onDetailLoaded(msg)
 
 	case worktreeExistsMsg:
 		return m.onWorktreeExists(msg)
@@ -2289,7 +2293,11 @@ func (m Model) projectDetailView() string {
 
 	if len(m.detailRows) == 0 {
 		left.WriteString(headerStyle.Render("Branches"+focusIndicator) + "\n")
-		left.WriteString("  " + footerDescStyle.Render("No branches found") + "\n")
+		if m.detailLoading {
+			left.WriteString("  " + footerDescStyle.Render("Loading branches…") + "\n")
+		} else {
+			left.WriteString("  " + footerDescStyle.Render("No branches found") + "\n")
+		}
 	}
 
 	// Session recap preview

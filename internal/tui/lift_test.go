@@ -244,8 +244,10 @@ func TestSessionLiftedMsgRefreshesAndRebuildsRows(t *testing.T) {
 	}
 	got, cmd := m.Update(sessionLiftedMsg{status: "Lifted session into alpha@feat"})
 	mm := got.(Model)
-	// Rows rebuilt: repo has only main branch, so buildDetailRows produces
-	// exactly 2 rows (branch header + br-empty).
+	// The branches are listed in the background; their result rebuilds the
+	// rows. The repo has only main, so that's 2 rows (branch + br-empty).
+	got, _ = mm.Update(mm.loadDetail(repo, false)())
+	mm = got.(Model)
 	if len(mm.detailRows) != 2 {
 		t.Errorf("rows after lift: got %d, want 2", len(mm.detailRows))
 	}
@@ -390,5 +392,16 @@ func TestLiftInputPromptEscCancels(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("esc should not emit a Cmd")
+	}
+}
+
+// Branches listed for a project the user has since left don't land on the
+// screen now showing.
+func TestDetailLoadedForAnotherProjectIgnored(t *testing.T) {
+	m := Model{detailProject: &project.Project{Name: "beta", Path: "/ws/beta"}, detailLoading: true}
+	got, _ := m.Update(detailLoadedMsg{path: "/ws/alpha", branches: []project.Branch{{Name: "main"}}})
+	mm := got.(Model)
+	if mm.detailBranches != nil || !mm.detailLoading {
+		t.Errorf("alpha's branches landed on beta: %+v", mm.detailBranches)
 	}
 }

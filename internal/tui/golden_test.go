@@ -263,6 +263,11 @@ func TestGoldenScreens(t *testing.T) {
 			m.agentPicker = &agentPickerPrompt{}
 			return m
 		}},
+		{"detail_loading", func(m Model) Model {
+			m = withDetail(m)
+			m.detailBranches, m.detailRows, m.detailLoading = nil, nil, true
+			return m
+		}},
 		{"detail_recap", func(m Model) Model {
 			m = withDetail(m)
 			m.detailCursor = 1

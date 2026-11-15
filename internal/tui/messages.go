@@ -143,6 +143,15 @@ type syncPullMsg struct {
 	err        error                         // non-nil when sync is configured but failed
 }
 
+// detailLoadedMsg carries a project's worktrees and branches, listed off
+// the event loop (loadDetail).
+type detailLoadedMsg struct {
+	path      string
+	worktrees []project.Worktree
+	branches  []project.Branch
+	recap     bool
+}
+
 // newProjectCreatedMsg is returned by doCreateProject on success.
 type newProjectCreatedMsg struct {
 	name string

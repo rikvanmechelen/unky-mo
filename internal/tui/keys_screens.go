@@ -253,11 +253,13 @@ func (m Model) enterDashboard() (tea.Model, tea.Cmd, bool) {
 	if p != nil {
 		m.detailProject = p
 		m.detailSession = m.claude.SessionForPath(p.Path)
-		m.detailWorktrees, _ = project.ListWorktrees(p.Path)
-		m.detailBranches, _ = project.ListBranches(p.Path)
+		// Branches and worktrees load in the background (loadDetail): git
+		// on a large repo would freeze the TUI here.
+		m.detailWorktrees, m.detailBranches = nil, nil
+		m.detailLoading = true
 		m.buildDetailRows()
 		m.detailCursor = 0
-		m.loadRecap()
+		m.detailRecap = nil
 		m.detailPRs = nil
 		m.detailPRCursor = 0
 		m.detailPRErr = ""
@@ -268,6 +270,7 @@ func (m Model) enterDashboard() (tea.Model, tea.Cmd, bool) {
 		m.detailFocusLeft = true
 		m.screen = ScreenProject
 		return m, tea.Batch(
+			m.loadDetail(p.Path, true),
 			m.fetchPRs(p.Path),
 			m.autoSyncPull(p.Name, p.Path),
 		), true
