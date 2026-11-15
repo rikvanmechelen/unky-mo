@@ -59,7 +59,7 @@ func linearCases() []linearCase {
 
 func timeScan(scan func(string), src string) time.Duration {
 	best := time.Duration(1 << 62)
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		start := time.Now()
 		scan(src)
 		if d := time.Since(start); d < best {
@@ -84,11 +84,20 @@ func TestScannersLinear(t *testing.T) {
 	}
 	for _, c := range linearCases() {
 		t.Run(c.name, func(t *testing.T) {
-			small := timeScan(c.scan, c.gen(c.n))
-			big := timeScan(c.scan, c.gen(4*c.n))
-			// 4× the input: linear is ~4×; allow noise, refuse 16×.
-			if big > 9*small+30*time.Millisecond {
-				t.Errorf("n=%d: %v, 4n: %v (%.1f×): not linear", c.n, small, big, float64(big)/float64(small))
+			// 4× the input: linear is ~4×; allow noise, refuse 16×. A
+			// quadratic scan is over the bound every time, while a busy
+			// machine (the whole suite running in parallel) only now and
+			// then, so it fails only if three measurements all are.
+			smallSrc, bigSrc := c.gen(c.n), c.gen(4*c.n)
+			var small, big time.Duration
+			for try := 0; try < 3; try++ {
+				small, big = timeScan(c.scan, smallSrc), timeScan(c.scan, bigSrc)
+				if big <= 9*small+30*time.Millisecond {
+					break
+				}
+				if try == 2 {
+					t.Errorf("n=%d: %v, 4n: %v (%.1f×): not linear", c.n, small, big, float64(big)/float64(small))
+				}
 			}
 			smallB, bigB := allocBytes(c.scan, c.gen(c.n)), allocBytes(c.scan, c.gen(4*c.n))
 			if bigB > 9*smallB+(1<<20) {
