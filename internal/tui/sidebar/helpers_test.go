@@ -4,10 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/gitfiles"
 )
 
 func TestRenderDotKnownStatuses(t *testing.T) {
@@ -243,66 +245,37 @@ func TestRenderFileTreeRespectsMaxLines(t *testing.T) {
 	}
 }
 
-// --- parseGitStatus tests ---
+// --- changed files ---
 
-func TestParseGitStatusEmpty(t *testing.T) {
-	got := parseGitStatus("")
-	if len(got) != 0 {
-		t.Errorf("empty input should return empty map, got %v", got)
-	}
+type fakeGit struct {
+	changes *gitfiles.Changes
+	tree    []string
 }
 
-func TestParseGitStatusModifiedFile(t *testing.T) {
-	got := parseGitStatus(" M internal/tui/app.go")
-	if got["internal/tui/app.go"] != "M" {
-		t.Errorf("expected M for app.go, got %q", got["internal/tui/app.go"])
+func (f fakeGit) Changes(string) (*gitfiles.Changes, error) { return f.changes, nil }
+func (f fakeGit) Tree(string) ([]string, error)             { return f.tree, nil }
+
+// The Files section takes the checkout's changes as gitfiles reads them
+// (the web's Files panel list): status letters, sorted paths, totals.
+func TestRefreshChangedFilesFromGitReader(t *testing.T) {
+	m := &Model{windowPath: "/ws/alpha", git: fakeGit{changes: &gitfiles.Changes{
+		Files:   []gitfiles.File{{Path: "z.go", Status: "M"}, {Path: "a/new.go", Status: "?"}, {Path: "gone.go", Status: "D"}},
+		Added:   12,
+		Removed: 3,
+	}}}
+	m.refreshChangedFiles()
+	if want := []string{"a/new.go", "gone.go", "z.go"}; !reflect.DeepEqual(m.changedFiles, want) {
+		t.Errorf("files %v", m.changedFiles)
+	}
+	if m.gitStatusMap["a/new.go"] != "?" || m.gitStatusMap["gone.go"] != "D" || m.changedAdded != 12 || m.changedRemoved != 3 {
+		t.Errorf("status %v, +%d -%d", m.gitStatusMap, m.changedAdded, m.changedRemoved)
+	}
+	m.windowPath = ""
+	m.refreshChangedFiles()
+	if m.changedFiles != nil || m.changedAdded != 0 {
+		t.Error("no checkout, no changes")
 	}
 }
-
-func TestParseGitStatusMultipleStatuses(t *testing.T) {
-	input := " M app.go\nA  new.go\n D deleted.go\n?? untracked.txt"
-	got := parseGitStatus(input)
-
-	cases := map[string]string{
-		"app.go":        "M",
-		"new.go":        "A",
-		"deleted.go":    "D",
-		"untracked.txt": "?",
-	}
-	for path, want := range cases {
-		if got[path] != want {
-			t.Errorf("path %q: want %q, got %q", path, want, got[path])
-		}
-	}
-}
-
-func TestParseGitStatusRename(t *testing.T) {
-	// Renames show as "R  old.go -> new.go"
-	got := parseGitStatus("R  old.go -> new.go")
-	if got["new.go"] != "R" {
-		t.Errorf("rename should map new path with R, got %q", got["new.go"])
-	}
-	if _, ok := got["old.go"]; ok {
-		t.Error("rename should not map old path")
-	}
-}
-
-func TestParseGitStatusStagedAndWorktree(t *testing.T) {
-	// "MM" means staged + worktree modified; should still show "M"
-	got := parseGitStatus("MM both.go")
-	if got["both.go"] != "M" {
-		t.Errorf("MM should resolve to M, got %q", got["both.go"])
-	}
-}
-
-func TestParseGitStatusSkipsShortLines(t *testing.T) {
-	got := parseGitStatus("ab\n M ok.go")
-	if len(got) != 1 {
-		t.Errorf("should skip short lines, got %d entries", len(got))
-	}
-}
-
-// --- buildDirTree tests ---
 
 func TestBuildDirTreeEmpty(t *testing.T) {
 	root := buildDirTree(nil)

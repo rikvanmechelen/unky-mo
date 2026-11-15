@@ -1,7 +1,16 @@
 package sidebar
 
 import (
+	"context"
+	"errors"
+	"os/exec"
+	"path/filepath"
+	"time"
+
+	moexec "github.com/rvanmech/unky-mo/internal/exec"
+
 	"github.com/rvanmech/unky-mo/internal/claude"
+	"github.com/rvanmech/unky-mo/internal/gitfiles"
 	ttmux "github.com/rvanmech/unky-mo/internal/tmux"
 )
 
@@ -9,7 +18,7 @@ import (
 // an interface so tests can inject a mock without spinning up a real tmux
 // server.
 //
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_sidebar github.com/rvanmech/unky-mo/internal/tui/sidebar TmuxClient,ClaudeReader,WindowResolver
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_sidebar github.com/rvanmech/unky-mo/internal/tui/sidebar TmuxClient,ClaudeReader,WindowResolver,GitReader,Opener
 type TmuxClient interface {
 	SessionName() string
 	BindKey(table, key, command string, args ...string) error
@@ -177,4 +186,58 @@ func (defaultClaudeReader) SessionsForPath(path string) []claude.Session {
 }
 func (defaultClaudeReader) ProjectsDirForPath(p string) string {
 	return claude.ProjectsDirForPath(p)
+}
+
+// GitReader reads the window's checkout: its changes (the Files section)
+// and every file in it (the full tree). Both list paths from the repo root.
+type GitReader interface {
+	Changes(dir string) (*gitfiles.Changes, error)
+	Tree(dir string) ([]string, error)
+}
+
+// gitTimeout bounds one read of the checkout on the sidebar's tick.
+const gitTimeout = 5 * time.Second
+
+type defaultGitReader struct{}
+
+func (defaultGitReader) Changes(dir string) (*gitfiles.Changes, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	return gitfiles.GetChanges(ctx, moexec.DefaultCommander, dir)
+}
+
+func (defaultGitReader) Tree(dir string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	_, paths, err := gitfiles.Tree(ctx, moexec.DefaultCommander, dir)
+	return paths, err
+}
+
+// Opener opens a checkout in an editor outside the terminal (o): VS Code
+// with the file focused, else the system's default.
+type Opener interface {
+	// Open opens dir, focusing file (relative to dir) when it isn't "".
+	// It says where it opened, or returns an error when nothing could.
+	Open(dir, file string) (string, error)
+}
+
+type defaultOpener struct{}
+
+func (defaultOpener) Open(dir, file string) (string, error) {
+	target := dir
+	codeArgs := []string{dir}
+	if file != "" {
+		target = filepath.Join(dir, file)
+		codeArgs = append(codeArgs, "--goto", target+":1:1")
+	}
+	if err := exec.Command("code", codeArgs...).Run(); err == nil {
+		return "VS Code", nil
+	}
+	if err := exec.Command("open", target).Run(); err == nil {
+		if file == "" {
+			return "Finder", nil
+		}
+		return "default editor", nil
+	}
+	return "", errors.New("no external editor found")
 }

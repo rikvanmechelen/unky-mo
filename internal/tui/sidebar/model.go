@@ -65,6 +65,8 @@ type Model struct {
 	tmux          TmuxClient
 	claude        ClaudeReader
 	resolver      WindowResolver
+	git           GitReader // nil: the real checkout (gitReader)
+	opener        Opener    // nil: VS Code or the system default
 	stateFile     string
 	statusMsg     string
 	cursorSetOnce bool // true after initial cursor placement
@@ -1132,44 +1134,33 @@ func (m *Model) refreshFromSessions() {
 	}
 }
 
+// refreshChangedFiles reads the checkout's changes (the same list the web
+// Files panel shows): each changed file with its status letter, and the
+// lines added and removed against HEAD, untracked files included.
 func (m *Model) refreshChangedFiles() {
+	m.changedFiles, m.gitStatusMap = nil, nil
+	m.changedAdded, m.changedRemoved = 0, 0
 	if m.windowPath == "" {
-		m.changedFiles = nil
-		m.gitStatusMap = nil
 		return
 	}
-	cmd := exec.Command("git", "-C", m.windowPath, "status", "--porcelain")
-	out, err := cmd.Output()
+	ch, err := m.gitReader().Changes(m.windowPath)
 	if err != nil {
-		m.changedFiles = nil
-		m.gitStatusMap = nil
 		return
 	}
-	m.gitStatusMap = parseGitStatus(strings.TrimSpace(string(out)))
-	var files []string
-	for path := range m.gitStatusMap {
-		files = append(files, path)
+	m.gitStatusMap = make(map[string]string, len(ch.Files))
+	for _, f := range ch.Files {
+		m.gitStatusMap[f.Path] = f.Status
+		m.changedFiles = append(m.changedFiles, f.Path)
 	}
-	// Stable ordering: sort so the tree renders deterministically.
-	sort.Strings(files)
-	m.changedFiles = files
+	sort.Strings(m.changedFiles) // so the tree renders deterministically
+	m.changedAdded, m.changedRemoved = ch.Added, ch.Removed
+}
 
-	// Get line-level stats
-	m.changedAdded = 0
-	m.changedRemoved = 0
-	numstat, err := exec.Command("git", "-C", m.windowPath, "diff", "--numstat").Output()
-	if err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(numstat)), "\n") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 && parts[0] != "-" {
-				var added, removed int
-				fmt.Sscan(parts[0], &added)
-				fmt.Sscan(parts[1], &removed)
-				m.changedAdded += added
-				m.changedRemoved += removed
-			}
-		}
+func (m *Model) gitReader() GitReader {
+	if m.git == nil {
+		return defaultGitReader{}
 	}
+	return m.git
 }
 
 // refreshDirTree refreshes the full project directory tree on a 5s cadence
@@ -1184,31 +1175,16 @@ func (m *Model) refreshDirTree() {
 	if m.dirTree != nil && m.dirTreeRefreshTick%5 != 0 {
 		return // use cached tree
 	}
-	out, err := exec.Command("git", "-C", m.windowPath, "ls-files").Output()
+	// Tracked and untracked-but-not-ignored files, from the repo root.
+	files, err := m.gitReader().Tree(m.windowPath)
 	if err != nil {
 		return
 	}
-	raw := strings.TrimSpace(string(out))
+	raw := strings.Join(files, "\n")
 	if raw == m.dirTreeRaw && m.dirTree != nil {
 		return // unchanged
 	}
-	// Parse files
-	var files []string
-	for _, line := range strings.Split(raw, "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-	// Also include untracked files from gitStatusMap
-	tracked := make(map[string]bool, len(files))
-	for _, f := range files {
-		tracked[f] = true
-	}
-	for path, status := range m.gitStatusMap {
-		if !tracked[path] && status == "?" {
-			files = append(files, path)
-		}
-	}
+	files = append([]string(nil), files...)
 	sort.Strings(files)
 
 	// Preserve expand state from old tree
@@ -1486,38 +1462,6 @@ func annotateTreeWithStatus(lines []fileTreeLine, statusMap map[string]string) [
 		} else if s, ok := statusMap[result[i].path]; ok {
 			result[i].gitStatus = s
 		}
-	}
-	return result
-}
-
-// parseGitStatus parses `git status --porcelain` output into a map of
-// relative file path → single-char status label (M, A, D, ?, R).
-func parseGitStatus(porcelainOutput string) map[string]string {
-	result := make(map[string]string)
-	for _, line := range strings.Split(porcelainOutput, "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		x, y := line[0], line[1]
-		file := strings.TrimSpace(line[2:])
-		// Handle renames: "old -> new"
-		if idx := strings.Index(file, " -> "); idx >= 0 {
-			file = file[idx+4:]
-		}
-		// Pick the most informative single-char label.
-		// Priority: worktree status (Y), then index status (X).
-		var label byte
-		switch {
-		case y == '?' || x == '?':
-			label = '?'
-		case y != ' ' && y != 0:
-			label = y
-		case x != ' ' && x != 0:
-			label = x
-		default:
-			continue
-		}
-		result[file] = string(label)
 	}
 	return result
 }
@@ -2212,31 +2156,28 @@ func (m Model) openFileInEditor(file string) tea.Cmd {
 	})
 }
 
+// openFileExternal opens file in VS Code (the project folder, so the
+// workspace opens or is reused, with the file focused), else the default.
 func (m Model) openFileExternal(file string) tea.Cmd {
-	absPath := filepath.Join(m.windowPath, file)
-	// Try VS Code first — pass the project folder so the full workspace
-	// opens (or is reused if already open), then --goto focuses the file.
-	// Falls back to macOS open for non-VS-Code users.
-	return func() tea.Msg {
-		if err := exec.Command("code", m.windowPath, "--goto", absPath+":1:1").Run(); err == nil {
-			return sidebarStatusMsg("opened in VS Code")
-		}
-		if err := exec.Command("open", absPath).Run(); err == nil {
-			return sidebarStatusMsg("opened in default editor")
-		}
-		return sidebarStatusMsg("no external editor found")
-	}
+	return m.openExternal(file)
 }
 
 func (m Model) openProjectExternal() tea.Cmd {
+	return m.openExternal("")
+}
+
+func (m Model) openExternal(file string) tea.Cmd {
+	opener := m.opener
+	if opener == nil {
+		opener = defaultOpener{}
+	}
+	dir := m.windowPath
 	return func() tea.Msg {
-		if err := exec.Command("code", m.windowPath).Run(); err == nil {
-			return sidebarStatusMsg("opened in VS Code")
+		where, err := opener.Open(dir, file)
+		if err != nil {
+			return sidebarStatusMsg(err.Error())
 		}
-		if err := exec.Command("open", m.windowPath).Run(); err == nil {
-			return sidebarStatusMsg("opened in Finder")
-		}
-		return sidebarStatusMsg("no external editor found")
+		return sidebarStatusMsg("opened in " + where)
 	}
 }
 
