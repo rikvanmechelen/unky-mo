@@ -3,6 +3,7 @@ package review
 import (
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -1123,9 +1124,10 @@ func (sc *jsScanner) sites(jsx bool) []jsSite {
 				recvExpr = true
 				break
 			}
-			parts = append([]string{text[s:q]}, parts...)
+			parts = append(parts, text[s:q]) // built backwards, reversed below
 			p = s
 		}
+		slices.Reverse(parts)
 		name := parts[len(parts)-1]
 		if sc.noCall[at] || sc.typed[at] || jsKeywords[name] || jsKeywords[parts[0]] && parts[0] != "this" {
 			continue

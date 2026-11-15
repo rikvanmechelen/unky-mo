@@ -2,6 +2,7 @@ package review
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -170,6 +171,10 @@ type jvmScanner struct {
 	// receivers of calls in that definition and the ones nested in it.
 	binds map[string]map[string]string
 	sigs  map[int]string // def → its parameter text
+	// pairs maps each bracket to its closer (-1: never closed), computed
+	// once: matching from scratch per call scanned to the end of the file
+	// for every unclosed "(", which made a file of them quadratic.
+	pairs []int
 }
 
 var (
@@ -319,6 +324,29 @@ func (s *jvmScanner) after(i int) int {
 
 // match finds the bracket closing the one at i, -1 if none.
 func (s *jvmScanner) match(i int) int {
+	if s.pairs == nil {
+		s.pairs = make([]int, len(s.toks))
+		var open []int
+		for j, t := range s.toks {
+			s.pairs[j] = -1
+			switch t.s {
+			case "(", "[", "{":
+				open = append(open, j)
+			case ")", "]", "}":
+				if n := len(open); n > 0 {
+					s.pairs[open[n-1]] = j
+					open = open[:n-1]
+				}
+			}
+		}
+	}
+	if i >= 0 && i < len(s.toks) {
+		switch s.toks[i].s {
+		case "(", "[", "{":
+			return s.pairs[i]
+		}
+	}
+	// Not at a bracket (callers pass one; kept as it always was).
 	depth := 0
 	for j := i; j < len(s.toks); j++ {
 		switch s.toks[j].s {
@@ -818,25 +846,26 @@ func isUpper(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }
 // dotted chain ("repo", "Foo.Companion", "this", "super"), or "?…" when it
 // hangs off an expression. A leading "this." is dropped.
 func (s *jvmScanner) receiver(i int) string {
-	var parts []string
+	var parts []string // built backwards, reversed below
 	j := i - 1
 	for s.tok(j).s == "." || s.tok(j).s == "?." {
 		if !s.tok(j - 1).ident {
-			parts = append([]string{"?"}, parts...)
+			parts = append(parts, "?")
 			break
 		}
-		parts = append([]string{s.tok(j - 1).s}, parts...)
+		parts = append(parts, s.tok(j-1).s)
 		j -= 2
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	if parts[0] != "?" {
+	if parts[len(parts)-1] != "?" {
 		switch s.tok(j).s {
 		case ")", "]", "!!", ".", "?.":
-			parts = append([]string{"?"}, parts...)
+			parts = append(parts, "?")
 		}
 	}
+	slices.Reverse(parts)
 	if len(parts) > 1 && parts[0] == "this" {
 		parts = parts[1:]
 	}
@@ -859,12 +888,13 @@ func (s *jvmScanner) methodRef(i int) {
 		var parts []string
 		j := i - 1
 		for s.tok(j).ident {
-			parts = append([]string{s.tok(j).s}, parts...)
+			parts = append(parts, s.tok(j).s) // backwards
 			if s.tok(j-1).s != "." {
 				break
 			}
 			j -= 2
 		}
+		slices.Reverse(parts)
 		recv = strings.Join(parts, ".")
 	} else if prev.s == ")" || prev.s == "]" {
 		recv = "?"
