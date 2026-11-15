@@ -388,7 +388,11 @@ func TestRailsRoutesHostile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
 			rs := parseRailsRoutes(c.main, c.read, false)
-			if d := time.Since(start); d > 2*time.Second {
+			limit := 2 * time.Second
+			if raceEnabled {
+				limit *= 10
+			}
+			if d := time.Since(start); d > limit {
 				t.Errorf("took %v", d)
 			}
 			if c.skips != "" {

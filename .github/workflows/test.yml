@@ -31,6 +31,11 @@ jobs:
       - name: go test (unit)
         run: go test -race -coverprofile=coverage.out ./...
 
+      # The scanner scaling test measures time, which -race distorts, so
+      # it skips itself there and runs here on its own.
+      - name: go test (scanner scaling, no -race)
+        run: go test -run 'TestScannersLinear' ./internal/review/
+
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -30
 

@@ -40,7 +40,7 @@ func linearCases() []linearCase {
 		{"jvm chain", func(n int) string { return "fun f() {\n" + strings.Repeat("a.", n) + "a()\n}\n" }, jvm, 5_000},
 		{"swift raw strings", rep(`#""#` + "\n"), swift, 20_000},
 		{"swift triple quotes", rep(`""""""` + "\n"), swift, 20_000},
-		{"swift bodiless funcs", rep("func f()\n"), swift, 5_000},
+		{"swift bodiless funcs", rep("func f()\n"), swift, 20_000},
 		{"ruby begin/end", rep("=begin\n=end\n"), ruby, 10_000},
 		{"ruby macro open bracket", func(n int) string {
 			return "class A < ApplicationRecord\n" + strings.Repeat("after_save :a, (\n", n)
@@ -82,9 +82,13 @@ func TestScannersLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
 	}
+	if raceEnabled {
+		t.Skip("timing test: run without -race (CI has a step for it)")
+	}
 	for _, c := range linearCases() {
 		t.Run(c.name, func(t *testing.T) {
 			// 4× the input: linear is ~4×; allow noise, refuse 16×. A
+			// bound of 9× let a scan through that grew 3.4× per doubling. A
 			// quadratic scan is over the bound every time, while a busy
 			// machine (the whole suite running in parallel) only now and
 			// then, so it fails only if three measurements all are.
@@ -92,7 +96,7 @@ func TestScannersLinear(t *testing.T) {
 			var small, big time.Duration
 			for try := 0; try < 3; try++ {
 				small, big = timeScan(c.scan, smallSrc), timeScan(c.scan, bigSrc)
-				if big <= 9*small+30*time.Millisecond {
+				if big <= 7*small+30*time.Millisecond {
 					break
 				}
 				if try == 2 {
