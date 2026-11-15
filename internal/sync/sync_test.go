@@ -334,3 +334,24 @@ func TestReadAllMetaCommitsMigration(t *testing.T) {
 		t.Fatalf("meta.enc missing after readAllMeta migration: %v", err)
 	}
 }
+
+// A local transcript written after the push isn't overwritten; one dated
+// to the push (pulled before) is.
+func TestLocalNewer(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	pushed := time.Now().Add(-time.Hour)
+	if localNewer(p, pushed) {
+		t.Error("a missing file isn't newer")
+	}
+	os.WriteFile(p, []byte("x"), 0o600)
+	if !localNewer(p, pushed) {
+		t.Error("written after the push: newer")
+	}
+	stampPulled(p, pushed)
+	if localNewer(p, pushed) {
+		t.Error("dated to the push: not newer")
+	}
+	if !sessionIDRe.MatchString("0d6e0a5c-1234-4abc-9def-0123456789ab") || sessionIDRe.MatchString("../../x") || sessionIDRe.MatchString("a/b-cdefgh") {
+		t.Error("session id pattern")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -171,10 +172,17 @@ func Pull(projectName, localProjectPath, syncDir string) (*SessionMeta, error) {
 	if err := os.MkdirAll(dstDir, 0755); err != nil {
 		return nil, err
 	}
+	if !sessionIDRe.MatchString(meta.SessionID) {
+		return nil, fmt.Errorf("bad session id %q in the sync repo", meta.SessionID)
+	}
 	dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
+	if localNewer(dstJSONL, meta.PushedAt) {
+		return nil, fmt.Errorf("the local copy of %s changed after it was pushed; not overwriting it", meta.SessionID)
+	}
 	if err := DecryptFile(key, filepath.Join(projectDir, sessionFilename), dstJSONL, adSession(dirHash)); err != nil {
 		return nil, fmt.Errorf("decrypt session: %w", err)
 	}
+	stampPulled(dstJSONL, meta.PushedAt)
 	return meta, nil
 }
 
@@ -260,12 +268,23 @@ func PullAll(syncDir string, resolve ProjectPathResolver) ([]PullResult, error) 
 			results = append(results, res)
 			continue
 		}
+		if !sessionIDRe.MatchString(meta.SessionID) {
+			res.Skipped = fmt.Sprintf("bad session id %q", meta.SessionID)
+			results = append(results, res)
+			continue
+		}
 		dstJSONL := filepath.Join(dstDir, meta.SessionID+".jsonl")
+		if localNewer(dstJSONL, meta.PushedAt) {
+			res.Skipped = "the local copy changed after it was pushed"
+			results = append(results, res)
+			continue
+		}
 		if err := DecryptFile(key, filepath.Join(projectDir, sessionFilename), dstJSONL, adSession(e.Name())); err != nil {
 			res.Skipped = fmt.Sprintf("decrypt: %v", err)
 			results = append(results, res)
 			continue
 		}
+		stampPulled(dstJSONL, meta.PushedAt)
 		res.Pulled = true
 		results = append(results, res)
 	}
@@ -430,8 +449,17 @@ func RepairNames(syncDir string) (int, error) {
 
 		// Decrypt the session file so we can re-encrypt with new AD.
 		sessionSrc := filepath.Join(projectDir, sessionFilename)
-		tmpJSONL := filepath.Join(syncDir, ".repair-tmp.jsonl")
+		// Decrypted outside the sync repo: a crash before the remove below
+		// would otherwise leave the plaintext where the next push's
+		// `git add -A` publishes it.
+		tmpFile, err := os.CreateTemp("", "mo-sync-repair-*.jsonl")
+		if err != nil {
+			return repaired, err
+		}
+		tmpJSONL := tmpFile.Name()
+		tmpFile.Close()
 		if err := DecryptFile(key, sessionSrc, tmpJSONL, adSession(oldHash)); err != nil {
+			os.Remove(tmpJSONL)
 			fmt.Fprintf(os.Stderr, "skipping %s (%s): decrypt session: %v\n", oldHash, meta.ProjectName, err)
 			continue
 		}
@@ -593,4 +621,22 @@ func gitRun(dir string, args ...string) error {
 		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// sessionIDRe is a Claude session id: it names a file, so nothing else.
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)
+
+// localNewer reports whether the local transcript at path was written after
+// pushedAt: pulling would replace newer work with the older pushed copy.
+func localNewer(path string, pushedAt time.Time) bool {
+	info, err := os.Stat(path)
+	return err == nil && !pushedAt.IsZero() && info.ModTime().After(pushedAt.Add(time.Second))
+}
+
+// stampPulled dates a pulled transcript to its push, so pulling the same
+// push again isn't mistaken for overwriting local work (localNewer).
+func stampPulled(path string, pushedAt time.Time) {
+	if !pushedAt.IsZero() {
+		_ = os.Chtimes(path, pushedAt, pushedAt)
+	}
 }
