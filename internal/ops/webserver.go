@@ -29,6 +29,9 @@ func EnsureWebServer(ctx *Context, addr string) error {
 }
 
 // shellQuote single-quotes s for the shell tmux hands pane commands to.
+// ShellQuote quotes s as one word for a POSIX shell.
+func ShellQuote(s string) string { return shellQuote(s) }
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

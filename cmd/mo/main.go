@@ -295,7 +295,9 @@ func startCmd() *cobra.Command {
 			agent := cfg.DefaultAgent()
 			shellCmd := agent.Cmd
 			if prompt != "" {
-				shellCmd = fmt.Sprintf("%s -p %q", agent.Cmd, prompt)
+				// Single-quoted: Go's %q is double quotes, where the shell
+				// still expands $(…), backticks and $VAR in the prompt.
+				shellCmd = agent.Cmd + " -p " + ops.ShellQuote(prompt)
 			}
 
 			ctx := ops.NewContext(tc)
