@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unky Mo</title>
+<link rel="icon" type="image/svg+xml" href="/hub/idle.svg">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-title" content="Unky Mo">
+<link rel="stylesheet" href="/hub/hub.css">
+<script src="/hub/theme.js"></script>
+</head>
+<body>
+<main class="hub">
+  <h1 class="hub__wordmark">Unky Mo</h1>
+  <p class="hub__status" id="hub-status" role="status">Looking for your machines…</p>
+  <div id="hub-note"></div>
+
+  <section class="hub__section" aria-labelledby="machines-heading">
+    <h2 class="hub__heading" id="machines-heading">Machines</h2>
+    <ul class="machines" id="machines"></ul>
+  </section>
+
+  <section class="hub__section" aria-labelledby="add-heading">
+    <h2 class="hub__heading" id="add-heading">Add address</h2>
+    <form class="add" id="add">
+      <input id="add-input" name="address" placeholder="laptop.local or 10.1.4.7:7890" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Address">
+      <button class="btn" type="submit">Add</button>
+    </form>
+    <p class="add__error" id="add-error" role="alert"></p>
+  </section>
+
+  <p class="hub__foot">An address that doesn't answer may also be one whose certificate this device doesn't trust. "Try" opens it anyway, so the browser shows why.</p>
+</main>
+<script src="/hub/hub-model.js"></script>
+<script src="/hub/hub.js"></script>
+</body>
+</html>

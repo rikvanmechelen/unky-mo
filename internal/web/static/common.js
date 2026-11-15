@@ -131,3 +131,8 @@ function renderUsage(container, usage, opts) {
     container.appendChild(el("div", { class: "empty-note", text: "Usage fetch failed (auth error)." }));
   }
 }
+
+// Every page registers the service worker: it keeps the launcher working
+// when this address doesn't answer (docs/plans/pwa.md), and notify.js uses
+// it for push.
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});

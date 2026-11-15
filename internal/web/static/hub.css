@@ -1,0 +1,81 @@
+/* The launcher's own styles (docs/plans/pwa.md). It's part of the offline
+   core, so it can't use style.css (150 KB, and a dashboard file the core
+   must not depend on). Same tokens, same values. */
+
+:root {
+  --paper: #ffffff;
+  --ink: #000000;
+  --ink-2: #444444;
+  --ink-3: #666666;
+  --ink-5: #bbbbbb;
+  --surface: #f6f6f6;
+  --line: #dddddd;
+  --yellow: #ffcd00;
+  --on-yellow: #111111;
+  --green: #00b140;
+  --red: #e4002b;
+  --font-sans: "MoMA Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --paper: #1c1c1c;
+  --ink: #eeeeee;
+  --ink-2: #bbbbbb;
+  --ink-3: #9a9a9a;
+  --ink-5: #6a6a6a;
+  --surface: #262626;
+  --line: #3a3a3a;
+  --red: #ff585d;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.hub { max-width: 640px; margin: 0 auto; padding: 32px 16px 48px; }
+.hub__wordmark { font-size: 44px; line-height: 1; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+.hub__status { color: var(--ink-3); font-size: 14px; margin: 0 0 24px; min-height: 1.4em; }
+
+.hub__note { border-left: 4px solid var(--yellow); background: var(--surface); padding: 10px 12px; margin: 0 0 20px; font-size: 14px; }
+.hub__note button { margin-left: 8px; }
+
+.hub__section { margin: 0 0 32px; }
+.hub__heading { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); margin: 0 0 8px; }
+
+.machines { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.machine { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.machine__dot { flex: none; width: 10px; height: 10px; border: 1px solid var(--ink-5); }
+.machine__dot.is-up { background: var(--green); border-color: var(--green); }
+.machine__dot.is-probing { background: var(--yellow); border-color: var(--yellow); }
+.machine__text { flex: 1; min-width: 0; }
+.machine__name { font-weight: 700; }
+.machine__addr { color: var(--ink-3); font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
+.machine__empty { color: var(--ink-3); padding: 12px 0; border-bottom: 1px solid var(--line); }
+
+.add { display: flex; gap: 8px; flex-wrap: wrap; }
+.add input {
+  flex: 1 1 220px; min-width: 0; font: inherit; padding: 8px 10px;
+  background: var(--paper); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 0;
+}
+.add__error { color: var(--red); font-size: 14px; margin: 8px 0 0; min-height: 1.4em; }
+
+.btn {
+  font: inherit; font-size: 14px; padding: 8px 14px; cursor: pointer;
+  background: var(--ink); color: var(--paper); border: 1px solid var(--ink); border-radius: 0;
+}
+.btn--quiet { background: transparent; color: var(--ink); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:focus-visible, .add input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.hub__foot { color: var(--ink-3); font-size: 13px; }
+.hub__foot a { color: inherit; }

@@ -1,6 +1,6 @@
 # mo web as an installed app that finds its machine
 
-**Status:** plan only, 2026-11-14. Nothing built.
+**Status:** steps 1–2 built on main, 2026-11-14.
 
 ## Goal
 
@@ -159,6 +159,30 @@ Run on Android Chrome (emulator + a real phone), iOS Safari as a Home Screen app
 - **`CertSource`** (`certsource.go`): built from the TLS dir, a `hosts func() []string` and a clock. `NewCertSource` runs `EnsureTLS` once. `GetCertificate` returns the current cert from an `atomic.Pointer`; `Leaf()` the current leaf. `Refresh()` re-runs `EnsureTLS` (which reuses the leaf when it still covers every host) when the host set differs from the last one or the leaf is within `leafRenewBefore` of expiring, and swaps the pointer. `Run(ctx, every)` calls `Refresh` every 30 s. Only for the generated cert: `cert_file` stays a fixed certificate.
 - `cmd/mo/web.go` serves `TLSConfig.GetCertificate` from the `CertSource`, and the redirect's host check reads `CertSource.Leaf()`.
 - Tests: `MachineID` create/reuse/corrupt/permissions; `tlsHosts` with extra names (valid, invalid dropped, duplicates); `HubAddrs` table; `hello` (shape, CORS, no-store) and `addrs`, both 404 without `Hub`; `CertSource`: a changed host list swaps to a leaf covering the new IP with the same CA, an unchanged one keeps the same cert, a leaf near expiry is renewed, `GetCertificate` returns the swapped cert.
+
+## Step 2 in detail: the offline launcher
+
+**Change from the overview:** the service worker contract of step 5 (dumb worker, core pointer, rollback, recovery page) is built here, so step 5 adds only where a core comes from and doesn't bump `SW_VERSION`. The core is fetched as one JSON document rather than a file listing, and the launcher's storage is localStorage (`mo.hub`) rather than IndexedDB: it's small, synchronous and easy to test.
+
+- **The core** is the launcher's own files, all served under `/hub` (`coreFiles` in `hub_core.go`) so a cached core never shadows a live dashboard file and the worker can tell its requests apart without reading the cache: `/hub` (`hub.html`), `/hub/hub.css` (its own small stylesheet with the theme tokens it uses, since `style.css` is 150 KB), `/hub/hub.js`, `/hub/hub-model.js`, `/hub/theme.js`, `/hub/idle.svg`. (Built this way; the first draft served them at their dashboard paths.) Its release is `CORE_RELEASE` in `hub-model.js`, an integer; the server reads it from the embedded file.
+  - `GET /api/hub/core` (public, CORS `*`, ETag): `{release, hash, sw, manifest, protocol, entry: "/hub", files: {path: {type, body}}}`. `sw` is `SW_VERSION` read from `sw.js`, `manifest` is `mo_version` read from `manifest.json`. `hash` is over the files.
+  - A Go test keeps a table of release → hash and fails when the core's files changed without a new `CORE_RELEASE` (or the table wasn't updated), so "only newer" can be decided by comparing integers.
+- **Public paths** (no login): `GET`/`HEAD` of `/manifest.json`, `/sw.js`, `/icons/*`, `/favicon/*`, the core's files, `/api/hub/hello`, `/api/hub/core`. `BasicAuth` lets exactly these through (`isPublicPath`, table-tested both ways). Everything else, including `/api/hub/addrs`, stays behind the login.
+- **Manifest:** `id: "/"` (the identity existing installs already have, since it defaulted to `start_url`), `start_url: "/hub"`, `mo_version: 1`. The pages drop `crossorigin="use-credentials"` on the manifest link.
+- **The service worker** (`sw.js`, `SW_VERSION = 1`). Pure functions over an injected `caches` and `fetch`, exported for Node, with the event listeners only attached inside a worker:
+  - Storage: cache `mo-meta` holds the pointer at `/__mo/pointer`: `{current, previous, installed, tries, confirmed, bad: [releases]}`, where each core entry is `{release, entry, files: [paths]}`. Cache `mo-core-<release>` holds that core's files under their paths.
+  - `/__mo/*` is the worker's own API, answered without the network: `GET /__mo/state` (`{sw, pointer}`), `POST /__mo/install` (body: a `/api/hub/core` document; refused if malformed, not newer than the current core, or marked bad), `POST /__mo/booted` (`{release}`: confirms the current core), `POST /__mo/reset` (back to the installed core). A page not controlled by the worker gets the server's 404 and knows there's no worker.
+  - A `GET` of one of the current core's paths is answered from its cache. A core may only hold paths under `/hub`. The worker's fetch listener only takes navigations, `/__mo/*` and `GET /hub…`; the dashboard's polls and streams never pass through it.
+  - A navigation to anything else goes to the network; if that fails or takes over 5 s, the answer is the core's entry page (the launcher reads `location` to know what was asked for). With no core at all, an inline recovery page: an address field and "Reset launcher".
+  - **Rollback:** serving the entry of an unconfirmed core counts a try. After 3 tries without `booted` the worker marks that release bad and goes back to the previous core.
+  - `install`: fetch the own origin's `/api/hub/core` and install it as `installed` (best effort). `activate`: claim clients, delete `mo-core-*` caches that are not current, previous or installed. Push and notification clicks are unchanged.
+- **The launcher** (`hub.js` over `hub-model.js`):
+  - `mo.hub` in localStorage: `{machines: {id: {name, candidates: [{url, source, lastOk, lastFail}]}}, last}`. Sources: `learned` (it answered), `reported` (`/api/hub/addrs`), `manual`.
+  - On load it posts `booted`, asks for persistent storage, and probes its own origin. If that answers: learn it, read `addrs` (with the page's login), check for a newer core at `/api/hub/core` (install it, then "Launcher updated: Reload"), then go to the asked-for page (`/` for `/hub`) unless `?stay`.
+  - If its own origin doesn't answer: probe every known machine (`findMachine`: last good address first with a 600 ms head start, then all, 2.5 s timeout each, first `hello` with the right machine id wins). If the last-used machine answers, go to the same page there; otherwise show the list.
+  - The page lists machines (name, address that answered, status), and has "Add address" (`normalizeAddress`: https only except localhost, default port 7890, no path or user info; probed at once, kept only if a machine answers).
+  - The dashboard header gets a "Machines" link to `/hub?stay=1`. Every page registers the worker (not only when push is supported).
+- Tests: Go (`isPublicPath` table; `/api/hub/core` shape, release/sw/manifest read from the files, public through `BasicAuth`; the release table guard). Node (`jstests/hub_model.test.js`: address normalization, learning and merging, candidate order, the probe race with fake fetch and timers, the auto-forward decision; `jstests/sw.test.js`: install/refuse, routing core paths, navigation fallback on failure and timeout, recovery page, tries and rollback, booted, reset, cache cleanup).
 
 ## Decisions
 

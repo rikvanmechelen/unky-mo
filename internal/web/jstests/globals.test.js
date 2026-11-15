@@ -20,7 +20,9 @@ for (const page of fs.readdirSync(staticDir).filter((f) => f.endsWith(".html")))
     const seen = new Map(); // name -> script
     const clashes = [];
     for (const src of scripts) {
-      const code = fs.readFileSync(path.join(staticDir, src), "utf8");
+      // The launcher's files are served under /hub/ (hub_core.go's coreFiles).
+      const file = src.startsWith("hub/") ? src.slice("hub/".length) : src;
+      const code = fs.readFileSync(path.join(staticDir, file), "utf8");
       for (const m of code.matchAll(DECL)) {
         const prev = seen.get(m[1]);
         if (prev && prev !== src) clashes.push(`${m[1]}: ${prev} and ${src}`);

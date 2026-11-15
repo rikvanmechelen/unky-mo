@@ -11,12 +11,17 @@ import (
 // matching creds. PBKDF2 is deliberately slow and the dashboard polls
 // several endpoints, so a successful login is remembered in memory (keyed
 // by a SHA-256 of the pair) and later requests skip the KDF. Failed
-// attempts always pay the full hashing cost.
+// attempts always pay the full hashing cost. The public paths (isPublicPath:
+// the installed app's launcher, worker and manifest) need no login.
 func BasicAuth(h http.Handler, creds *Credentials) http.Handler {
 	var mu sync.Mutex
 	verified := map[[32]byte]bool{}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isPublicPath(r) {
+			h.ServeHTTP(w, r)
+			return
+		}
 		user, pass, ok := r.BasicAuth()
 		if ok {
 			key := sha256.Sum256([]byte(user + "\x00" + pass))
