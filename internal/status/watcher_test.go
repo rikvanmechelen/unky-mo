@@ -123,3 +123,44 @@ func TestWatcher_UnwatchUnknown_Noop(t *testing.T) {
 	defer w.Stop()
 	w.UnwatchSession("nonexistent") // should not panic
 }
+
+// A session that has just started has no project directory yet: Claude
+// creates it with the first transcript write. WatchSession must retry once
+// the directory exists instead of remembering the failed watch.
+func TestWatcher_RetriesWhenDirAppearsLater(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "-Users-x-workspace-new-project")
+	path := filepath.Join(dir, "sess1.jsonl")
+
+	var called atomic.Int32
+	w, err := NewWatcher(func(string, string) { called.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.WatchSession("s1", path) // directory missing: nothing watched yet
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(path, []byte(`{"type":"user"}`+"\n"), 0o644)
+	w.WatchSession("s1", path) // the next poll
+
+	time.Sleep(50 * time.Millisecond)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(`{"type":"assistant","message":{"stop_reason":"end_turn"}}` + "\n")
+	f.Close()
+
+	deadline := time.After(2 * time.Second)
+	for called.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("no write event: the directory was never watched")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}

@@ -55,12 +55,20 @@ func (w *Watcher) WatchSession(sessionID, jsonlPath string) {
 		return
 	}
 
+	if w.dirRefs[dir] == 0 {
+		// First file in this directory — start watching. A session that
+		// has just started has no project directory yet (Claude creates
+		// it with the first transcript write), so Add fails. Record
+		// nothing then: the next poll's WatchSession tries again. Recording
+		// the path anyway left the session unwatched for good, and with
+		// its status never reconciled it stayed whatever the JSONL
+		// bootstrap first read (often "active").
+		if err := w.w.Add(dir); err != nil {
+			return
+		}
+	}
 	w.pathToID[abs] = sessionID
 	w.dirRefs[dir]++
-	if w.dirRefs[dir] == 1 {
-		// First file in this directory — start watching.
-		w.w.Add(dir)
-	}
 }
 
 // UnwatchSession stops watching a session's JSONL file.
