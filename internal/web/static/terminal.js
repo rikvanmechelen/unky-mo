@@ -723,7 +723,9 @@ function createTerminalDrawer(root) {
     return text.length > 1 ? [{ key }, { text: text.slice(1) }] : [{ key }];
   }
   // The keys row must not take focus from the sink, or the phone keyboard
-  // would close: pointerdown is cancelled and the key sent on click.
+  // would close: pointerdown is cancelled and the key sent on click. Nor
+  // does it give the sink focus: the keyboard only opens when the output
+  // is tapped.
   keysRow.addEventListener("pointerdown", (e) => { if (e.target.closest(".term-key")) e.preventDefault(); });
   keysRow.addEventListener("click", (e) => {
     const b = e.target.closest(".term-key");
@@ -736,7 +738,6 @@ function createTerminalDrawer(root) {
       setCtrl(false);
       queueKeys([{ key }]);
     }
-    if (document.activeElement !== sink) sink.focus({ preventScroll: true });
   });
   sink.addEventListener("paste", (e) => {
     e.preventDefault();
