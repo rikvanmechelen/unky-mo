@@ -1324,6 +1324,7 @@ body.is-resizing-term { cursor: row-resize; user-select: none; }
 .term-drawer__output.is-live { cursor: text; }
 .term-drawer__output.is-live.is-focused { box-shadow: inset 2px 0 0 var(--term-muted); }
 .term-cursor { outline: 1px solid var(--term-fg); outline-offset: -1px; }
+.term-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .term-drawer__output.is-focused .term-cursor { background: var(--term-fg); color: var(--term-bg); outline: 0; }
 /* Offscreen: measures one character cell for terminal.js. */
 .term-drawer__probe { position: absolute; left: -9999px; top: 0; visibility: hidden; font-family: var(--font-mono); font-size: 12px; white-space: pre; pointer-events: none; }

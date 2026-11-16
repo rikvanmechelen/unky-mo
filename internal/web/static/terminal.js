@@ -132,9 +132,51 @@ function cellWidth(ch) {
   return 1;
 }
 
+// termLinks finds the http(s) URLs in a line of terminal text, as
+// [{start, end, url}] in string offsets. A URL is printable ASCII only, so
+// a box border drawn right after it stays out, and trailing punctuation or
+// a closing bracket the URL didn't open is left off.
+function termLinks(text) {
+  const links = [];
+  const re = /\bhttps?:\/\/[!#-&(-;=?-_a-~]+/g;
+  let m;
+  while ((m = re.exec(text))) {
+    let url = m[0];
+    for (;;) {
+      const c = url[url.length - 1];
+      const open = { ")": "(", "]": "[", "}": "{" }[c];
+      if (/[.,:;!?*_~]/.test(c)) url = url.slice(0, -1);
+      else if (open && url.split(open).length < url.split(c).length) url = url.slice(0, -1);
+      else break;
+    }
+    if (!/^https?:\/\/[^/?#]/.test(url)) continue;
+    links.push({ start: m.index, end: m.index + url.length, url });
+  }
+  return links;
+}
+
+// termLinkEl is the anchor a terminal link is drawn in: always a new tab.
+function termLinkEl(url) {
+  return el("a", { class: "term-link", href: url, target: "_blank", rel: "noopener noreferrer" });
+}
+
+// linkedText is plain text with its URLs as links (a shell's output file).
+function linkedText(text) {
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  for (const l of termLinks(text)) {
+    if (l.start > pos) frag.appendChild(document.createTextNode(text.slice(pos, l.start)));
+    frag.appendChild(termLinkEl(l.url)).textContent = l.url;
+    pos = l.end;
+  }
+  if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+  return frag;
+}
+
 // renderScreen turns a capture (text with tmux's SGR escapes, plus the
-// cursor) into styled spans. Built as DOM nodes, never innerHTML. Blank
-// lines below both the text and the cursor are left out.
+// cursor) into styled spans, URLs wrapped in links. Built as DOM nodes,
+// never innerHTML. Blank lines below both the text and the cursor are left
+// out.
 function renderScreen(screen, showCursor) {
   const lines = (screen.text || "").split("\n");
   const plain = (l) => l.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, "").trim();
@@ -157,7 +199,9 @@ function renderScreen(screen, showCursor) {
     if (pos < line.length) runs.push([line.slice(pos), styleCSS(st)]);
 
     const cursorHere = showCursor && screen.cursorVisible && li === screen.cursorLine;
-    let col = 0, placed = false;
+    // Links are found in the line's plain text; at is the offset in it.
+    const links = termLinks(runs.map((r) => r[0]).join(""));
+    let col = 0, placed = false, at = 0, next = 0, into = frag;
     for (const [text, css] of runs) {
       let chunk = "";
       const flush = () => {
@@ -165,13 +209,19 @@ function renderScreen(screen, showCursor) {
         const span = document.createElement("span");
         if (css) span.style.cssText = css;
         span.textContent = chunk;
-        frag.appendChild(span);
+        into.appendChild(span);
         chunk = "";
       };
       for (const ch of text) {
+        if (into !== frag && at >= links[next - 1].end) { flush(); into = frag; }
+        if (into === frag && next < links.length && at >= links[next].start) {
+          flush();
+          into = frag.appendChild(termLinkEl(links[next++].url));
+        }
+        at += ch.length;
         if (cursorHere && !placed && col >= screen.cursorCol) {
           flush();
-          frag.appendChild(el("span", { class: "term-cursor", text: ch }));
+          into.appendChild(el("span", { class: "term-cursor", text: ch }));
           placed = true;
           col += cellWidth(ch);
           continue;
@@ -582,7 +632,7 @@ function createTerminalDrawer(root) {
       if (data.text === lastOutput) return;
       const pinned = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 24;
       lastOutput = data.text;
-      outputEl.textContent = header + (data.text || "No output yet.");
+      outputEl.replaceChildren(linkedText(header + (data.text || "No output yet.")));
       if (pinned) outputEl.scrollTop = outputEl.scrollHeight;
     } catch (err) {
       if (g === gen) refreshList(); // the pane probably went away
@@ -667,8 +717,9 @@ function createTerminalDrawer(root) {
   sink.addEventListener("focus", () => { outputEl.classList.add("is-focused"); redraw(); });
   sink.addEventListener("blur", () => { outputEl.classList.remove("is-focused"); redraw(); });
   // A click in the output gives the live terminal the keyboard, unless it
-  // selected text (to copy).
-  outputEl.addEventListener("mouseup", () => {
+  // selected text (to copy) or opened a link.
+  outputEl.addEventListener("mouseup", (e) => {
+    if (e.target.closest(".term-link")) return;
     if (live && !sink.disabled && !String(window.getSelection())) sink.focus({ preventScroll: true });
   });
 
@@ -777,4 +828,8 @@ function createTerminalDrawer(root) {
       render();
     },
   };
+}
+
+if (typeof module === "object" && module.exports) {
+  module.exports = { termLinks };
 }
