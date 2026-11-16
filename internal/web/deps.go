@@ -238,7 +238,8 @@ type Shells interface {
 type ClaudePane interface {
 	Capture(target string) (string, error)
 	// CaptureStyled is Capture with SGR colours, for the slash-command
-	// menus' active tab (see parseMenu).
+	// menus' active tab (see parseMenu) and the message box's faint
+	// suggestions (see parseInputBox).
 	CaptureStyled(target string) (string, error)
 	CycleMode(target string) error
 	SendKeys(target string, keys []tmux.Key) error

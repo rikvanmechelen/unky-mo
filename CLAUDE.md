@@ -54,7 +54,7 @@ Several web features read Claude Code's pane and press keys, so they depend on i
 | AskUserQuestion answers | `answer.go` | 2.1.289 |
 | Permission prompts | `permission.go`, `permission_parse.go` | 2.1.289 |
 | Folder trust dialog | `startup.go` | 2.1.236 |
-| Queued messages, send now | `inputbox.go`, `handlers_prompt.go` | 2.1.302 |
+| Queued messages, send now, faint prompt suggestions | `inputbox.go`, `handlers_prompt.go` | 2.1.302 (suggestions 2.1.325) |
 | Slash-command menus | `menu.go`, `handlers_menu_keys.go` | 2.1.325 |
 | Built-in slash commands | `internal/claude/commands.go` | 2.1.289 |
 | Pending tool recovery | `internal/status/pending.go` | 2.1.289 |

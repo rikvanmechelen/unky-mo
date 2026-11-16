@@ -28,6 +28,7 @@ func postPrompt(t *testing.T, srv *Server, windowID, body string) *httptest.Resp
 func emptyBoxPane(t *testing.T, ctrl *gomock.Controller) *mock_web.MockClaudePane {
 	t.Helper()
 	pane := mock_web.NewMockClaudePane(ctrl)
+	pane.EXPECT().CaptureStyled(gomock.Any()).Return(readQueueFixture(t, "working-empty.txt"), nil).AnyTimes()
 	pane.EXPECT().Capture(gomock.Any()).Return(readQueueFixture(t, "working-empty.txt"), nil).AnyTimes()
 	return pane
 }
@@ -324,7 +325,7 @@ func TestHandlePromptQueuesWhileActive(t *testing.T) {
 		t.Run(fixture, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			pane := mock_web.NewMockClaudePane(ctrl)
-			pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, fixture), nil)
+			pane.EXPECT().CaptureStyled("test:@1.0").Return(readQueueFixture(t, fixture), nil)
 			prompts := mock_web.NewMockPromptSender(ctrl)
 			prompts.EXPECT().SendLiteralText("test:@1.0", "hello").Return(nil)
 			rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
@@ -339,7 +340,7 @@ func TestHandlePromptQueuesWhileActive(t *testing.T) {
 func TestHandlePromptActive409WhenTerminalBoxHasText(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	pane := mock_web.NewMockClaudePane(ctrl)
-	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-typed.txt"), nil)
+	pane.EXPECT().CaptureStyled("test:@1.0").Return(readQueueFixture(t, "working-typed.txt"), nil)
 	prompts := mock_web.NewMockPromptSender(ctrl) // no expectations: nothing typed
 	rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
 	if rec.Code != http.StatusConflict {
@@ -350,7 +351,7 @@ func TestHandlePromptActive409WhenTerminalBoxHasText(t *testing.T) {
 func TestHandlePromptActive409WhenBoxUnreadable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	pane := mock_web.NewMockClaudePane(ctrl)
-	pane.EXPECT().Capture("test:@1.0").Return("some dialog, no prompt box", nil)
+	pane.EXPECT().CaptureStyled("test:@1.0").Return("some dialog, no prompt box", nil)
 	prompts := mock_web.NewMockPromptSender(ctrl)
 	rec := postPrompt(t, activePromptServer(t, pane, prompts), "@1", `{"text":"hello"}`)
 	if rec.Code != http.StatusConflict {
@@ -380,7 +381,7 @@ func TestHandlePromptSendNowPressesChordAfterText(t *testing.T) {
 	pane := mock_web.NewMockClaudePane(ctrl)
 	prompts := mock_web.NewMockPromptSender(ctrl)
 	gomock.InOrder(
-		pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil),
+		pane.EXPECT().CaptureStyled("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil),
 		prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil),
 		// Not queued yet on the first look (Enter was just pressed).
 		pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil),
@@ -401,7 +402,7 @@ func TestHandlePromptSendNowSkipsChordWhenNoLongerActive(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	pane := mock_web.NewMockClaudePane(ctrl)
 	prompts := mock_web.NewMockPromptSender(ctrl)
-	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil)
+	pane.EXPECT().CaptureStyled("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil)
 	prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil)
 	srv := statesServer(t, pane, prompts, "active", "idle") // no SendKeys expected
 	srv.modeSettle = 0
@@ -430,7 +431,8 @@ func TestHandlePromptSendNowErrorsWhenNeverQueued(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	pane := mock_web.NewMockClaudePane(ctrl)
 	prompts := mock_web.NewMockPromptSender(ctrl)
-	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil).Times(1 + sendNowTries)
+	pane.EXPECT().CaptureStyled("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil)
+	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-empty.txt"), nil).Times(sendNowTries)
 	prompts.EXPECT().SendLiteralText("test:@1.0", "now please").Return(nil)
 	var statuses []string
 	for range 1 + sendNowTries {
@@ -453,7 +455,7 @@ func TestHandlePromptIdleRefusedWithoutMessageBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pane.EXPECT().Capture("test:@1.0").Return(string(b), nil)
+	pane.EXPECT().CaptureStyled("test:@1.0").Return(string(b), nil)
 	// No PromptSender expectations: any send fails the test.
 	srv := NewServer(Deps{State: liveState(t, "@1", "idle"), Prompts: mock_web.NewMockPromptSender(ctrl), ClaudePane: pane}, 0, "test")
 	if rec := postPrompt(t, srv, "@1", `{"text":"y"}`); rec.Code != http.StatusConflict {
@@ -465,7 +467,7 @@ func TestHandlePromptIdleRefusedWithoutMessageBox(t *testing.T) {
 func TestHandlePromptIdleRefusedWhenBoxHasText(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	pane := mock_web.NewMockClaudePane(ctrl)
-	pane.EXPECT().Capture("test:@1.0").Return(readQueueFixture(t, "working-typed.txt"), nil)
+	pane.EXPECT().CaptureStyled("test:@1.0").Return(readQueueFixture(t, "working-typed.txt"), nil)
 	srv := NewServer(Deps{State: liveState(t, "@1", "idle"), Prompts: mock_web.NewMockPromptSender(ctrl), ClaudePane: pane}, 0, "test")
 	if rec := postPrompt(t, srv, "@1", `{"text":"hi"}`); rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body)

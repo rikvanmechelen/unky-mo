@@ -47,3 +47,28 @@ func TestParseInputBoxLabelledTopRule(t *testing.T) {
 		t.Fatalf("got %q, %v", text, ok)
 	}
 }
+
+// An idle session suggests its next prompt in the box, drawn faint (probed
+// on Claude Code 2.1.325). It isn't typed text.
+func TestParseInputBoxFaintSuggestion(t *testing.T) {
+	if got, ok := parseInputBox(readQueueFixture(t, "idle-suggestion.ansi")); !ok || got != "" {
+		t.Errorf("got %q, %v; want empty", got, ok)
+	}
+}
+
+func TestParseInputBoxStyledTypedText(t *testing.T) {
+	tests := map[string]string{
+		// Typed text in a colour whose numbers hold a 2 isn't faint.
+		"truecolour": "x\n\x1b[38;5;244m────\x1b[39m\n❯ \x1b[38;2;2;22;2mhello\x1b[0m\n────\n",
+		// Faint ends with 22; what follows was typed.
+		"after faint": "x\n────\n❯ \x1b[2mhint\x1b[22m typed\n────\n",
+		// The faint attribute carries across lines until reset.
+		"faint carried": "x\n────\n❯ \x1b[2mone\ntwo\x1b[0m\n  three\n────\n",
+	}
+	want := map[string]string{"truecolour": "hello", "after faint": "typed", "faint carried": "three"}
+	for name, screen := range tests {
+		if got, ok := parseInputBox(screen); !ok || got != want[name] {
+			t.Errorf("%s: got %q, %v; want %q", name, got, ok, want[name])
+		}
+	}
+}

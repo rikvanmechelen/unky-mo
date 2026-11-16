@@ -205,7 +205,8 @@ func (s *Server) checkInputBoxEmpty(target string) error {
 	if s.deps.ClaudePane == nil {
 		return fmt.Errorf("can't check Claude's message box")
 	}
-	screen, err := s.deps.ClaudePane.Capture(target)
+	// Styled, so a dim suggestion in the box isn't taken for typed text.
+	screen, err := s.deps.ClaudePane.CaptureStyled(target)
 	if err != nil {
 		return fmt.Errorf("can't read Claude's message box: %w", err)
 	}
