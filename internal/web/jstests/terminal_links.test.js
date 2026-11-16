@@ -1,7 +1,7 @@
 // Tests for termLinks in static/terminal.js, run by `node --test`.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { termLinks } = require("../static/terminal.js");
+const { termLinks, screenLinks } = require("../static/terminal.js");
 
 const urls = (text) => termLinks(text).map((l) => l.url);
 
@@ -32,4 +32,30 @@ test("other schemes and bare prefixes are not links", () => {
   assert.deepEqual(urls("javascript:alert(1) file:///etc/passwd ftp://x.org"), []);
   assert.deepEqual(urls("https:// and http://"), []);
   assert.deepEqual(urls("xhttps://example.com"), []);
+});
+
+test("a URL that runs into the right edge continues on the next line", () => {
+  // gcloud's login link, wrapped by a 20-column pane.
+  const lines = ["  https://example.co", "m/auth?a=1&b=2&c=3&d", "=4", "", "Opening browser."];
+  const url = "https://example.com/auth?a=1&b=2&c=3&d=4";
+  assert.deepEqual(screenLinks(lines, 20), [
+    [{ start: 2, end: 20, url }],
+    [{ start: 0, end: 20, url }],
+    [{ start: 0, end: 2, url }],
+    [],
+    [],
+  ]);
+});
+
+test("a line short of the edge, or no width, ends the URL", () => {
+  const lines = ["see https://a.org/x", "yz"];
+  assert.deepEqual(screenLinks(lines, 40), [[{ start: 4, end: 19, url: "https://a.org/x" }], []]);
+  assert.deepEqual(screenLinks(["https://a.org/x12345", "6789"], 0)[1], []);
+  // Text after the URL on the wrapped line isn't part of it.
+  assert.deepEqual(screenLinks(["https://a.org/x12345", "67 then text"], 20)[1], [{ start: 0, end: 2, url: "https://a.org/x1234567" }]);
+});
+
+test("wide characters count two columns toward the edge", () => {
+  const lines = ["界 https://a.org/", "b"];
+  assert.deepEqual(screenLinks(lines, 16).map((l) => l.map((x) => x.url)), [["https://a.org/b"], ["https://a.org/b"]]);
 });

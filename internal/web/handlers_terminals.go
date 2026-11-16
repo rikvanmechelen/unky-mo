@@ -124,6 +124,7 @@ type screenView struct {
 	CursorLine    int    `json:"cursorLine"`
 	CursorCol     int    `json:"cursorCol"`
 	CursorVisible bool   `json:"cursorVisible"`
+	Cols          int    `json:"cols"` // the pane's width, for lines that wrapped
 }
 
 func (s *Server) writeScreen(w http.ResponseWriter, pane string) {
@@ -132,7 +133,7 @@ func (s *Server) writeScreen(w http.ResponseWriter, pane string) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, screenView{Text: sc.Text, CursorLine: sc.CursorLine, CursorCol: sc.CursorCol, CursorVisible: sc.CursorVisible})
+	writeJSON(w, screenView{Text: sc.Text, CursorLine: sc.CursorLine, CursorCol: sc.CursorCol, CursorVisible: sc.CursorVisible, Cols: sc.Cols})
 }
 
 // liveKeyNames are the tmux key names a live terminal may send: what a

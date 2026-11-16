@@ -93,7 +93,7 @@ func TestTerminalsRejectForeignPane(t *testing.T) {
 
 func TestTerminalOutput(t *testing.T) {
 	srv, terms := termFixture(t)
-	terms.EXPECT().Capture("%21").Return(tmux.Screen{Text: "\x1b[32m$\x1b[39m go test\nok", CursorLine: 1, CursorCol: 2, CursorVisible: true}, nil)
+	terms.EXPECT().Capture("%21").Return(tmux.Screen{Text: "\x1b[32m$\x1b[39m go test\nok", CursorLine: 1, CursorCol: 2, CursorVisible: true, Cols: 80}, nil)
 
 	rec := do(t, srv, http.MethodGet, "/api/sessions/@5/terminals/21/output", "")
 	if rec.Code != http.StatusOK {
@@ -103,7 +103,7 @@ func TestTerminalOutput(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := screenView{Text: "\x1b[32m$\x1b[39m go test\nok", CursorLine: 1, CursorCol: 2, CursorVisible: true}
+	want := screenView{Text: "\x1b[32m$\x1b[39m go test\nok", CursorLine: 1, CursorCol: 2, CursorVisible: true, Cols: 80}
 	if got != want {
 		t.Errorf("want %+v, got %+v", want, got)
 	}

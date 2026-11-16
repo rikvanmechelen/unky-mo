@@ -133,6 +133,8 @@ type Screen struct {
 	// column in cells.
 	CursorLine, CursorCol int
 	CursorVisible         bool
+	// Cols is the pane's width: a line that fills it wrapped onto the next.
+	Cols int
 }
 
 // screenMarker starts the display-message line that follows the capture.
@@ -145,7 +147,7 @@ const screenMarker = "mo-screen "
 func (c *Client) CaptureScreen(paneID string, lines int) (Screen, error) {
 	out, err := c.tmuxCmd(
 		"capture-pane", "-p", "-e", "-t", paneID, "-S", fmt.Sprintf("-%d", lines), ";",
-		"display-message", "-p", "-t", paneID, screenMarker+"#{cursor_x} #{cursor_y} #{pane_height} #{cursor_flag}",
+		"display-message", "-p", "-t", paneID, screenMarker+"#{cursor_x} #{cursor_y} #{pane_height} #{cursor_flag} #{pane_width}",
 	).CombinedOutput()
 	if err != nil {
 		return Screen{}, fmt.Errorf("capture-pane: %s", strings.TrimSpace(string(out)))
@@ -161,13 +163,13 @@ func parseScreen(out string) (Screen, error) {
 	if i < 0 {
 		return Screen{}, fmt.Errorf("capture-pane: no cursor in output")
 	}
-	var x, y, height, flag int
-	if _, err := fmt.Sscanf(out[i+1+len(screenMarker):], "%d %d %d %d", &x, &y, &height, &flag); err != nil {
+	var x, y, height, flag, cols int
+	if _, err := fmt.Sscanf(out[i+1+len(screenMarker):], "%d %d %d %d %d", &x, &y, &height, &flag, &cols); err != nil {
 		return Screen{}, fmt.Errorf("capture-pane: bad cursor line: %w", err)
 	}
 	text := out[:i]
 	n := strings.Count(text, "\n") + 1
-	return Screen{Text: text, CursorLine: max(n-height+y, 0), CursorCol: x, CursorVisible: flag == 1}, nil
+	return Screen{Text: text, CursorLine: max(n-height+y, 0), CursorCol: x, CursorVisible: flag == 1, Cols: cols}, nil
 }
 
 // Key is one step of what a live terminal typed: literal Text, or a tmux

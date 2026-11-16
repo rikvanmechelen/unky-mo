@@ -155,6 +155,33 @@ function termLinks(text) {
   return links;
 }
 
+// screenLinks finds the links on a capture's plain lines, as one list per
+// line in that line's own offsets. The capture keeps tmux's wraps (so the
+// cursor lines up), so a line that fills all cols columns is read joined
+// with the next one: a long URL continues across lines. Without cols, each
+// line stands alone.
+function screenLinks(lines, cols) {
+  const out = lines.map(() => []);
+  const cells = (s) => { let n = 0; for (const ch of s) n += cellWidth(ch); return n; };
+  for (let first = 0; first < lines.length;) {
+    let last = first, text = lines[first];
+    const starts = [0];
+    while (cols > 0 && last + 1 < lines.length && cells(lines[last]) >= cols) {
+      starts.push(text.length);
+      text += lines[++last];
+    }
+    for (const l of termLinks(text)) {
+      for (let i = first; i <= last; i++) {
+        const s = starts[i - first];
+        const a = Math.max(l.start, s), b = Math.min(l.end, s + lines[i].length);
+        if (a < b) out[i].push({ start: a - s, end: b - s, url: l.url });
+      }
+    }
+    first = last + 1;
+  }
+  return out;
+}
+
 // termLinkEl is the anchor a terminal link is drawn in: always a new tab.
 function termLinkEl(url) {
   return el("a", { class: "term-link", href: url, target: "_blank", rel: "noopener noreferrer" });
@@ -186,9 +213,10 @@ function renderScreen(screen, showCursor) {
   const st = { fg: null, bg: null };
   // SGR (kept), any other CSI, OSC (hyperlinks, titles) and lone escapes (dropped).
   const esc = /\x1b(?:\[([0-9;:?]*)([A-Za-z])|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.?)/g;
+  const rows = []; // per line: [text, css] runs
   for (let li = 0; li <= last; li++) {
     const line = lines[li];
-    const runs = []; // [text, css]
+    const runs = [];
     let pos = 0, m;
     esc.lastIndex = 0;
     while ((m = esc.exec(line))) {
@@ -197,10 +225,13 @@ function renderScreen(screen, showCursor) {
       pos = esc.lastIndex;
     }
     if (pos < line.length) runs.push([line.slice(pos), styleCSS(st)]);
-
+    rows.push(runs);
+  }
+  // Links are found in the lines' plain text; at is the offset in a line.
+  const lineLinks = screenLinks(rows.map((runs) => runs.map((r) => r[0]).join("")), screen.cols);
+  for (let li = 0; li <= last; li++) {
+    const runs = rows[li], links = lineLinks[li];
     const cursorHere = showCursor && screen.cursorVisible && li === screen.cursorLine;
-    // Links are found in the line's plain text; at is the offset in it.
-    const links = termLinks(runs.map((r) => r[0]).join(""));
     let col = 0, placed = false, at = 0, next = 0, into = frag;
     for (const [text, css] of runs) {
       let chunk = "";
@@ -831,5 +862,5 @@ function createTerminalDrawer(root) {
 }
 
 if (typeof module === "object" && module.exports) {
-  module.exports = { termLinks };
+  module.exports = { termLinks, screenLinks };
 }
