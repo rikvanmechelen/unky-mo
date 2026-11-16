@@ -355,6 +355,7 @@
     ids.forEach((id) => probing.add(id));
     render();
     let left = ids.length;
+    let decided = false; // act on the first decision only: later answers only update the list
     await new Promise((resolve) => {
       for (const id of ids) {
         findMachine(id, hub.machines[id], env).then((url) => {
@@ -364,25 +365,34 @@
           if (url) hub = learnMachine(hub, { machine: id }, url, now);
           save();
           render();
-          const d = forwardDecision({ own: null, stay, found, hub });
-          if (d.kind === "go") openMachine(hub.last, d.url);
+          const d = forwardDecision({ own: null, stay, found, hub, origin: location.origin });
+          if (!decided && d.kind === "go") {
+            decided = true;
+            openMachine(hub.last, d.url);
+          } else if (!decided && d.kind === "own") {
+            // This address answered after all, only too slowly the first
+            // time: continue as if it had (login form, page, retry guard).
+            decided = true;
+            ownUp = true;
+            hereAnswers({ machine: hub.last, name: hub.machines[hub.last].name });
+          }
           if (--left === 0) resolve();
         });
       }
     });
+    if (decided && ownUp) return;
     const up = ids.filter((id) => found[id]).length;
     setStatus(up ? `${up} of ${ids.length} machine${ids.length === 1 ? "" : "s"} answer${up === 1 ? "s" : ""} here.` : "None of your machines answer on this network. Add an address below.");
   }
 
-  // whoami says whether this browser is logged in here: "in", "out", or
-  // "open" (no login configured on a localhost-only server).
+  // whoami says whether this browser is logged in here (loginState), with
+  // the status for the "error" case.
   async function whoami() {
     try {
       const res = await fetch("/api/hub/whoami", { cache: "no-store" });
-      if (res.status === 401) return "out";
-      return res.ok ? "in" : "open";
+      return { state: loginState(res.status), status: res.status };
     } catch {
-      return "open";
+      return { state: "error", status: 0 };
     }
   }
 
@@ -641,7 +651,22 @@
       setStatus(`${hub.machines[wanted.id].name || "That machine"} doesn't answer on this network.`);
       return;
     }
-    if ((await whoami()) === "out") return showLogin({ id: own.machine, name: own.name, base: "", done: () => openHere(own) });
+    return hereAnswers(own);
+  }
+
+  // hereAnswers carries on at this address once it answered: the login
+  // form when this browser isn't logged in, else the page.
+  async function hereAnswers(own) {
+    const who = await whoami();
+    if (who.state === "out") return showLogin({ id: own.machine, name: own.name, base: "", done: () => openHere(own) });
+    if (who.state === "error") {
+      const name = own.name || "This machine";
+      setStatus(who.status === 429
+        ? `${name} refused this browser for a minute after failed logins. It may be sending an old password it remembered: clear this site's data, or restart the browser.`
+        : `${name} answers, but checking the login failed${who.status ? ` (${who.status})` : ""}.`);
+      note("Try again?", { label: "Retry", run: () => location.reload() });
+      return;
+    }
     return openHere(own);
   }
 

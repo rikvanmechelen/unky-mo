@@ -5,7 +5,7 @@
 // CORE_RELEASE is the launcher's release. Raise it whenever a core file
 // changes (the Go test TestCoreReleaseTable says so): installed apps only
 // take a core with a higher release.
-const CORE_RELEASE = 2;
+const CORE_RELEASE = 3;
 
 // HUB_PROTOCOL is the hub API and message version this launcher speaks
 // (HubProtocol in Go). Machines one version away still work.
@@ -200,12 +200,31 @@ function targetPath(loc) {
 
 // forwardDecision says what the launcher does once it knows what answers:
 // "own" (this address works: open the page here), "go" (the last machine
-// answers elsewhere) or "stay" (show the list).
-function forwardDecision({ own, stay, found, hub }) {
+// answers elsewhere) or "stay" (show the list). origin is this page's own
+// address: when the search finds the last machine there, this address only
+// answered late, and it's "own" too. Going there would load this same
+// launcher again (the login redirect, or the worker's fallback for a slow
+// page), whose first probe can time out the same way: a loop that never
+// shows the login form or the page.
+function forwardDecision({ own, stay, found, hub, origin }) {
   if (stay) return { kind: "stay" };
   if (own) return { kind: "own" };
   const url = hub.last && found && found[hub.last];
+  if (url && origin && url === origin) return { kind: "own", late: true };
   return url ? { kind: "go", url } : { kind: "stay" };
+}
+
+// loginState reads the answer to GET /api/hub/whoami: "in" (logged in),
+// "out" (show the login form), "open" (no login configured: 404) or "error"
+// (anything else, a network failure is status 0). Only "in" and "open" may
+// go on to the page: going there otherwise only comes back to the launcher
+// (the login redirect), a loop. 429 is the server throttling failed basic
+// logins, usually a wrong password the browser remembered from the old prompt.
+function loginState(status) {
+  if (status === 401) return "out";
+  if (status === 404) return "open";
+  if (status >= 200 && status < 300) return "in";
+  return "error";
 }
 
 // safeNext is where to go after logging in: a path on this address, never
@@ -354,7 +373,7 @@ function requestedMachine(params, hub) {
 
 if (typeof module === "object" && module.exports) {
   module.exports = {
-    CORE_RELEASE, normalizeAddress, loadHub, saveHub, learnMachine, mergeAddrs, addManual, markFailed,
+    CORE_RELEASE, loginState, normalizeAddress, loadHub, saveHub, learnMachine, mergeAddrs, addManual, markFailed,
     orderCandidates, probe, findMachine, targetPath, forwardDecision, isMachineID, safeNext, hubDeviceLabel,
     loadTokens, saveToken, dropToken, frameMessage, shouldEmbed,
     coreUpdate, baseWarning, protocolCheck, HUB_PROTOCOL, pushScope, requestedMachine, keyBytes, sameKeyBytes,

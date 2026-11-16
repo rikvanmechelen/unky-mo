@@ -17,6 +17,7 @@ import (
 var coreReleases = map[int]string{
 	1: "e4210beeac92f961c84e32bca8a87ffd",
 	2: "d8e2c4d2810618f7056a442b66ebccc0",
+	3: "85d1bad87a8023325a6d131810e02144",
 }
 
 func TestCoreReleaseTable(t *testing.T) {

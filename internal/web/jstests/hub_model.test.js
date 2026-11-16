@@ -174,6 +174,19 @@ test("forwardDecision", () => {
   assert.deepEqual(forwardDecision({ own: null, stay: false, found: { [ID]: "https://b:1" }, hub }), { kind: "go", url: "https://b:1" });
   assert.deepEqual(forwardDecision({ own: null, stay: true, found: { [ID]: "https://b:1" }, hub }), { kind: "stay" });
   assert.deepEqual(forwardDecision({ own: null, stay: false, found: {}, hub }), { kind: "stay" });
+  // Own origin's first probe timed out but the search found the machine
+  // there: carry on here rather than navigate to the same launcher again.
+  assert.deepEqual(forwardDecision({ own: null, stay: false, found: { [ID]: "https://a:1" }, hub, origin: "https://a:1" }), { kind: "own", late: true });
+  assert.deepEqual(forwardDecision({ own: null, stay: false, found: { [ID]: "https://b:1" }, hub, origin: "https://a:1" }), { kind: "go", url: "https://b:1" });
+  assert.deepEqual(forwardDecision({ own: null, stay: true, found: { [ID]: "https://a:1" }, hub, origin: "https://a:1" }), { kind: "stay" });
+});
+
+test("loginState: only a logged-in or login-less answer goes on to the page", () => {
+  const { loginState } = require("../static/hub-model.js");
+  assert.equal(loginState(200), "in");
+  assert.equal(loginState(401), "out");
+  assert.equal(loginState(404), "open");
+  for (const status of [0, 403, 429, 500, 502]) assert.equal(loginState(status), "error", String(status));
 });
 
 test("safeNext only accepts a path on this address", () => {
