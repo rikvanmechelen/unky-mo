@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -432,5 +433,80 @@ func TestSetDefaultAgentNotFound(t *testing.T) {
 	err := cfg.SetDefaultAgent("z")
 	if err == nil {
 		t.Error("want error for unknown key")
+	}
+}
+
+// Configs saved before the socket and state file moved into the state dir
+// carry the old /tmp defaults. Load must replace them with today's.
+func TestLoadReplacesLegacyTmpDefaults(t *testing.T) {
+	dir := isolateConfig(t)
+	path := filepath.Join(dir, ".config", "unky-mo", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `
+socket_path = "/tmp/unky-mo.sock"
+state_file_path = "/tmp/unky-mo-state.json"
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SocketPath != DefaultSocketPath() {
+		t.Errorf("SocketPath: want %q, got %q", DefaultSocketPath(), cfg.SocketPath)
+	}
+	if cfg.StateFilePath != DefaultStateFilePath() {
+		t.Errorf("StateFilePath: want %q, got %q", DefaultStateFilePath(), cfg.StateFilePath)
+	}
+}
+
+// A path the user chose on purpose is kept.
+func TestLoadKeepsChosenPaths(t *testing.T) {
+	dir := isolateConfig(t)
+	path := filepath.Join(dir, ".config", "unky-mo", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `
+socket_path = "/srv/mo/hook.sock"
+state_file_path = "/srv/mo/state.json"
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SocketPath != "/srv/mo/hook.sock" || cfg.StateFilePath != "/srv/mo/state.json" {
+		t.Errorf("chosen paths replaced: %q, %q", cfg.SocketPath, cfg.StateFilePath)
+	}
+}
+
+// Save leaves out the paths that are only Load's defaults, so a later change
+// of default isn't frozen into the file (how the /tmp paths got there).
+func TestSaveOmitsDefaultPaths(t *testing.T) {
+	isolateConfig(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, err := os.ReadFile(DefaultConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"socket_path", "state_file_path"} {
+		if strings.Contains(string(data), key) {
+			t.Errorf("saved config contains %s:\n%s", key, data)
+		}
+	}
+	if cfg.SocketPath != DefaultSocketPath() {
+		t.Errorf("Save changed the in-memory config: %q", cfg.SocketPath)
 	}
 }

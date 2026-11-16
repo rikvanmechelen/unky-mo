@@ -17,8 +17,8 @@ const defaultTicketsPerBucketLimit = 5
 type Config struct {
 	WorkspaceDirs []string          `toml:"workspace_dirs"`
 	TmuxSession   string            `toml:"tmux_session"`
-	SocketPath    string            `toml:"socket_path"`
-	StateFilePath string            `toml:"state_file_path"`
+	SocketPath    string            `toml:"socket_path,omitempty"`
+	StateFilePath string            `toml:"state_file_path,omitempty"`
 	ScanOnStartup bool              `toml:"scan_on_startup"`
 	NotifySound   bool              `toml:"notify_sound"`
 	Projects      []project.Project `toml:"project"`
@@ -286,10 +286,15 @@ func Load() (*Config, error) {
 	if cfg.TmuxSession == "" {
 		cfg.TmuxSession = defaultTmuxSession
 	}
-	if cfg.SocketPath == "" {
+	// Before the socket and state file moved into the state dir, these
+	// /tmp paths were the defaults, and Save wrote them into the file like
+	// any other setting. Kept as if chosen, they broke mo: the TUI refuses
+	// a socket outside a private directory, so no hook arrived and `mo
+	// restart` reported the TUI as not running.
+	if cfg.SocketPath == "" || cfg.SocketPath == legacySocketPath {
 		cfg.SocketPath = DefaultSocketPath()
 	}
-	if cfg.StateFilePath == "" {
+	if cfg.StateFilePath == "" || cfg.StateFilePath == legacyStateFilePath {
 		cfg.StateFilePath = DefaultStateFilePath()
 	}
 	if cfg.Tickets.RefreshSeconds <= 0 {
@@ -315,8 +320,23 @@ func (c *Config) Save() error {
 		return err
 	}
 	defer f.Close()
-	return toml.NewEncoder(f).Encode(c)
+	// Paths that are only the defaults Load filled in stay out of the
+	// file, so a later change of default reaches this config too.
+	out := *c
+	if out.SocketPath == DefaultSocketPath() {
+		out.SocketPath = ""
+	}
+	if out.StateFilePath == DefaultStateFilePath() {
+		out.StateFilePath = ""
+	}
+	return toml.NewEncoder(f).Encode(out)
 }
+
+// The defaults before the move into the state dir (see Load).
+const (
+	legacySocketPath    = "/tmp/unky-mo.sock"
+	legacyStateFilePath = "/tmp/unky-mo-state.json"
+)
 
 // LoadProjects returns the merged list of auto-discovered and manually configured projects.
 func (c *Config) LoadProjects() ([]project.Project, error) {
