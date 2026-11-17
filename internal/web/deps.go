@@ -34,7 +34,7 @@ import (
 	"github.com/rvanmech/unky-mo/internal/usage"
 )
 
-//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,CallGrapher,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,BashChanges,Restarter
+//go:generate mockgen -destination=mocks/mock_deps.go -package=mock_web github.com/rvanmech/unky-mo/internal/web StateReader,ProjectLister,WorktreeReader,PRClient,TicketSource,PromptSender,SessionHistory,SessionOps,GitFiles,ChangeAnalyzer,CallGrapher,ScopeChecker,Terminals,Shells,ClaudePane,Subagents,SlashCommands,PromptHistory,BashChanges,Restarter
 
 // StateReader reads the shared state file written by the main TUI.
 type StateReader interface {
@@ -267,6 +267,21 @@ func (realSlashCommands) List(path, sessionID string) []claude.SlashCommand {
 	return claude.SlashCommands(path, sessionID)
 }
 
+// PromptHistory lists the prompts typed in a checkout, newest first, for
+// the composer's up arrow (see claude.PromptHistory). path and sessionID
+// always come from the state file's row for the requested window.
+type PromptHistory interface {
+	List(path, sessionID string) []string
+}
+
+type realPromptHistory struct{}
+
+func NewPromptHistory() PromptHistory { return realPromptHistory{} }
+
+func (realPromptHistory) List(path, sessionID string) []string {
+	return claude.PromptHistory(claude.HistoryFile(), path, sessionID)
+}
+
 // BashChanges reads what a session's Bash calls changed in its checkout,
 // from the snapshots `mo snapshot` takes around each call (internal/bashsnap).
 // sessionID always comes from the state file's row for the requested window.
@@ -299,6 +314,8 @@ type Deps struct {
 	Subagents  Subagents
 	// Commands feeds the composer's "/" completion.
 	Commands SlashCommands
+	// Prompts typed before, for the composer's up arrow.
+	PromptHistory PromptHistory
 	// BashDiffs shows what each Bash call changed; nil when snapshots are off.
 	BashDiffs BashChanges
 	Restarter Restarter

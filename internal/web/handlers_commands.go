@@ -45,3 +45,22 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, out)
 }
+
+// handlePromptHistory lists the prompts typed in the window's checkout,
+// newest first (the session's own first), for the composer's up arrow. It
+// isn't cached: it's read once per press of the arrow on an unbrowsed box,
+// and must include the prompt just sent.
+func (s *Server) handlePromptHistory(w http.ResponseWriter, r *http.Request) {
+	windowID := r.PathValue("windowID")
+	row, ok := s.windowRow(windowID)
+	if !ok || row.Path == "" {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no session in window %s", windowID))
+		return
+	}
+	list := s.deps.PromptHistory.List(row.Path, row.SessionID)
+	if list == nil {
+		list = []string{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, list)
+}

@@ -1621,8 +1621,49 @@ function main() {
   const commandMenu = createCommandMenu(composer, promptInput,
     () => { if (!sendBtn.disabled) composer.requestSubmit(); }, enterAddsLine);
 
+  // Up and down recall earlier prompts, as in Claude Code (history-model.js):
+  // up from the first line starts, and while the box still shows the
+  // recalled prompt both arrows keep walking; down past the newest brings
+  // back what was being written. The list is read afresh for each browse,
+  // so it has the prompt just sent and the ones typed in the terminal.
+  let promptHist = { state: historyIdle(), entries: [] };
+
+  function showRecalled(r) {
+    promptHist.state = r.state;
+    setPrompt(r.text);
+    promptInput.setSelectionRange(r.text.length, r.text.length);
+  }
+
+  function recallHistory(up) {
+    const v = promptInput.value;
+    if (historyBrowsing(promptHist.state, v)) {
+      const r = historyMove(promptHist.state, promptHist.entries, up ? -1 : 1, v);
+      if (r) showRecalled(r);
+      return true;
+    }
+    if (!up || !caretOnFirstLine(v, promptInput.selectionStart, promptInput.selectionEnd)) return false;
+    const id = windowID;
+    if (!id) return false;
+    fetch(`/api/sessions/${encodeURIComponent(id)}/prompt-history`)
+      .then((res) => (res.ok ? res.json() : []))
+      .catch(() => [])
+      .then((entries) => {
+        // Typing or a switch while it loaded wins.
+        if (id !== windowID || promptInput.value !== v) return;
+        promptHist = { state: historyIdle(), entries: Array.isArray(entries) ? entries : [] };
+        const r = historyMove(promptHist.state, promptHist.entries, -1, v);
+        if (r) showRecalled(r);
+        else promptInput.setSelectionRange(0, 0); // where the arrow would have gone
+      });
+    return true;
+  }
+
   promptInput.addEventListener("keydown", (e) => {
     if (commandMenu.handleKey(e)) return;
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.isComposing && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (recallHistory(e.key === "ArrowUp")) e.preventDefault();
+      return;
+    }
     // shift+tab cycles the permission mode, as it does in Claude Code.
     if (e.key === "Tab" && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
@@ -1924,6 +1965,7 @@ function main() {
     windowID = id;
     clearTranscript();
     heldUntilStart = null;
+    promptHist = { state: historyIdle(), entries: [] };
     starting = isStarting;
     openedAt = Date.now();
     everSeen = false;

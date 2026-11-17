@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rvanmech/unky-mo/internal/claude"
@@ -55,5 +56,39 @@ func TestCommandsNoSession(t *testing.T) {
 		if rec := get(t, srv, path); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: want 404, got %d", path, rec.Code)
 		}
+	}
+}
+
+func TestPromptHistoryList(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	st := mock_web.NewMockStateReader(ctrl)
+	st.EXPECT().Read().Return(&state.StateFile{Projects: []state.ProjectState{
+		{Name: "foo", WindowID: "@5", SessionID: "s5", Path: "/ws/foo", Status: "idle"},
+		{Name: "bar", WindowID: "@6", Path: "/ws/bar", Status: "none"},
+	}}, nil).AnyTimes()
+	hist := mock_web.NewMockPromptHistory(ctrl)
+	srv := NewServer(Deps{State: st, PromptHistory: hist}, 0, "test")
+
+	// Read for the state row's checkout and session, every time (no cache:
+	// the prompt just sent must be there).
+	hist.EXPECT().List("/ws/foo", "s5").Return([]string{"newer", "older"}).Times(2)
+	for range 2 {
+		rec := get(t, srv, "/api/sessions/@5/prompt-history")
+		var got []string
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("got %d %s", rec.Code, rec.Body)
+		}
+		if len(got) != 2 || got[0] != "newer" {
+			t.Errorf("got %q", got)
+		}
+	}
+	// A window without a session still has its checkout's history.
+	hist.EXPECT().List("/ws/bar", "").Return(nil)
+	if rec := get(t, srv, "/api/sessions/@6/prompt-history"); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("@6: got %d %s", rec.Code, rec.Body)
+	}
+	// An unknown window reaches no List call.
+	if rec := get(t, srv, "/api/sessions/@9/prompt-history"); rec.Code != http.StatusNotFound {
+		t.Errorf("@9: want 404, got %d", rec.Code)
 	}
 }
