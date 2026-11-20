@@ -41,7 +41,8 @@ fmt:
 fmt-check:
 	@out=$$(gofmt -l $$(git ls-files '*.go')); if [ -n "$$out" ]; then echo "not gofmt'd (run 'make fmt'):"; echo "$$out"; exit 1; fi
 
-test:
+# Formatting first, so an unformatted file fails locally as it would in CI.
+test: fmt-check
 	go test ./...
 
 test-race:

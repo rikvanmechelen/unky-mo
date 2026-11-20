@@ -82,7 +82,7 @@ Each line names the part and where its full description is.
 
 ## Testing
 
-- **Always run `make test` (or `go test ./...`) after any code change.** Failing tests are a signal: either the code regressed, or the test encoded a behavior that has legitimately changed. Never skip, delete, or comment out a test without understanding what it asserts. If a test is wrong, fix the test; if the code is wrong, fix the code. Never weaken an assertion to make it pass.
+- **Always run `make test` after any code change**, and before every commit. It runs `make fmt-check` first (CI fails on unformatted files); fix with `make fmt`, don't bypass it with a bare `go test ./...`. Failing tests are a signal: either the code regressed, or the test encoded a behavior that has legitimately changed. Never skip, delete, or comment out a test without understanding what it asserts. If a test is wrong, fix the test; if the code is wrong, fix the code. Never weaken an assertion to make it pass.
 - `make test-race` after touching `internal/status`, `internal/web` or `internal/notify`.
 - The TUI and sidebar have golden render tests (`internal/tui/testdata/golden/`, `go test ./internal/tui/... -update` to rewrite them). A refactor must leave them byte-identical.
 - Web pages: load them in headless Chrome before calling web work done (a duplicate global once blanked the chat).
