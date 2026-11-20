@@ -22,11 +22,11 @@ const promptHistoryTail = 4 << 20
 // historyEntry is one line of ~/.claude/history.jsonl, where Claude Code
 // records each prompt typed into it (probed on 2.1.325).
 type historyEntry struct {
-	Display        string                  `json:"display"`
+	Display        string                   `json:"display"`
 	PastedContents map[string]pastedContent `json:"pastedContents"`
-	Timestamp      int64                   `json:"timestamp"`
-	Project        string                  `json:"project"`
-	SessionID      string                  `json:"sessionId"`
+	Timestamp      int64                    `json:"timestamp"`
+	Project        string                   `json:"project"`
+	SessionID      string                   `json:"sessionId"`
 }
 
 // pastedContent is a paste the prompt names as "[Pasted text #N …]". A
