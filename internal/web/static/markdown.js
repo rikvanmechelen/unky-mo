@@ -7,6 +7,16 @@
 
 const MD_SAFE_URL = /^(https?:|mailto:)/i;
 
+// mdText appends plain text, its bare http(s) URLs as links that open in a
+// new tab (termLinks/linkedText from terminal.js, loaded on the same page;
+// called at render time, so script order doesn't matter). Inside a link's
+// own label the text stays plain.
+function mdText(parent, text) {
+  if (!text) return;
+  if (typeof linkedText === "function" && !(parent.closest && parent.closest("a"))) parent.appendChild(linkedText(text));
+  else parent.appendChild(document.createTextNode(text));
+}
+
 // renderInline appends text with inline markup to parent.
 function renderInline(parent, text) {
   // Order matters: code spans first so their contents stay literal.
@@ -16,7 +26,7 @@ function renderInline(parent, text) {
   const re = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|(?<![\w*/])\*([\w"'(\[][^*\n]*?)(?<![\s/])\*(?![\w*])|(?<![\w_])_([\w"'(\[][^_\n]*?)(?<![\s/])_(?![\w_])|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
   let last = 0, m;
   while ((m = re.exec(text))) {
-    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    if (m.index > last) mdText(parent, text.slice(last, m.index));
     if (m[1]) parent.appendChild(el("code", { text: m[2] }));
     else if (m[3] || m[4]) renderInline(parent.appendChild(el("strong")), m[3] || m[4]);
     else if (m[5] || m[6]) renderInline(parent.appendChild(el("em")), m[5] || m[6]);
@@ -26,12 +36,12 @@ function renderInline(parent, text) {
         renderInline(a, m[7]);
         parent.appendChild(a);
       } else {
-        parent.appendChild(document.createTextNode(m[0]));
+        mdText(parent, m[0]);
       }
     }
     last = re.lastIndex;
   }
-  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  if (last < text.length) mdText(parent, text.slice(last));
   return parent;
 }
 

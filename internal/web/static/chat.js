@@ -737,7 +737,7 @@ function createTranscriptView(container, scrollEl, opts = {}) {
       return { kind: "text", text: t };
     }).filter((seg) => seg.kind !== "text" || seg.text);
     return trimmed.map((seg) => {
-      if (seg.kind !== "pasted") return document.createTextNode(seg.text);
+      if (seg.kind !== "pasted") return linkedText(seg.text);
       const n = seg.body ? seg.body.split("\n").length : 0;
       return el("details", { class: "msg-paste" }, [
         el("summary", { text: `Pasted text · ${n} line${n === 1 ? "" : "s"}` }),
